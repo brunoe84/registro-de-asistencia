@@ -52,6 +52,11 @@ svg{width:18px;height:18px;flex-shrink:0}
 .alert-badge{background:var(--amber-50);color:var(--amber)}
 .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#2FB56F;margin-right:4px;animation:pulse 1.4s infinite}
 .acc-row{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:13px;display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.late-box{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:1.5px solid #E7A79F;background:var(--red-50);border-radius:16px;padding:14px;cursor:pointer}
+.late-box b{display:block;color:var(--red)}
+.late-box small{display:block;color:#7B3A33;font-size:12.5px}
+.late-ico{font-size:22px;flex-shrink:0}
+.late-txt{color:var(--red)}
 /* ---------- Layout ---------- */
 .wrap{max-width:760px;margin:0 auto;padding:18px 16px 40px}
 .wrap.wide{max-width:1100px}
@@ -1142,6 +1147,47 @@ function classBack(cls){
   return `#/todas/${cls.meta.program}/${Math.max(0, PROG_STAKES.indexOf(cls.meta.stake))}`;
 }
 
+/* ---------- Seguimiento: retrasos y últimos cambios ---------- */
+const DIAS_RETRASO = 7;
+/* Una clase está atrasada si su primera sesión sin marcar tiene más de una semana. */
+function retrasoDe(c){
+  if(!c || !c.inicio || !c.dias) return null;
+  const dates = classDates({ meta:{ days:c.dias, start:c.inicio, end:'', extraDates:c.fechas_extra || [], skipDates:c.fechas_omitidas || [] }, att:{} });
+  const pend = dates.filter(d => d > (c.ultima_fecha || ''));
+  if(!pend.length) return null;
+  const dias = Math.floor((parseISO(todayISO()) - parseISO(pend[0])) / 864e5);
+  return dias > DIAS_RETRASO ? { dias, desde:pend[0], sesiones:pend.length } : null;
+}
+const fechaHora = ts => { if(!ts) return ''; const d = new Date(ts); return isNaN(d) ? '' : `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()} ${fmtTime(d)}`; };
+function seguimientoHTML(c){
+  const r = retrasoDe(c);
+  return `<small>${c.titular ? `Adoptada por <b>${esc(c.titular)}</b>${c.adoptada_en ? ' · '+esc(fechaHora(c.adoptada_en)) : ''}` : 'Sin adoptar'}</small>
+    <small>${c.ultimo_cambio ? `Último cambio del maestro: <b>${esc(fechaHora(c.ultimo_cambio))}</b> · ${c.cambios} cambio${c.cambios===1?'':'s'}` : 'Sin cambios del maestro'}${r ? ` · <b class="late-txt">Atrasada ${r.dias} días</b>` : ''}</small>`;
+}
+async function renderSeguimiento(filtro='adoptadas'){
+  CUR = { type:'seguimiento', code:null };
+  app.innerHTML = topbar({ back:'#/todas', title:'Seguimiento de clases', sub:'Administración' }) + `<main class="wrap"><div id="segBody">${loadingHTML()}</div></main>`;
+  bindTop();
+  const load = async () => {
+    const body = $('#segBody'); if(!body) return;
+    try{
+      SB.resumen = await SB.rpc('resumen_clases');
+      const all = SB.resumen;
+      const grupos = { adoptadas:all.filter(c => c.titular), cambios:all.filter(c => c.ultimo_cambio), atrasadas:all.filter(c => retrasoDe(c)), sin:all.filter(c => !c.titular) };
+      const nombres = { adoptadas:'Adoptadas', cambios:'Con cambios', atrasadas:'Atrasadas', sin:'Sin adoptar' };
+      const list = grupos[filtro].slice().sort((a,b) => String(b.ultimo_cambio||'').localeCompare(String(a.ultimo_cambio||'')) || String(b.adoptada_en||'').localeCompare(String(a.adoptada_en||'')));
+      body.innerHTML = `<div class="seg" id="segTabs" style="margin-bottom:12px">${Object.keys(nombres).map(k => `<button data-f="${k}" class="${k===filtro?'on':''}">${nombres[k]} (${grupos[k].length})</button>`).join('')}</div>
+        <p class="hint" style="margin:0 2px 10px"><span class="live-dot"></span> En vivo · las clases con cambios recientes aparecen primero, para revisarlas en Wise.</p>
+        ${list.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="av">${esc(initials(c.maestro))}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario].filter(Boolean).join(' · '))}</small>${seguimientoHTML(c)}</span>${ICON.next}</button>`).join('') || '<div class="empty">No hay clases en este grupo.</div>'}`;
+      $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
+      $$('#segTabs button', body).forEach(b => b.onclick = () => renderSeguimiento(b.dataset.f));
+    }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
+  };
+  await load();
+  SB.watch('asistencia', null, load);
+  SB.watch('clase_accesos', null, load);
+}
+
 /* ---------- Inicio con clases en línea ---------- */
 function homeOnlineHTML(){
   const mis = SB.mis || [];
@@ -1150,6 +1196,7 @@ function homeOnlineHTML(){
       <p>La primera vez escribe tu nombre y elige tu clase. Después la encontrarás aquí mismo.</p>
       <button class="btn gold lg enter-btn" id="enterBtn">${ICON.book} Entrar a mi clase</button>
     </section>
+    ${mis.filter(retrasoDe).map(c => { const r = retrasoDe(c); return `<section class="section"><button class="late-box" data-go="#/clase/${c.codigo}"><span class="late-ico">🔔</span><span class="ii"><b>Tienes asistencia atrasada</b><small>${esc(prettyName(c.maestro))} · ${esc(c.horario)}: ${r.sesiones} sesión${r.sesiones===1?'':'es'} sin marcar desde el ${esc(fmtDate(r.desde))}.</small></span><span class="btn sm gold">Marcar ahora</span></button></section>`; }).join('')}
     ${mis.length ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/entrar">Buscar otra</button></div>
       ${mis.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}${c.tipo === 'colaborador' ? ' · Colaborador' : ''}</small></span><span class="num-badge">${c.alumnos} alum.</span></button>`).join('')}</section>` : ''}
     ${(SB.solicitudes||[]).length ? `<section class="section">${SB.solicitudes.map(s => `<div class="pend-box"><div><b>Solicitud enviada</b><small>${esc(prettyName(s.maestro))} · ${esc(s.horario)}. El administrador la revisará.</small></div></div>`).join('')}</section>` : ''}
@@ -1293,7 +1340,7 @@ function paintTodas(body, nivel, prog, stakeIdx){
   const alert = n => n ? `<span class="num-badge alert-badge">${n} alerta${n===1?'':'s'}</span>` : '';
   if(nivel === 0){
     body.innerHTML = `<p class="hint" style="margin:0 2px 10px">Escoge el programa.</p><div class="grid2" style="margin-top:0">${['S','I'].map(g => { const s = sum(all.filter(c => c.programa === g)); return `<button class="action-card ${g==='S'?'ev':'cl'}" style="text-align:left" data-go="#/todas/${g}"><div class="ac-ico">${ICON.book}</div><h2>${progPlural(g)}</h2><p>${line(s)}</p>${alert(s.alertas)}</button>`; }).join('')}</div>
-      <section class="section"><button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button><button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button></section>`;
+      <section class="section"><button class="item" data-go="#/seguimiento"><span class="ico t">${ICON.eye}</span><span class="ii"><b>Seguimiento de clases</b><small>${all.filter(c => c.titular).length} de ${all.length} adoptadas · ${all.filter(c => c.ultimo_cambio).length} con cambios · ${all.filter(c => retrasoDe(c)).length} atrasadas</small></span>${ICON.next}</button><button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button><button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button></section>`;
     paintBadges();
   } else if(nivel === 1){
     body.innerHTML = `<p class="hint" style="margin:0 2px 10px">Escoge la estaca.</p>${PROG_STAKES.map((st, i) => { const s = sum(all.filter(c => c.programa === prog && c.estaca === st)); return `<button class="item" data-go="#/todas/${prog}/${i}"><span class="ico t">${ICON.users}</span><span class="ii"><b>${esc(stakeShort(st))}</b><small>${line(s)}</small></span>${alert(s.alertas)}${ICON.next}</button>`; }).join('')}
@@ -1302,7 +1349,7 @@ function paintTodas(body, nivel, prog, stakeIdx){
   } else {
     const stake = PROG_STAKES[+stakeIdx];
     const list = all.filter(c => c.programa === prog && c.estaca === stake);
-    body.innerHTML = `<p class="hint" style="margin:0 2px 10px"><span class="live-dot"></span> En vivo · escoge el maestro para ver su clase.</p>` + (list.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="av">${esc(initials(c.maestro))}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([c.horario, c.curso].filter(Boolean).join(' · '))}</small><small>${c.titular ? 'Adoptada por '+esc(c.titular) : 'Sin adoptar'}${Number(c.colaboradores) ? ` · ${c.colaboradores} colaborador${Number(c.colaboradores)===1?'':'es'}` : ''} · ${c.alumnos} alumnos · ${pctOf(c)} asistencia</small></span>${alert(Number(c.alertas))}${ICON.next}</button>`).join('') || `<div class="empty">No hay clases en esta estaca todavía.</div>`);
+    body.innerHTML = `<p class="hint" style="margin:0 2px 10px"><span class="live-dot"></span> En vivo · escoge el maestro para ver su clase.</p>` + (list.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="av">${esc(initials(c.maestro))}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([c.horario, c.curso].filter(Boolean).join(' · '))}</small>${seguimientoHTML(c)}<small>${Number(c.colaboradores) ? `${c.colaboradores} colaborador${Number(c.colaboradores)===1?'':'es'} · ` : ''}${c.alumnos} alumnos · ${pctOf(c)} asistencia</small></span>${alert(Number(c.alertas))}${ICON.next}</button>`).join('') || `<div class="empty">No hay clases en esta estaca todavía.</div>`);
   }
   $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
 }
@@ -1569,10 +1616,11 @@ function route(){
   SB.stopWatch();
   if(SB.on() && !SB.ready){ app.innerHTML = topbar() + `<main class="wrap">${loadingHTML()}</main>`; return; }
   if(parts[0] === 'entrar') return renderEntrar();
-  if(['todas','solicitudes','alertas'].includes(parts[0])){
+  if(['todas','solicitudes','alertas','seguimiento'].includes(parts[0])){
     if(!SB.admin){ go('#/'); return; }
     if(parts[0] === 'solicitudes') return renderSolicitudes();
     if(parts[0] === 'alertas') return renderAlertas();
+    if(parts[0] === 'seguimiento') return renderSeguimiento();
     return renderTodas(parts[1], parts[2]);
   }
   if(parts[0] === 'evento' && parts[1] === 'nuevo') return renderEventForm(null);
@@ -1638,7 +1686,7 @@ const tabBtn = (id, label, icon, extra='', cur) => `<button data-tab="${id}" cla
 /* ============================================================
    INICIO
    ============================================================ */
-function renderHome(){
+function renderHome(fresco){
   CUR = { type:'home', code:null };
   const evs = Object.values(EVENTS).sort((a,b) => String(b.meta.date).localeCompare(String(a.meta.date)) || (b.meta.createdAt||0)-(a.meta.createdAt||0));
   const cls = Object.values(CLASSES).sort((a,b) => (b.meta.createdAt||0)-(a.meta.createdAt||0));
@@ -1685,6 +1733,7 @@ function renderHome(){
   $('#expAll').onclick = () => downloadBackup({ kind:'ca-backup', type:'all', ver:1, exportedAt:new Date().toISOString(), events:EVENTS, classes:Object.fromEntries(Object.entries(CLASSES).map(([k, v]) => [k, cleanForBackup(v)])) }, 'Backup Check-in completo');
   bindAdminTriggers();
   if(SB.on()) bindHomeOnline();
+  if(SB.on() && SB.user && fresco !== true) SB.refresh().then(() => { if(CUR.type === 'home') renderHome(true); }).catch(() => {});
 }
 function classItemHTML(c){
   const n = classStudents(c).length;
@@ -3478,7 +3527,7 @@ checkCloudRoster();
 syncAllPending();
 const idle = window.requestIdleCallback || (f => setTimeout(f, 2500));
 idle(() => { loadScript(EXCELJS_URL).catch(()=>{}); });
-window.__CA = { sha256, searchPeople, get ROSTER(){ return ROSTER; }, EVENTS, CLASSES, classDates, compactPeople, expandCompact, openByCode, unpackMeta, SB, parseRollWorkbook, importRollClases, subirBaseEnLinea, rollName, classStudents, classDates };
+window.__CA = { sha256, searchPeople, get ROSTER(){ return ROSTER; }, EVENTS, CLASSES, classDates, compactPeople, expandCompact, openByCode, unpackMeta, SB, parseRollWorkbook, importRollClases, subirBaseEnLinea, rollName, classStudents, classDates, retrasoDe };
 })();
 </script>
 </body>
