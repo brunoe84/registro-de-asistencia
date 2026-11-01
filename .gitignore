@@ -1,0 +1,16 @@
+# Secretos
+.env
+.env.*
+!.env.example
+
+# Datos personales: nunca van al repositorio
+data/
+*.xlsx
+*.xls
+*.csv
+
+node_modules/
+.next/
+.vercel/
+.DS_Store
+Thumbs.db
