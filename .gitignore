@@ -5,6 +5,7 @@
 
 # Datos personales: nunca van al repositorio
 data/
+CLASES/
 *.xlsx
 *.xls
 *.csv

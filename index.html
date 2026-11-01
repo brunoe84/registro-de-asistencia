@@ -47,6 +47,11 @@ svg{width:18px;height:18px;flex-shrink:0}
 .sync-pill.syncing .dot{background:#7FD3DC;animation:pulse 1s infinite}
 @keyframes pulse{50%{opacity:.3}}
 
+.enter-btn{width:100%;font-size:18px;padding:17px 20px;position:relative;z-index:1;box-shadow:0 6px 18px rgba(215,154,40,.35)}
+.enter-hero h1{font-size:25px}
+.alert-badge{background:var(--amber-50);color:var(--amber)}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#2FB56F;margin-right:4px;animation:pulse 1.4s infinite}
+.acc-row{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:13px;display:flex;flex-wrap:wrap;gap:7px;align-items:center}
 /* ---------- Layout ---------- */
 .wrap{max-width:760px;margin:0 auto;padding:18px 16px 40px}
 .wrap.wide{max-width:1100px}
@@ -383,7 +388,7 @@ ol.steps li{margin-bottom:5px}
 
 <!-- Datos: la base de personas y la URL de sincronización. El panel de administración reescribe este bloque. -->
 <script id="ca-data">
-window.CA_CONFIG = { db: /*DBURL_START*/""/*DBURL_END*/ };
+window.CA_CONFIG = { db: /*DBURL_START*/""/*DBURL_END*/, supabaseUrl: "", supabaseKey: "" };
 window.CA_SETTINGS = /*SETTINGS_START*/{"v":"2026-10-15T19:53:46.000Z","periods":{"S":[{"n":"1er Periodo","s":"","e":""},{"n":"2do Periodo","s":"2026-08-03","e":"2026-11-28"}],"I":[{"n":"1er Periodo","s":"","e":""},{"n":"2do Periodo","s":"","e":""},{"n":"3er Periodo","s":"2026-10-12","e":"2026-11-28"}]},"holidays":[]}/*SETTINGS_END*/;
 window.ROSTER_EMBED = /*ROSTER_START*/{"v":"","stakes":[],"wards":[],"p":[]}/*ROSTER_END*/;
 </script>
@@ -397,6 +402,7 @@ window.ROSTER_EMBED = /*ROSTER_START*/{"v":"","stakes":[],"wards":[],"p":[]}/*RO
    ============================================================ */
 const APP_VERSION = '1.0';
 const ADMIN_HASH = '2d1e25b8ed2c78e01870af395aef39403643c48f5abcebe18207d4e3a824a143';
+const SUPABASE_JS_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js';
 const EXCELJS_URL = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
 const SHEETJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 const POLL_MS = 15000;
@@ -680,7 +686,7 @@ function saveRosterLocal(people, src='este dispositivo'){
   LS.set('ca_roster', { v, src, compact });
   setRoster({ v, src, people: expandCompact(compact) });
 }
-const stakesList = () => STAKES;
+const stakesList = () => STAKES.length ? STAKES : PROG_STAKES;
 const wardsOf = st => WARDS_BY[st] || [];
 function fmtVersion(v){ if(!v) return '—'; const d = new Date(v.length<=10 ? v+'T12:00:00' : v); return isNaN(d) ? v : d.getDate()+' '+MES[d.getMonth()]+' '+d.getFullYear(); }
 
@@ -880,6 +886,7 @@ function weekStarts(list){ const out = new Set(); let prev = ''; list.forEach(d 
 function classPendingCount(cls){ return Object.keys(cls.dirty||{}).length + Object.keys(cls.sigPending||{}).length; }
 async function syncClass(code, {silent=false}={}){
   const cls = CLASSES[code]; if(!cls) return;
+  if(cls.remote) return syncRemoteClass(code, {silent});
   if(!Sync.on()){ if(!silent) toast('Guardado en este dispositivo. (La sincronización entre dispositivos no está configurada.)', 'warn', {ms:4200}); paintSync(); return; }
   if(BUSY.has(code)) return; BUSY.add(code);
   setSync('syncing');
@@ -937,9 +944,10 @@ function queueSync(){
   paintSync();
 }
 async function syncAllPending(){
+  for(const c of Object.keys(CLASSES)) if(CLASSES[c].remote && classPendingCount(CLASSES[c])) await syncRemoteClass(c, {silent:true});
   if(!Sync.on()) return;
   for(const c of Object.keys(EVENTS)) if(eventPendingCount(EVENTS[c])) await syncEvent(c, {silent:true});
-  for(const c of Object.keys(CLASSES)) if(CLASSES[c].canEdit && classPendingCount(CLASSES[c])) await syncClass(c, {silent:true});
+  for(const c of Object.keys(CLASSES)) if(!CLASSES[c].remote && CLASSES[c].canEdit && classPendingCount(CLASSES[c])) await syncClass(c, {silent:true});
 }
 async function uniqueCode(prefix, coll){
   let code = genCode(prefix);
@@ -948,6 +956,602 @@ async function uniqueCode(prefix, coll){
     try{ const ex = await Sync.req(`${coll}/${code}/meta`); if(!ex) return code; code = genCode(prefix); }catch(e){ return code; }
   }
   return code;
+}
+
+/* ============================================================
+   CLASES EN LÍNEA (Supabase)
+   ============================================================ */
+const PROG_STAKES = ['Cañete Perú Stake','Chincha Perú Stake','Ica Perú Stake','Nazca Perú District','Pisco Perú Stake'];
+const stakeShort = s => { const w = String(s||'').split(' ')[0]; return w === 'Nazca' ? 'Nasca' : w; };
+const ATT_OK = v => v === 'P' || v === 'T' || v === 'M';
+const ATT_TXT = { P:'✓', F:'✗', T:'T', M:'M' };
+const attNote = v => v === 'T' ? ' · Tarde' : v === 'M' ? ' · M' : '';
+const progPlural = g => g === 'I' ? 'Institutos' : 'Seminarios';
+const classOnline = cls => !!(cls && cls.remote) || Sync.on();
+
+const SB = {
+  client:null, signingIn:null, ready:false, admin:false, user:null, mis:[], solicitudes:[], counts:{solicitudes:0, alertas:0}, resumen:[], watchers:[], global:null, readyP:null,
+  on(){ return !!(window.CA_CONFIG && window.CA_CONFIG.supabaseUrl && window.CA_CONFIG.supabaseKey); },
+  init(){
+    if(this.readyP) return this.readyP;
+    this.readyP = (async () => {
+      if(!this.on()){ this.ready = true; return; }
+      try{
+        if(!window.supabase) await loadScript(SUPABASE_JS_URL);
+        this.client = window.supabase.createClient(window.CA_CONFIG.supabaseUrl, window.CA_CONFIG.supabaseKey, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:false } });
+        const { data } = await this.client.auth.getSession();
+        this.user = data && data.session ? data.session.user : null;
+        if(this.user) await this.refresh();
+      }catch(e){ console.error(e); }
+      this.ready = true;
+      route();
+      syncAllPending();
+    })();
+    return this.readyP;
+  },
+  async ensureSession(){
+    if(!this.client) throw new Error('No hay conexión con el servidor. Revisa tu internet.');
+    if(this.user) return this.user;
+    if(!this.signingIn) this.signingIn = this.client.auth.signInAnonymously().then(({ data, error }) => { if(error) throw error; this.user = data.user; return this.user; }).finally(() => { this.signingIn = null; });
+    return this.signingIn;
+  },
+  async refresh(){
+    if(!this.user) return;
+    const perfil = await this.fetchAll('perfiles', 'rol,nombre', [['id', this.user.id]]);
+    this.admin = !!(perfil[0] && perfil[0].rol === 'admin');
+    this.mis = await this.rpc('mis_clases');
+    this.solicitudes = await this.rpc('mis_solicitudes');
+    if(this.admin){ await this.loadCounts(); this.watchGlobal(); }
+  },
+  async loadCounts(){ this.counts = await this.rpc('contadores_admin'); paintBadges(); },
+  async rpc(name, args){
+    if(!this.client) throw new Error('No hay conexión con el servidor. Revisa tu internet.');
+    const { data, error } = await this.client.rpc(name, args || {});
+    if(error) throw error;
+    return data;
+  },
+  async fetchAll(table, cols, filters=[], order){
+    const out = [];
+    for(let from=0; ; from+=1000){
+      let q = this.client.from(table).select(cols);
+      filters.forEach(([c, v]) => { q = q.eq(c, v); });
+      if(order) q = q.order(order);
+      const { data, error } = await q.range(from, from+999);
+      if(error) throw error;
+      out.push(...data);
+      if(data.length < 1000) return out;
+    }
+  },
+  watch(table, filter, cb){
+    if(!this.client || !this.client.channel) return;
+    const ch = this.client.channel(`w-${table}-${filter||'all'}-${Date.now()}`).on('postgres_changes', Object.assign({ event:'*', schema:'public', table }, filter ? { filter } : {}), debounce(cb, 900)).subscribe();
+    this.watchers.push(ch);
+  },
+  stopWatch(){ this.watchers.forEach(ch => { try{ this.client.removeChannel(ch); }catch(e){} }); this.watchers = []; },
+  watchGlobal(){
+    if(this.global || !this.client || !this.client.channel) return;
+    this.global = this.client.channel('admin-notificaciones').on('postgres_changes', { event:'INSERT', schema:'public', table:'solicitudes_acceso' }, () => {
+      toast('🔔 Nueva solicitud de acceso a una clase', 'warn', { action:'Ver', onAction: () => go('#/solicitudes'), ms:8000 });
+      this.loadCounts().then(() => { if(CUR.type === 'home') renderHome(); if(CUR.type === 'solicitudes') renderSolicitudes(); }).catch(()=>{});
+    }).subscribe();
+  },
+  async signOut(){
+    this.stopWatch();
+    if(this.global){ try{ this.client.removeChannel(this.global); }catch(e){} this.global = null; }
+    await this.client.auth.signOut();
+    this.user = null; this.admin = false; this.mis = []; this.solicitudes = []; this.counts = {solicitudes:0, alertas:0};
+    Object.keys(CLASSES).forEach(c => { if(CLASSES[c].remote) delete CLASSES[c]; }); saveClasses();
+  }
+};
+function paintBadges(){
+  $$('[data-badge]').forEach(b => { const n = SB.counts[b.dataset.badge] || 0; b.textContent = n; b.classList.toggle('hide', !n); });
+}
+const errMsg = e => { const m = String((e && e.message) || ''); return /fetch|network/i.test(m) ? 'Sin conexión. Inténtalo de nuevo.' : (m || 'Ocurrió un error.'); };
+function loadingHTML(txt){ return `<div class="empty">${esc(txt || 'Cargando…')}</div>`; }
+
+/* ---------- Sincronización de una clase en línea ---------- */
+function studentFromRow(a){
+  return { id:a.id, pid:a.persona_id, n:a.nombre, src: a.origen === 'maestro' && a.vinculo !== 'vinculado' ? 'nuevo' : 'base', vinculo:a.vinculo, data:{ k:a.estaca, w:a.barrio }, addedAt: Date.parse(a.agregado_en) || 0, ...(a.retirado_en ? { del:true } : {}) };
+}
+function metaFromRow(c){
+  return { title:c.titulo, teacher:c.maestro_nombre, program:c.programa, stake:c.estaca, ward:c.barrio, days:c.dias || [], start:c.inicio || '', end:'', extraDates:c.fechas_extra || [], skipDates:c.fechas_omitidas || [], horario:c.horario, curso:c.curso, createdAt: Date.parse(c.creado_en) || 0 };
+}
+async function pushRemoteClass(cls){
+  const sent = Object.entries(cls.dirty||{});
+  const id = cls.dbId;
+  for(const [p, st] of sent.filter(([p]) => p.startsWith('students/'))){
+    const s = getPath(cls, p);
+    if(s){
+      const { error } = await SB.client.from('clase_alumnos').upsert({ id:s.id, clase_id:id, nombre:s.n, estaca:(s.data||{}).k || '', barrio:(s.data||{}).w || '', persona_id:s.pid || null, retirado_en: s.del ? new Date(s.delAt || Date.now()).toISOString() : null }, { onConflict:'id' });
+      if(error && error.code === '23505'){ delete cls.students[s.id]; toast(`${prettyName(s.n)} ya estaba en la clase`, 'warn'); }
+      else if(error) throw error;
+    }
+    if(cls.dirty[p] === st) delete cls.dirty[p];
+  }
+  const att = sent.filter(([p]) => p.startsWith('att/'));
+  const rows = [];
+  for(const [p] of att){
+    const [, fecha, alumno] = p.split('/');
+    const v = (cls.att[fecha]||{})[alumno];
+    if(v) rows.push({ clase_id:id, alumno_id:alumno, fecha, estado:v, marcado_por:SB.user.id, actualizado_en:new Date().toISOString() });
+    else { const { error } = await SB.client.from('asistencia').delete().eq('alumno_id', alumno).eq('fecha', fecha); if(error) throw error; }
+  }
+  if(rows.length){ const { error } = await SB.client.from('asistencia').upsert(rows, { onConflict:'alumno_id,fecha' }); if(error) throw error; }
+  att.forEach(([p, st]) => { if(cls.dirty[p] === st) delete cls.dirty[p]; });
+  if(cls.dirty.meta){
+    const st = cls.dirty.meta, m = cls.meta;
+    await SB.rpc('actualizar_calendario', { clase:id, dias_nuevos:m.days || [], extra:m.extraDates || [], omitidas:m.skipDates || [] });
+    if(cls.dirty.meta === st) delete cls.dirty.meta;
+  }
+}
+async function pullRemoteClass(cls){
+  const rows = await SB.fetchAll('clases', '*', [['codigo', cls.code]]);
+  if(!rows.length) return false;
+  const dirty = cls.dirty || {};
+  cls.dbId = rows[0].id;
+  if(!dirty.meta) cls.meta = metaFromRow(rows[0]);
+  const alumnos = await SB.fetchAll('clase_alumnos', '*', [['clase_id', cls.dbId]]);
+  const marcas = await SB.fetchAll('asistencia', 'alumno_id,fecha,estado', [['clase_id', cls.dbId]]);
+  const ids = new Set(alumnos.map(a => a.id));
+  Object.keys(cls.students).forEach(id => { if(!ids.has(id) && !dirty['students/'+id]) delete cls.students[id]; });
+  alumnos.forEach(a => { if(!dirty['students/'+a.id]) cls.students[a.id] = studentFromRow(a); });
+  const ratt = {}; marcas.forEach(m => { (ratt[m.fecha] = ratt[m.fecha] || {})[m.alumno_id] = m.estado; });
+  const dates = new Set([...Object.keys(ratt), ...Object.keys(cls.att||{})]);
+  dates.forEach(d => {
+    const loc = cls.att[d] || {}, rem = ratt[d] || {};
+    new Set([...Object.keys(loc), ...Object.keys(rem)]).forEach(sid => { if(dirty[`att/${d}/${sid}`]) return; if(rem[sid]) loc[sid] = rem[sid]; else delete loc[sid]; });
+    if(Object.keys(loc).length) cls.att[d] = loc; else delete cls.att[d];
+  });
+  return true;
+}
+async function syncRemoteClass(code, {silent=false}={}){
+  const cls = CLASSES[code]; if(!cls) return;
+  if(BUSY.has(code)) return; BUSY.add(code);
+  setSync('syncing');
+  let gone = false;
+  try{
+    await SB.ensureSession();
+    if(classPendingCount(cls)) await pushRemoteClass(cls);
+    gone = !(await pullRemoteClass(cls));
+    cls.lastSync = Date.now();
+    if(gone) delete CLASSES[code];
+    saveClasses(); setSync('ok');
+    if(!silent && !gone) toast('Asistencia guardada y sincronizada ✓', 'ok');
+  }catch(e){
+    console.error(e);
+    saveClasses(); setSync('error');
+    if(!silent) toast('Sin conexión: quedó guardado en este dispositivo y se enviará al reconectar.', 'warn', {ms:4200});
+  }finally{ BUSY.delete(code); }
+  if(gone){ toast('Ya no tienes acceso a esta clase.', 'warn'); if(CUR.code === code) go('#/'); return; }
+  if(CUR.type === 'class' && CUR.code === code) liveClass();
+}
+async function openRemoteClass(code){
+  await SB.readyP;
+  try{
+    await SB.ensureSession();
+    const cls = CLASSES[code] || Object.assign(newClassObj(code, {}), { dirty:{} });
+    cls.remote = true; cls.canEdit = true;
+    if(!(await pullRemoteClass(cls))){ toast('No tienes acceso a esa clase.', 'error'); go('#/'); return; }
+    CLASSES[code] = cls; saveClasses();
+    if(location.hash === '#/clase/'+code) renderClass(code); else go('#/clase/'+code);
+  }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+}
+function classBack(cls){
+  if(!cls.remote) return '#/clases';
+  if(!SB.admin) return '#/';
+  return `#/todas/${cls.meta.program}/${Math.max(0, PROG_STAKES.indexOf(cls.meta.stake))}`;
+}
+
+/* ---------- Inicio con clases en línea ---------- */
+function homeOnlineHTML(){
+  const mis = SB.mis || [];
+  return `<section class="hero enter-hero">
+      <h1>Toma la asistencia de tu clase</h1>
+      <p>La primera vez escribe tu nombre y elige tu clase. Después la encontrarás aquí mismo.</p>
+      <button class="btn gold lg enter-btn" id="enterBtn">${ICON.book} Entrar a mi clase</button>
+    </section>
+    ${mis.length ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/entrar">Buscar otra</button></div>
+      ${mis.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}${c.tipo === 'colaborador' ? ' · Colaborador' : ''}</small></span><span class="num-badge">${c.alumnos} alum.</span></button>`).join('')}</section>` : ''}
+    ${(SB.solicitudes||[]).length ? `<section class="section">${SB.solicitudes.map(s => `<div class="pend-box"><div><b>Solicitud enviada</b><small>${esc(prettyName(s.maestro))} · ${esc(s.horario)}. El administrador la revisará.</small></div></div>`).join('')}</section>` : ''}
+    ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2></div>
+      <button class="item" data-go="#/todas"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Todas las clases</b><small>Por programa, estaca y maestro · asistencia en vivo</small></span>${ICON.next}</button>
+      <button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b><small>Personas que piden entrar a una clase ya adoptada</small></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button>
+      <button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b><small>Alumnos sin coincidencia con la base de personas</small></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button>
+      <button class="item" data-go="#/admin"><span class="ico t">${ICON.db}</span><span class="ii"><b>Base de personas y periodos</b><small>Subir la base actualizada, feriados y periodos</small></span>${ICON.next}</button>
+    </section>` : ''}`;
+}
+function bindHomeOnline(){
+  const b = $('#enterBtn');
+  if(b) b.onclick = () => (SB.mis||[]).length === 1 ? go('#/clase/'+SB.mis[0].codigo) : go('#/entrar');
+  const lo = $('#adminLink');
+  if(lo) lo.onclick = () => SB.admin ? SB.signOut().then(() => { toast('Sesión cerrada'); renderHome(); }) : askAdmin();
+  paintBadges();
+}
+function askAdminOnline(){
+  sheet(`${sheetHead('Acceso de administrador')}<form id="alf"><div class="field"><label>Correo</label><input id="aEm" type="email" autocomplete="username"></div><div class="field"><label>Contraseña</label><input id="aPw" type="password" autocomplete="current-password"></div></form><div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">Entrar</button></div>`, {
+    onMount(el, close){
+      setTimeout(() => $('#aEm', el).focus(), 250);
+      const tryIt = async () => {
+        try{
+          const { data, error } = await SB.client.auth.signInWithPassword({ email:$('#aEm', el).value.trim(), password:$('#aPw', el).value });
+          if(error) throw error;
+          SB.user = data.user;
+          await SB.refresh();
+          if(!SB.admin){ await SB.signOut(); toast('Esa cuenta no es de administrador.', 'error'); return; }
+          close(); toast('Bienvenido', 'ok'); go('#/todas');
+        }catch(e){ toast(/invalid/i.test(String(e.message)) ? 'Correo o contraseña incorrectos.' : errMsg(e), 'error'); }
+      };
+      $('#ok', el).onclick = tryIt;
+      $('#alf', el).onsubmit = e => { e.preventDefault(); tryIt(); };
+    }
+  });
+}
+
+/* ---------- Entrar a mi clase ---------- */
+function renderEntrar(){
+  CUR = { type:'entrar', code:null };
+  app.innerHTML = topbar({ back:'#/', title:'Entrar a mi clase', sub:'Seminarios e Institutos' }) + `<main class="wrap">
+    <section class="card"><h2>${ICON.search} ¿Cómo te llamas?</h2>
+      <p class="hint" style="margin-top:0">Escribe tu nombre y apellido como maestro de la clase.</p>
+      <div class="search-box"><span class="si">${ICON.search}</span><input id="tq" type="search" placeholder="Nombre y apellido…" autocomplete="off" spellcheck="false" value="${esc(myName())}"></div>
+      <div id="tres" class="results" style="margin-top:12px"></div>
+    </section></main>`;
+  bindTop();
+  const q = $('#tq');
+  const run = debounce(() => buscarMiClase(q.value), 300);
+  q.oninput = run;
+  setTimeout(() => q.focus(), 100);
+  if(q.value) buscarMiClase(q.value);
+}
+async function buscarMiClase(txt){
+  const el = $('#tres'); if(!el) return;
+  if(norm(txt).length < 3){ el.innerHTML = '<p class="hint" style="margin:0 2px">Sigue escribiendo para ver las clases.</p>'; return; }
+  try{
+    await SB.ensureSession();
+    const list = await SB.rpc('buscar_clases', { texto:txt });
+    if($('#tq') && $('#tq').value !== txt) return;
+    if(!list.length){ el.innerHTML = `<div class="empty-hint"><p>No encontramos esa clase</p><small>Revisa cómo escribiste tu nombre o avísale al administrador.</small></div>`; return; }
+    el.innerHTML = list.map((c, i) => `<div class="person" style="cursor:default"><span class="av">${esc(initials(c.maestro))}</span><span class="pi"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}</small></span>${
+      c.tengo_acceso ? `<button class="mk done" data-open="${c.codigo}">${ICON.check} Abrir</button>`
+      : c.solicitud_pendiente ? `<span class="badge b-new">Solicitud enviada</span>`
+      : c.adoptada ? `<button class="mk add" data-req="${i}">${ICON.lock} Solicitar acceso</button>`
+      : `<button class="mk" data-adopt="${i}">Es mi clase</button>`}</div>`).join('');
+    $$('[data-open]', el).forEach(b => b.onclick = () => go('#/clase/'+b.dataset.open));
+    $$('[data-adopt]', el).forEach(b => b.onclick = () => adoptarClase(list[+b.dataset.adopt], txt));
+    $$('[data-req]', el).forEach(b => b.onclick = () => openSolicitud(list[+b.dataset.req]));
+  }catch(e){ console.error(e); el.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
+}
+async function adoptarClase(c, nombre){
+  if(!(await confirmBox(`<b>${esc(prettyName(c.maestro))}</b><br>${esc([stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}<br><br>La clase quedará guardada en tu inicio y otra persona necesitará permiso del administrador para verla.`, { title:'¿Esta es tu clase?', ok:'Sí, es mi clase' }))) return;
+  try{
+    setMyName(nombre);
+    await SB.rpc('guardar_mi_nombre', { nombre_nuevo:nombre });
+    const r = await SB.rpc('adoptar_clase', { clase:c.id });
+    if(r === 'ocupada'){ toast('Otra persona acaba de tomar esta clase. Puedes solicitar acceso.', 'warn'); buscarMiClase(nombre); return; }
+    await SB.refresh();
+    toast('✓ Clase agregada a tu inicio', 'ok');
+    go('#/clase/'+c.codigo);
+  }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+}
+function openSolicitud(c){
+  const parts = String(myName()).trim().split(/\s+/);
+  sheet(`${sheetHead('Solicitar acceso', `Clase de ${esc(prettyName(c.maestro))} · ${esc(c.horario)}`)}
+    <div class="info-box">Esta clase ya tiene un maestro. El administrador recibirá tu solicitud y te dará acceso si corresponde.</div>
+    <form id="sf" autocomplete="off">
+      <div class="row2"><div class="field"><label>Nombres <span class="req">*</span></label><input name="nombres" value="${esc(parts[0] || '')}" autocapitalize="words"></div><div class="field"><label>Apellidos <span class="req">*</span></label><input name="apellidos" value="${esc(parts.slice(1).join(' '))}" autocapitalize="words"></div></div>
+      <div class="row2"><div class="field"><label>Estaca <span class="req">*</span></label><select name="estaca"><option value="">Seleccionar…</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${s===c.estaca?'selected':''}>${esc(stakeShort(s))}</option>`).join('')}</select></div><div class="field"><label>Barrio <span class="req">*</span></label><input name="barrio" autocapitalize="words"></div></div>
+      <div class="field"><label>Programa <span class="req">*</span></label><select name="programa"><option value="S" ${c.programa==='S'?'selected':''}>Seminario</option><option value="I" ${c.programa==='I'?'selected':''}>Instituto</option></select></div>
+    </form>
+    <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">Enviar solicitud</button></div>`, {
+    wide:true,
+    onMount(el, close){
+      $('#ok', el).onclick = async () => {
+        const v = {}; $$('[name]', el).forEach(i => v[i.name] = i.value.trim());
+        const miss = ['nombres','apellidos','estaca','barrio'].filter(k => !v[k]);
+        $$('.field', el).forEach(f => f.classList.remove('err'));
+        if(miss.length){ miss.forEach(k => $(`[name=${k}]`, el).closest('.field').classList.add('err')); toast('Completa los campos obligatorios (*)', 'error'); return; }
+        try{
+          await SB.ensureSession();
+          const { error } = await SB.client.from('solicitudes_acceso').insert(Object.assign({ clase_id:c.id, usuario_id:SB.user.id }, v));
+          if(error && error.code !== '23505') throw error;
+          setMyName(`${v.nombres} ${v.apellidos}`);
+          await SB.rpc('guardar_mi_nombre', { nombre_nuevo:`${v.nombres} ${v.apellidos}` });
+          SB.solicitudes = await SB.rpc('mis_solicitudes');
+          close(); toast('✓ Solicitud enviada al administrador', 'ok');
+          if($('#tq')) buscarMiClase($('#tq').value);
+        }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+      };
+    }
+  });
+}
+
+/* ---------- Todas las clases (administrador) ---------- */
+function pctOf(c){ const m = Number(c.marcas)||0; return m ? Math.round(Number(c.presentes)*100/m)+'%' : '—'; }
+async function renderTodas(prog, stakeIdx){
+  CUR = { type:'todas', code:null };
+  const nivel = !prog ? 0 : stakeIdx == null ? 1 : 2;
+  const stake = nivel === 2 ? PROG_STAKES[+stakeIdx] : null;
+  const back = nivel === 0 ? '#/' : nivel === 1 ? '#/todas' : `#/todas/${prog}`;
+  const title = nivel === 0 ? 'Todas las clases' : nivel === 1 ? progPlural(prog) : stakeShort(stake);
+  app.innerHTML = topbar({ back, title, sub: nivel === 2 ? progPlural(prog) : 'Administración' }) + `<main class="wrap"><div id="todasBody">${loadingHTML()}</div></main>`;
+  bindTop();
+  const load = async () => {
+    const body = $('#todasBody'); if(!body) return;
+    try{
+      SB.resumen = await SB.rpc('resumen_clases');
+      paintTodas(body, nivel, prog, stakeIdx);
+    }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
+  };
+  await load();
+  SB.watch('asistencia', null, load);
+  SB.watch('clase_accesos', null, load);
+}
+function paintTodas(body, nivel, prog, stakeIdx){
+  const all = SB.resumen || [];
+  const sum = list => ({ clases:list.length, alumnos:list.reduce((a,c)=>a+Number(c.alumnos),0), alertas:list.reduce((a,c)=>a+Number(c.alertas),0) });
+  const line = s => `${s.clases} clase${s.clases===1?'':'s'} · ${s.alumnos} alumno${s.alumnos===1?'':'s'}`;
+  const alert = n => n ? `<span class="num-badge alert-badge">${n} alerta${n===1?'':'s'}</span>` : '';
+  if(nivel === 0){
+    body.innerHTML = `<p class="hint" style="margin:0 2px 10px">Escoge el programa.</p><div class="grid2" style="margin-top:0">${['S','I'].map(g => { const s = sum(all.filter(c => c.programa === g)); return `<button class="action-card ${g==='S'?'ev':'cl'}" style="text-align:left" data-go="#/todas/${g}"><div class="ac-ico">${ICON.book}</div><h2>${progPlural(g)}</h2><p>${line(s)}</p>${alert(s.alertas)}</button>`; }).join('')}</div>
+      <section class="section"><button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button><button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button></section>`;
+    paintBadges();
+  } else if(nivel === 1){
+    body.innerHTML = `<p class="hint" style="margin:0 2px 10px">Escoge la estaca.</p>${PROG_STAKES.map((st, i) => { const s = sum(all.filter(c => c.programa === prog && c.estaca === st)); return `<button class="item" data-go="#/todas/${prog}/${i}"><span class="ico t">${ICON.users}</span><span class="ii"><b>${esc(stakeShort(st))}</b><small>${line(s)}</small></span>${alert(s.alertas)}${ICON.next}</button>`; }).join('')}
+      <section class="section"><button class="btn block" id="impCl">${ICON.upload} Importar clases de ${progPlural(prog)} (Class Roll)</button></section>`;
+    $('#impCl').onclick = () => openImportClases(prog);
+  } else {
+    const stake = PROG_STAKES[+stakeIdx];
+    const list = all.filter(c => c.programa === prog && c.estaca === stake);
+    body.innerHTML = `<p class="hint" style="margin:0 2px 10px"><span class="live-dot"></span> En vivo · escoge el maestro para ver su clase.</p>` + (list.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="av">${esc(initials(c.maestro))}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([c.horario, c.curso].filter(Boolean).join(' · '))}</small><small>${c.titular ? 'Adoptada por '+esc(c.titular) : 'Sin adoptar'}${Number(c.colaboradores) ? ` · ${c.colaboradores} colaborador${Number(c.colaboradores)===1?'':'es'}` : ''} · ${c.alumnos} alumnos · ${pctOf(c)} asistencia</small></span>${alert(Number(c.alertas))}${ICON.next}</button>`).join('') || `<div class="empty">No hay clases en esta estaca todavía.</div>`);
+  }
+  $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
+}
+
+/* ---------- Importar clases desde el reporte Class Roll ---------- */
+const ROLL_MES = { jan:1, ene:1, feb:2, mar:3, apr:4, abr:4, may:5, jun:6, jul:7, aug:8, ago:8, sep:9, set:9, oct:10, nov:11, dec:12, dic:12 };
+function rollDate(s){ const m = String(s).trim().match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/); if(!m || !ROLL_MES[m[2].toLowerCase()]) return null; return `${m[3].length===2?'20'+m[3]:m[3]}-${pad2(ROLL_MES[m[2].toLowerCase()])}-${pad2(m[1])}`; }
+const rollClean = s => String(s ?? '').replace(/\s+/g,' ').trim();
+function levenshtein(a, b){ if(Math.abs(a.length-b.length) > 3) return 9; let p = Array.from({length:b.length+1}, (_, i) => i); for(let i=1;i<=a.length;i++){ const c = [i]; for(let j=1;j<=b.length;j++) c[j] = Math.min(p[j]+1, c[j-1]+1, p[j-1]+(a[i-1]===b[j-1]?0:1)); p = c; } return p[b.length]; }
+/* El reporte a veces repite el apellido: "Pérez Soto, Pérez Soto, Ana" o "Pérez Soto, Ana, Pérez Soto". */
+function rollName(n){
+  const parts = rollClean(n).split(',').map(s => s.trim()).filter(Boolean);
+  if(parts.length < 2) return parts.join('');
+  const ape = parts[0];
+  const rest = parts.slice(1).filter(x => levenshtein(norm(x), norm(ape)) > 2);
+  let nom = rest.join(' ') || parts[parts.length-1];
+  const i = norm(nom).lastIndexOf(norm(ape));
+  if(i > 0 && norm(nom).endsWith(norm(ape))) nom = nom.split(/\s+/).slice(0, -ape.split(/\s+/).length).join(' ') || nom;
+  return `${ape}, ${nom}`;
+}
+function rollStake(u){ const w = norm(u).split(' ')[0]; return ({ canete:PROG_STAKES[0], chincha:PROG_STAKES[1], ica:PROG_STAKES[2], nazca:PROG_STAKES[3], nasca:PROG_STAKES[3], pisco:PROG_STAKES[4] })[w] || ''; }
+function parseRollWorkbook(wb, progDefault){
+  const clases = [], avisos = [];
+  wb.SheetNames.forEach(sn => {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, raw:false, defval:'' });
+    const titulo = rows.slice(0,3).map(r => rollClean(r && r[0])).join(' ');
+    const mT = titulo.match(/Class Roll\s*(.*?)\s*\(\d+\)/i);
+    const unidad = mT ? mT[1] : titulo;
+    const periodo = (rows.slice(0,5).map(r => rollClean(r && r[0])).join(' ').match(/T[ée]rmino:\s*(.*?)(?:\s*Fecha|\s*$)/i) || [])[1] || '';
+    let cur = null, cols = [], enLista = false, halladas = 0;
+    rows.forEach(r => {
+      const head = r.map(rollClean).find(c => / - .+ - /.test(c));
+      if(head){
+        const p = head.split(' - ');
+        const tok = p[0].trim().split(/\s+/);
+        const up = norm(unidad).toUpperCase();
+        const programa = /\bSEM\b/.test(up) ? 'S' : /\bINS?T?\b/.test(up) ? 'I' : progDefault;
+        cur = { unidad, periodo, estaca:rollStake(unidad), programa, maestro:p.slice(1,-1).join(' - ').trim(), horario: programa === 'I' ? p[0].trim() : tok.slice(1).join(' '), curso:p[p.length-1].trim(), fechas:[], alumnos:[], total:null, desconocidas:0 };
+        const tot = r.map(rollClean).find(c => /Total de alumnos/i.test(c)); if(tot) cur.total = +tot.replace(/\D/g,'');
+        clases.push(cur); halladas++; cols = []; enLista = false; return;
+      }
+      if(!cur) return;
+      if(rollClean(r[0]) === 'Nombre'){ enLista = true; cols = []; r.forEach((c, j) => { const d = rollDate(c); if(d) cols.push([j, d]); }); cur.fechas = cols.map(x => x[1]); return; }
+      if(!enLista) return;
+      const n = rollClean(r[0]); if(!n || !n.includes(',')) return;
+      const marcas = {};
+      cols.forEach(([j, d]) => { const v = rollClean(r[j]).toUpperCase(); if(!v) return; if(v === 'A') marcas[d] = 'F'; else if(ATT_TXT[v]) marcas[d] = v; else cur.desconocidas++; });
+      cur.alumnos.push({ nombre:rollName(n), marcas });
+    });
+    if(!halladas) avisos.push(`${sn}: no se encontró una clase`);
+  });
+  clases.forEach(c => {
+    const f = c.fechas.slice().sort();
+    c.titulo = c.programa === 'I' ? c.curso : [c.curso, c.horario].filter(Boolean).join(' · ');
+    c.inicio = f[0] || todayISO();
+    c.dias = [...new Set(f.map(d => parseISO(d).getDay()))].filter(d => d !== 0);
+    if(!c.estaca) avisos.push(`${c.maestro}: no se reconoció la estaca “${c.unidad}”`);
+    if(c.total != null && c.total > c.alumnos.length) avisos.push(`${c.maestro}: el reporte dice ${c.total} alumnos y se leyeron ${c.alumnos.length}`);
+    if(!f.length) avisos.push(`${c.maestro} (${c.horario}): el reporte no trae fechas; el maestro podrá agregarlas al marcar`);
+    if(c.desconocidas) avisos.push(`${c.maestro}: ${c.desconocidas} marcas con letras desconocidas se omitieron`);
+  });
+  return { clases, avisos };
+}
+function openImportClases(prog){
+  let parsed = null;
+  sheet(`${sheetHead('Importar clases', `${progPlural(prog)} · reporte Class Roll`)}
+    <p class="hint" style="margin-top:0">Elige uno o varios Excel. Volver a importar agrega lo nuevo y <b>no pisa</b> lo que los maestros hayan corregido.</p>
+    <label class="drop">${ICON.upload}<b>Elegir archivos</b><span>.xlsx</span><input type="file" id="rollF" accept=".xlsx,.xls" multiple class="sr"></label>
+    <div id="rollPrev"></div>
+    <div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn primary hide" id="rollGo">${ICON.check} Crear clases</button></div>`, {
+    wide:true,
+    onMount(el, close){
+      const prev = $('#rollPrev', el), goBtn = $('#rollGo', el);
+      $('#rollF', el).onchange = async e => {
+        try{
+          prev.innerHTML = loadingHTML('Leyendo archivos…');
+          parsed = await parseRollFiles([...e.target.files], prog);
+          const porEstaca = {}; parsed.clases.forEach(c => { const o = porEstaca[c.estaca||'?'] = porEstaca[c.estaca||'?'] || { c:0, a:0 }; o.c++; o.a += c.alumnos.length; });
+          const marcas = parsed.clases.reduce((n, c) => n + c.alumnos.reduce((m, a) => m + Object.keys(a.marcas).length, 0), 0);
+          prev.innerHTML = `<div class="info-box" style="margin-top:12px"><b>${parsed.clases.length} clases</b> · ${parsed.clases.reduce((n,c)=>n+c.alumnos.length,0)} alumnos · ${marcas.toLocaleString('es-PE')} marcas</div>
+            <table class="mini"><thead><tr><th>Estaca</th><th class="r">Clases</th><th class="r">Alumnos</th></tr></thead><tbody>${Object.entries(porEstaca).map(([k,o]) => `<tr><td>${esc(stakeShort(k))}</td><td class="r">${o.c}</td><td class="r">${o.a}</td></tr>`).join('')}</tbody></table>
+            ${parsed.avisos.length ? `<div class="warn-box" style="margin-top:10px"><b>Revisa:</b><br>${parsed.avisos.slice(0,12).map(esc).join('<br>')}</div>` : ''}`;
+          goBtn.classList.toggle('hide', !parsed.clases.some(c => c.estaca));
+        }catch(err){ console.error(err); prev.innerHTML = `<div class="warn-box" style="margin-top:12px">${esc(err.message || 'No se pudo leer el archivo')}</div>`; }
+      };
+      goBtn.onclick = async () => {
+        const lista = parsed.clases.filter(c => c.estaca);
+        goBtn.disabled = true;
+        const res = await importRollClases(lista, (i) => { prev.innerHTML = loadingHTML(`Creando clase ${i} de ${lista.length}…`); });
+        await SB.loadCounts().catch(()=>{});
+        goBtn.classList.add('hide');
+        prev.innerHTML = `<div class="${res.errores.length ? 'warn-box' : 'info-box'}" style="margin-top:12px"><b>Listo.</b> ${res.nuevas} clases nuevas · ${res.alumnos} alumnos · ${res.marcas.toLocaleString('es-PE')} marcas.${res.errores.length ? `<br>${res.errores.length} no se pudieron crear:<br>${res.errores.slice(0,8).map(esc).join('<br>')}` : ''}<br>Alertas de base: <b>${SB.counts.alertas || 0}</b>.</div>`;
+        if(CUR.type === 'todas') route();
+      };
+    }
+  });
+}
+async function parseRollFiles(files, prog){
+  await loadScript(SHEETJS_URL);
+  const out = { clases:[], avisos:[] };
+  for(const f of files){
+    const wb = XLSX.read(await f.arrayBuffer(), { type:'array', raw:false });
+    const r = parseRollWorkbook(wb, prog);
+    out.clases.push(...r.clases); out.avisos.push(...r.avisos.map(a => `${f.name} · ${a}`));
+  }
+  return out;
+}
+async function importRollClases(lista, onStep){
+  const res = { nuevas:0, alumnos:0, marcas:0, errores:[] };
+  for(let i=0;i<lista.length;i++){
+    onStep && onStep(i+1);
+    const c = lista[i];
+    try{
+      const r = await SB.rpc('importar_clase', { datos:{ titulo:c.titulo, programa:c.programa, estaca:c.estaca, maestro:c.maestro, horario:c.horario, curso:c.curso, unidad:c.unidad, periodo:c.periodo, dias:c.dias, inicio:c.inicio, alumnos:c.alumnos } });
+      if(r.nueva) res.nuevas++;
+      res.alumnos += r.alumnos; res.marcas += r.marcas;
+    }catch(e){ console.error(e); res.errores.push(`${c.maestro}: ${errMsg(e)}`); }
+  }
+  return res;
+}
+
+/* ---------- Solicitudes de acceso ---------- */
+async function renderSolicitudes(){
+  CUR = { type:'solicitudes', code:null };
+  app.innerHTML = topbar({ back:'#/', title:'Solicitudes de acceso', sub:'Administración' }) + `<main class="wrap"><div id="solBody">${loadingHTML()}</div></main>`;
+  bindTop();
+  const body = $('#solBody');
+  try{
+    const list = await SB.rpc('solicitudes_pendientes');
+    if(!list.length){ body.innerHTML = '<div class="empty">No hay solicitudes pendientes.</div>'; return; }
+    body.innerHTML = list.map((s, i) => `<section class="card"><h2>${esc(s.nombres)} ${esc(s.apellidos)}</h2>
+      <p class="meta">${esc(s.barrio)} · ${esc(stakeShort(s.estaca))} · ${progLabel(s.programa)}</p>
+      <p class="meta">Pide entrar a la clase de <b>${esc(prettyName(s.maestro))}</b> · ${esc(s.horario)} <button class="link-btn" data-go="#/clase/${s.codigo}">Ver clase</button></p>
+      <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-ok="${i}">${ICON.check} Dar acceso</button><button class="btn danger" data-no="${i}">${ICON.x} Rechazar</button></div></section>`).join('');
+    const resolver = async (s, aprobar) => {
+      try{ await SB.rpc('resolver_solicitud', { solicitud:s.id, aprobar }); await SB.loadCounts(); toast(aprobar ? 'Acceso otorgado ✓' : 'Solicitud rechazada', 'ok'); renderSolicitudes(); }
+      catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+    };
+    $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
+    $$('[data-ok]', body).forEach(b => b.onclick = () => resolver(list[+b.dataset.ok], true));
+    $$('[data-no]', body).forEach(b => b.onclick = () => resolver(list[+b.dataset.no], false));
+  }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
+}
+
+/* ---------- Alertas de base ---------- */
+let PERSONAS_CACHE = null;
+async function renderAlertas(tab='pendiente'){
+  CUR = { type:'alertas', code:null };
+  app.innerHTML = topbar({ back:'#/', title:'Alertas de base', sub:'Administración' }) + `<main class="wrap"><div id="alBody">${loadingHTML()}</div></main>`;
+  bindTop();
+  const body = $('#alBody');
+  try{
+    const [lista, cargas] = await Promise.all([SB.rpc('alertas_base'), SB.fetchAll('cargas_base', '*')]);
+    PERSONAS_CACHE = await SB.fetchAll('personas', 'id,nombre,clave,estaca,barrio');
+    const ult = cargas.sort((a,b) => String(b.cargado_en).localeCompare(String(a.cargado_en)))[0];
+    const pend = lista.filter(a => a.vinculo === 'pendiente'), nom = lista.filter(a => a.vinculo === 'no_miembro');
+    const cur = tab === 'pendiente' ? pend : nom;
+    body.innerHTML = `<section class="card"><p class="hint" style="margin-top:0">Un alumno sin coincidencia <b>no significa que no sea miembro</b>: puede que la base esté desactualizada. Sube la base reciente; quienes coincidan salen solos de la alerta. Si alguien sigue aquí después de eso, etiquétalo como no miembro.</p>
+        <p class="meta" style="margin-bottom:12px">${ult ? `Última base subida: <b>${esc(new Date(ult.cargado_en).toLocaleString('es-PE'))}</b> · ${esc(ult.archivo)} · ${ult.resueltas} alertas resueltas` : 'Todavía no se ha subido una base desde esta pantalla.'}</p>
+        <div class="btn-row"><button class="btn primary" data-go="#/admin">${ICON.upload} Subir base actualizada</button></div></section>
+      <div class="seg" style="margin:14px 0" id="alTabs"><button data-t="pendiente" class="${tab==='pendiente'?'on':''}">Con alerta (${pend.length})</button><button data-t="no_miembro" class="${tab==='no_miembro'?'on':''}">No miembros (${nom.length})</button></div>
+      ${cur.map((a, i) => alertaHTML(a, i, ult)).join('') || `<div class="empty">${tab==='pendiente' ? 'No hay alertas. ¡Todos los alumnos coinciden con la base!' : 'Nadie etiquetado como no miembro.'}</div>`}`;
+    $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
+    $$('#alTabs button', body).forEach(b => b.onclick = () => renderAlertas(b.dataset.t));
+    const etiquetar = async (al, vinculo, persona) => {
+      try{ await SB.rpc('etiquetar_alumno', Object.assign({ alumno:al.id, vinculo_nuevo:vinculo }, persona ? { persona } : {})); await SB.loadCounts(); renderAlertas(tab); }
+      catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+    };
+    $$('[data-nm]', body).forEach(b => b.onclick = () => etiquetar(cur[+b.dataset.nm], 'no_miembro'));
+    $$('[data-back]', body).forEach(b => b.onclick = () => etiquetar(cur[+b.dataset.back], 'pendiente'));
+    $$('[data-link]', body).forEach(b => b.onclick = () => { const [i, pid] = b.dataset.link.split('|'); etiquetar(cur[+i], 'vinculado', pid); });
+  }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
+}
+function sugerenciasDe(a){
+  const k = norm(a.nombre);
+  return (PERSONAS_CACHE||[]).map(p => [levenshtein(k, norm(p.nombre)), p]).filter(x => x[0] <= 3).sort((x, y) => x[0]-y[0]).slice(0,3).map(x => x[1]);
+}
+function alertaHTML(a, i, ult){
+  const sigue = ult && a.ultimo_intento && a.ultimo_intento >= ult.cargado_en;
+  const sug = a.vinculo === 'pendiente' ? sugerenciasDe(a) : [];
+  return `<section class="card"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="min-width:0"><b>${esc(prettyName(a.nombre))}</b>
+      <p class="meta">${progLabel(a.programa)} · ${esc(stakeShort(a.estaca))} · ${esc(prettyName(a.maestro))} · ${esc(a.horario)}${a.origen === 'maestro' ? ' · Agregado por el maestro' : ''}</p>
+      ${a.vinculo === 'pendiente' ? `<p class="meta">${sigue ? '<b style="color:var(--amber)">Sigue sin coincidencia tras la última base subida</b>' : 'Falta comprobar con una base más reciente'}</p>` : ''}</div>
+      <button class="btn sm ghost" data-go="#/clase/${a.codigo}">Ver clase</button></div>
+    ${sug.length ? `<div style="margin-top:10px"><small class="hint">¿Es alguna de estas personas?</small>${sug.map(p => `<div class="item" style="margin:6px 0 0"><span class="ii"><b>${esc(prettyName(p.nombre))}</b><small>${esc([p.barrio, stakeShort(p.estaca)].filter(Boolean).join(' · '))}</small></span><button class="btn sm" data-link="${i}|${p.id}">Es esta persona</button></div>`).join('')}</div>` : ''}
+    <div class="btn-row" style="margin-top:10px">${a.vinculo === 'pendiente' ? `<button class="btn sm danger" data-nm="${i}">Etiquetar como no miembro</button>` : `<button class="btn sm" data-back="${i}">Volver a alerta</button>`}</div></section>`;
+}
+async function subirBaseEnLinea(rows, archivo){
+  if(!SB.on() || !SB.admin) return;
+  try{
+    toast('Subiendo la base y revisando alertas…');
+    const r = await SB.rpc('cargar_personas', { filas:rows.filter(x => x.n).map(x => ({ nombre:x.n, estaca:x.k || '', barrio:x.w || '' })), archivo });
+    await SB.loadCounts();
+    sheet(`${sheetHead('Base actualizada')}<dl class="kv"><dt>Personas en el archivo</dt><dd>${r.total}</dd><dt>Personas nuevas</dt><dd>${r.nuevas}</dd><dt>Alertas resueltas</dt><dd>${r.resueltas}</dd><dt>Siguen con alerta</dt><dd>${r.siguen}</dd></dl>
+      <div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="toAl">Ver alertas</button></div>`, { onMount(el, close){ $('#toAl', el).onclick = () => { close(); go('#/alertas'); }; } });
+  }catch(e){ console.error(e); toast('La base se guardó en este dispositivo, pero no se pudo subir: '+errMsg(e), 'error'); }
+}
+
+/* ---------- Búsqueda de alumnos y compartir en clases en línea ---------- */
+const runRemoteSearch = debounce(async (cls, q) => {
+  const el = $('#cres'); if(!el || ST.cq.trim() !== q) return;
+  try{
+    const list = await SB.rpc('buscar_personas', { texto:q });
+    if(ST.cq.trim() !== q) return;
+    const inClass = new Set(classStudents(cls).map(s => s.pid).filter(Boolean));
+    el.innerHTML = list.map(p => `<button class="person ${inClass.has(p.id)?'is-marked':''}" data-pid="${p.id}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, q)}</b><small>${esc([p.barrio, stakeShort(p.estaca)].filter(Boolean).join(' · '))}</small></span>${inClass.has(p.id) ? `<span class="mk done">${ICON.check} En la clase</span>` : `<span class="mk add">${ICON.plus} Agregar</span>`}</button>`).join('') || `<div class="empty-hint"><p>Sin coincidencias</p><small>Puedes agregarlo como alumno nuevo.</small></div>`;
+    $$('.person[data-pid]', el).forEach(b => b.onclick = () => {
+      const p = list.find(x => x.id === b.dataset.pid); if(!p) return;
+      if(inClass.has(p.id)){ toast('Ya está en la clase'); return; }
+      const s = { id:crypto.randomUUID(), pid:p.id, n:p.nombre, src:'base', vinculo:'vinculado', data:{ k:p.estaca, w:p.barrio }, addedAt:Date.now() };
+      cls.students[s.id] = s; markDirty(cls, 'students/'+s.id); saveClasses(); queueSync();
+      toast(`✓ ${prettyName(p.nombre)} agregado`, 'ok');
+      ST.cq = ''; const q2 = $('#cq'); if(q2){ q2.value = ''; q2.focus(); }
+      renderClassSearch(cls); renderStuList(); liveClass(true);
+    });
+  }catch(e){ console.error(e); el.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
+}, 300);
+function renderRemoteClassSearch(cls){
+  const el = $('#cres'); if(!el) return;
+  const q = ST.cq.trim();
+  if(norm(q).length < 3){ el.innerHTML = '<p class="hint" style="margin:0 2px">Escribe el nombre o apellido para buscar en la base de personas.</p>'; return; }
+  runRemoteSearch(cls, q);
+}
+function renderRemoteShare(cls, body){
+  const d = ST.classDate || defaultClassDate(classDates(cls));
+  body.innerHTML = `<section class="card"><h2>${ICON.download} Asistencia en tabla</h2>
+      <p class="hint" style="margin-top:0">Reporte y Excel con una columna por fecha, totales y porcentaje por alumno.</p>
+      <div class="btn-row"><button class="btn primary" id="xs">${ICON.share} Enviar asistencia</button><button class="btn" id="xp">${ICON.download} Descargar reporte</button><button class="btn" id="xd">${ICON.download} Descargar Excel</button><button class="btn" id="ws">${ICON.chat} Resumen del ${fmtShort(d)}</button></div></section>`;
+  $('#xd').onclick = () => exportClass(cls, false);
+  $('#xs').onclick = () => exportClassHtml(cls, true);
+  $('#xp').onclick = () => exportClassHtml(cls, false);
+  $('#ws').onclick = () => {
+    const studs = classStudents(cls); const a = cls.att[d] || {};
+    const pres = studs.filter(s => ATT_OK(a[s.id])), fal = studs.filter(s => a[s.id] === 'F');
+    waOpen(`*${cls.meta.title}* · ${cls.meta.teacher}\n📅 ${fmtDate(d)}\n\n✅ Asistieron: *${pres.length}/${studs.length}*\n${pres.map(s => '• '+prettyName(s.n)).join('\n')}${fal.length ? `\n\n❌ Faltaron (${fal.length}):\n${fal.map(s => '• '+prettyName(s.n)).join('\n')}` : ''}`);
+  };
+}
+async function paintAccesos(cls){
+  const box = $('#accBox'); if(!box || !SB.admin || !cls.dbId) return;
+  try{
+    const list = await SB.rpc('accesos_de_clase', { clase:cls.dbId });
+    box.innerHTML = `<div class="acc-row"><b>Acceso:</b> ${list.length ? '' : 'Nadie la ha adoptado todavía.'}${list.map((a, i) => `<span class="badge ${a.tipo==='titular'?'b-ok':'b-ro'}">${esc(a.nombre)} · ${a.tipo==='titular'?'Titular':'Colaborador'} <button class="link-btn" data-unacc="${i}" aria-label="Quitar acceso">quitar</button></span>`).join(' ')}</div>`;
+    $$('[data-unacc]', box).forEach(b => b.onclick = async () => {
+      const a = list[+b.dataset.unacc];
+      if(!(await confirmBox(`<b>${esc(a.nombre)}</b> dejará de ver esta clase.${a.tipo === 'titular' ? ' La clase quedará libre para que otra persona la adopte.' : ''}`, { title:'Quitar acceso', ok:'Quitar', danger:true }))) return;
+      try{ const { error } = await SB.client.from('clase_accesos').delete().eq('clase_id', cls.dbId).eq('usuario_id', a.usuario_id); if(error) throw error; paintAccesos(cls); }
+      catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+    });
+  }catch(e){ console.error(e); }
 }
 
 /* ============================================================
@@ -962,11 +1566,20 @@ function route(){
   const parts = h.split('/').filter(Boolean);
   window.scrollTo(0,0);
   layer.innerHTML = '';
+  SB.stopWatch();
+  if(SB.on() && !SB.ready){ app.innerHTML = topbar() + `<main class="wrap">${loadingHTML()}</main>`; return; }
+  if(parts[0] === 'entrar') return renderEntrar();
+  if(['todas','solicitudes','alertas'].includes(parts[0])){
+    if(!SB.admin){ go('#/'); return; }
+    if(parts[0] === 'solicitudes') return renderSolicitudes();
+    if(parts[0] === 'alertas') return renderAlertas();
+    return renderTodas(parts[1], parts[2]);
+  }
   if(parts[0] === 'evento' && parts[1] === 'nuevo') return renderEventForm(null);
   if(parts[0] === 'evento' && parts[1] && parts[2] === 'editar') return renderEventForm(parts[1]);
   if(parts[0] === 'evento' && parts[1]) return renderEvent(parts[1]);
-  if(parts[0] === 'clases') return renderClasses();
-  if(parts[0] === 'clase' && parts[1] === 'nueva') return renderClassForm(null);
+  if(parts[0] === 'clases') return SB.on() ? go('#/') : renderClasses();
+  if(parts[0] === 'clase' && parts[1] === 'nueva') return SB.on() ? go('#/') : renderClassForm(null);
   if(parts[0] === 'clase' && parts[1] && parts[2] === 'editar') return renderClassForm(parts[1]);
   if(parts[0] === 'clase' && parts[1]) return renderClass(parts[1]);
   if(parts[0] === 'admin') return isAdmin() ? renderAdmin() : (go('#/'), askAdmin());
@@ -986,7 +1599,7 @@ function bindTop(){
   if(pill) pill.onclick = () => {
     if(CUR.type === 'event') syncEvent(CUR.code);
     else if(CUR.type === 'class') syncClass(CUR.code);
-    else if(!Sync.on()) toast('Todo se guarda en este celular. Para juntar la asistencia, envía el Excel y se importa en otro dispositivo.', '', {ms:4200});
+    else if(!Sync.on() && !SB.on()) toast('Todo se guarda en este celular. Para juntar la asistencia, envía el Excel y se importa en otro dispositivo.', '', {ms:4200});
     else { syncAllPending().then(()=>toast('Todo sincronizado','ok')); }
   };
   paintSync();
@@ -997,7 +1610,8 @@ function paintSync(){
   let pending = 0;
   if(CUR.type === 'event' && EVENTS[CUR.code]) pending = eventPendingCount(EVENTS[CUR.code]);
   else if(CUR.type === 'class' && CLASSES[CUR.code]) pending = CLASSES[CUR.code].canEdit ? classPendingCount(CLASSES[CUR.code]) : 0;
-  if(Sync.on()){
+  const online = Sync.on() || (CUR.type === 'class' && classOnline(CLASSES[CUR.code])) || (SB.on() && CUR.type !== 'event');
+  if(online){
     if(SYNC_STATE.s === 'syncing'){ cls = 'syncing'; lbl = 'Sincronizando…'; }
     else if(SYNC_STATE.s === 'error'){ cls = 'error'; lbl = pending ? `Sin conexión · ${pending} sin enviar` : 'Sin conexión'; }
     else if(pending){ cls = 'pending'; lbl = `${pending} sin enviar`; }
@@ -1008,7 +1622,7 @@ function paintSync(){
   $('.lbl', pill).textContent = lbl;
   const sb = $('#sbStatus'), btn = $('#saveBtn');
   if(sb){
-    if(!Sync.on()) sb.innerHTML = `<b>Guardado en este celular</b>Al terminar, envía la asistencia`;
+    if(!online) sb.innerHTML = `<b>Guardado en este celular</b>Al terminar, envía la asistencia`;
     else if(pending) sb.innerHTML = `<b>${pending} cambio${pending>1?'s':''} sin enviar</b>Toca “Guardar asistencia”`;
     else if(SYNC_STATE.s === 'syncing') sb.innerHTML = `<b>Sincronizando…</b>`;
     else sb.innerHTML = `<b>Todo sincronizado</b>${SYNC_STATE.at ? 'Última vez '+fmtTime(SYNC_STATE.at) : ''}`;
@@ -1029,17 +1643,17 @@ function renderHome(){
   const evs = Object.values(EVENTS).sort((a,b) => String(b.meta.date).localeCompare(String(a.meta.date)) || (b.meta.createdAt||0)-(a.meta.createdAt||0));
   const cls = Object.values(CLASSES).sort((a,b) => (b.meta.createdAt||0)-(a.meta.createdAt||0));
   app.innerHTML = topbar() + `<main class="wrap">
-    <section class="hero">
+    ${SB.on() ? homeOnlineHTML() : `<section class="hero">
       <h1>Marca asistencia en segundos</h1>
       <p><b>¿Eres maestro?</b> Entra a <b>Mi clase</b> para crear tu clase y tomar asistencia. <b>¿Organizas una actividad?</b> Usa <b>Crear evento</b>. No necesitas ningún código para empezar.</p>
-    </section>
+    </section>`}
     <div class="grid2">
-      <article class="action-card cl">
+      ${SB.on() ? '' : `<article class="action-card cl">
         <div class="ac-ico">${ICON.book}</div>
         <h2>Mi clase</h2>
         <p>Control de asistencia diario (Seminario) o semanal (Instituto), con planilla por fechas.</p>
         <div class="btn-row"><button class="btn navy" data-go="#/clases">Mis clases</button><button class="btn" data-go="#/clase/nueva">${ICON.plus} Nueva</button></div>
-      </article>
+      </article>`}
       <article class="action-card ev">
         <div class="ac-ico">${ICON.ticket}</div>
         <h2>Check-in de evento</h2>
@@ -1052,7 +1666,7 @@ function renderHome(){
       ${evs.length ? evs.slice(0,12).map(ev => `<button class="item" data-go="#/evento/${ev.code}"><span class="ico t">${ICON.ticket}</span><span class="ii"><b>${esc(ev.meta.title)}</b><small>${esc([fmtDate(ev.meta.date), ev.meta.ward || ev.meta.stake].filter(Boolean).join(' · '))} · ${ev.code}</small></span><span class="num-badge">${eventRows(ev).length}</span></button>`).join('')
         : `<div class="empty">Aún no hay eventos. Crea uno o únete con un código.</div>`}
     </section>
-    ${cls.length ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/clases">Ver todas</button></div>
+    ${cls.length && !SB.on() ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/clases">Ver todas</button></div>
       ${cls.slice(0,4).map(classItemHTML).join('')}</section>` : ''}
     <section class="section">
       <form class="card join-card" id="joinForm" autocomplete="off">
@@ -1062,7 +1676,7 @@ function renderHome(){
       </form>
     </section>
     <section class="section"><div class="btn-row"><button class="btn" id="impBk">${ICON.upload} Importar reporte, Excel o backup</button><button class="btn" id="expAll">${ICON.download} Backup de todo</button></div></section>
-    <p class="foot"><span id="dataInfo">Base: ${ROSTER.people.length.toLocaleString('es-PE')} personas · act. ${fmtVersion(ROSTER.v)}</span><br>Sincronización: ${Sync.on() ? 'activa' : 'no configurada'} · <span id="verTap">v${APP_VERSION}</span></p>
+    <p class="foot"><span id="dataInfo">${SB.on() ? 'Check-in Asistencia' : `Base: ${ROSTER.people.length.toLocaleString('es-PE')} personas · act. ${fmtVersion(ROSTER.v)}`}</span><br>${SB.on() ? `<button class="link-btn" id="adminLink">${SB.admin ? 'Cerrar sesión de administrador' : 'Soy administrador'}</button>` : `Sincronización: ${Sync.on() ? 'activa' : 'no configurada'}`} · <span id="verTap">v${APP_VERSION}</span></p>
   </main>`;
   bindTop();
   $('#joinForm').onsubmit = e => { e.preventDefault(); openByCode($('#joinCode').value); };
@@ -1070,6 +1684,7 @@ function renderHome(){
   $('#impBk').onclick = importBackupPicker;
   $('#expAll').onclick = () => downloadBackup({ kind:'ca-backup', type:'all', ver:1, exportedAt:new Date().toISOString(), events:EVENTS, classes:Object.fromEntries(Object.entries(CLASSES).map(([k, v]) => [k, cleanForBackup(v)])) }, 'Backup Check-in completo');
   bindAdminTriggers();
+  if(SB.on()) bindHomeOnline();
 }
 function classItemHTML(c){
   const n = classStudents(c).length;
@@ -1126,6 +1741,7 @@ async function openEvent(code, linkMeta){
 }
 async function openClass(code){
   if(CLASSES[code]){ go('#/clase/'+code); return; }
+  if(SB.on()) return openRemoteClass(code);
   if(!Sync.on()){
     if(await confirmBox(`La clase <b>${code}</b> no está en este celular. Pide al maestro el reporte (o Excel) de su clase y ábrelo aquí: trae un respaldo que la carga completa.`, { title:'Importar clase', ok:'Elegir archivo', cancel:'Cerrar' })) importBackupPicker();
     return;
@@ -1657,29 +2273,32 @@ function renderClassForm(code){
    ============================================================ */
 function renderClass(code){
   const cls = CLASSES[code];
+  if(!cls && SB.on()){ app.innerHTML = topbar({ back:'#/', title:'Abriendo clase' }) + `<main class="wrap">${loadingHTML()}</main>`; bindTop(); openRemoteClass(code); return; }
   if(!cls){ go('#/clases'); setTimeout(() => openClass(code), 60); return; }
   if(CUR.code !== code){ ST.classDate = null; ST.planMonth = null; ST.cq = ''; ST.cscope = null; if(!classStudents(cls).length && cls.canEdit) ST.ctab = 'alumnos'; else if(ST.ctab === 'alumnos' && !cls.canEdit) ST.ctab = 'hoy'; }
   CUR = { type:'class', code };
   const m = cls.meta;
   const daysTxt = (m.days||[]).slice().sort((a,b)=>((a||7)-(b||7))).map(d => DOW[d]).join(', ');
-  app.innerHTML = topbar({ back:'#/clases', title:m.title, sub:m.teacher }) + `<main class="wrap wide has-savebar">
+  app.innerHTML = topbar({ back:classBack(cls), title:cls.remote ? prettyName(m.teacher) : m.title, sub:cls.remote ? m.title : m.teacher }) + `<main class="wrap wide has-savebar">
     <section class="card ev-head">
       <div class="eh-main"><div style="min-width:0"><span class="badge ${m.program==='S'?'b-sem':'b-inst'}">${progLabel(m.program)}</span> ${cls.canEdit ? '' : '<span class="badge b-ro">'+ICON.lock.replace('<svg','<svg style="width:12px;height:12px"')+' Solo lectura</span>'}
-        <h1 style="margin-top:6px">${esc(m.title)}</h1><p class="meta">Maestro: <b>${esc(m.teacher)}</b>${m.stake ? ' · '+esc(m.ward || m.stake) : ''} · ${esc(daysTxt)}</p></div>
+        <h1 style="margin-top:6px">${esc(m.title)}</h1><p class="meta">Maestro: <b>${esc(cls.remote ? prettyName(m.teacher) : m.teacher)}</b>${m.stake ? ' · '+esc(m.ward || (cls.remote ? stakeShort(m.stake) : m.stake)) : ''} · ${esc(daysTxt)}</p></div>
       <div class="counter"><b id="clCount">0</b><span>alumnos</span></div></div>
-      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button>${cls.canEdit ? '<span class="hint">Código para encontrar la clase y descargar la asistencia.</span>' : `<button class="btn sm" id="unlock">${ICON.lock} Soy el maestro · ingresar PIN</button>`}</div>
+      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button>${cls.remote ? '<span class="hint">Los cambios se guardan en línea.</span>' : cls.canEdit ? '<span class="hint">Código para encontrar la clase y descargar la asistencia.</span>' : `<button class="btn sm" id="unlock">${ICON.lock} Soy el maestro · ingresar PIN</button>`}</div>
+      ${cls.remote && SB.admin ? '<div id="accBox"></div>' : ''}
     </section>
     <nav class="tabs" id="tabs">${tabBtn('hoy','Asistencia',ICON.check,'',ST.ctab)}${tabBtn('planilla','Planilla',ICON.grid,'',ST.ctab)}${tabBtn('alumnos','Alumnos',ICON.users,'',ST.ctab)}${tabBtn('compartir','Compartir',ICON.share,'',ST.ctab)}</nav>
     <div id="tabBody"></div>
-  </main>${Sync.on() ? saveBar(cls.canEdit ? 'Guardar asistencia' : 'Actualizar') : saveBar('Enviar asistencia', true)}`;
+  </main>${classOnline(cls) ? saveBar(cls.canEdit ? 'Guardar asistencia' : 'Actualizar') : saveBar('Enviar asistencia', true)}`;
   bindTop();
   $('#codeChip').onclick = () => copyText(code, 'Código copiado');
   const ul = $('#unlock'); if(ul) ul.onclick = () => unlockClass(cls);
   $$('#tabs [data-tab]').forEach(b => b.onclick = () => { ST.ctab = b.dataset.tab; $$('#tabs [data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderClassTab(); });
-  $('#saveBtn').onclick = () => Sync.on() ? syncClass(code) : exportClassHtml(cls, true);
+  $('#saveBtn').onclick = () => classOnline(cls) ? syncClass(code) : exportClassHtml(cls, true);
   renderClassTab();
   liveClass(true);
-  if(Sync.on()) syncClass(code, {silent:true});
+  if(classOnline(cls)) syncClass(code, {silent:true});
+  if(cls.remote){ paintAccesos(cls); if(cls.dbId) SB.watch('asistencia', 'clase_id=eq.'+cls.dbId, () => syncRemoteClass(code, {silent:true})); }
 }
 function liveClass(skipTab){
   const cls = CLASSES[CUR.code]; if(!cls) return;
@@ -1713,7 +2332,7 @@ function renderClassTab(){
     const d = ST.classDate; const idx = dates.indexOf(d);
     const att = cls.att[d] || {};
     if(!studs.length){ body.innerHTML = `<div class="empty">La clase no tiene alumnos todavía.${ro ? '' : '<br><br><button class="btn primary" id="toAl">'+ICON.userPlus+' Agregar alumnos</button>'}</div>`; const t = $('#toAl'); if(t) t.onclick = () => { ST.ctab = 'alumnos'; renderClass(CUR.code); }; return; }
-    const P = studs.filter(s => att[s.id] === 'P').length, F = studs.filter(s => att[s.id] === 'F').length;
+    const P = studs.filter(s => ATT_OK(att[s.id])).length, F = studs.filter(s => att[s.id] === 'F').length;
     const tdy = todayISO();
     const pending = dates.filter(x => x <= tdy && studs.some(s => !(cls.att[x]||{})[s.id]));
     const rng = classRange(cls);
@@ -1733,8 +2352,8 @@ function renderClassTab(){
       </div>
       <div class="roll" id="roll">${studs.map(s => {
         const v = att[s.id] || '';
-        return `<div class="roll-item ${v==='P'?'p':v==='F'?'f':''}" data-sid="${s.id}"><span class="av">${esc(initials(s.n))}</span><div class="ri"><b>${esc(prettyName(s.n))}</b><small>${esc(stuSub(s))}</small></div>
-          <div class="pf"><button class="pf-btn p ${v==='P'?'on':''}" data-v="P" ${ro?'disabled':''}>${ICON.check}<span>Asistió</span></button><button class="pf-btn f ${v==='F'?'on':''}" data-v="F" ${ro?'disabled':''}>${ICON.x}<span>Falta</span></button></div></div>`;
+        return `<div class="roll-item ${ATT_OK(v)?'p':v==='F'?'f':''}" data-sid="${s.id}"><span class="av">${esc(initials(s.n))}</span><div class="ri"><b>${esc(prettyName(s.n))}</b><small>${esc(stuSub(s))}${attNote(v)}</small></div>
+          <div class="pf"><button class="pf-btn p ${ATT_OK(v)?'on':''}" data-v="P" ${ro?'disabled':''}>${ICON.check}<span>Asistió</span></button><button class="pf-btn f ${v==='F'?'on':''}" data-v="F" ${ro?'disabled':''}>${ICON.x}<span>Falta</span></button></div></div>`;
       }).join('')}</div>
       ${ro ? '' : '<p class="hint" style="text-align:center;margin-top:12px">Toca el nombre para marcar “Asistió” rápido. Toca otra vez para quitar.</p>'}`;
     const dp = $('#dPrev'), dn = $('#dNext');
@@ -1773,7 +2392,7 @@ function renderClassTab(){
     body.innerHTML = `${ro ? '' : `<section class="card">
         <h2>${ICON.userPlus} Agregar alumnos</h2>
         <div class="search-box sm"><span class="si">${ICON.search}</span><input id="cq" type="search" placeholder="Buscar en la base por nombre…" autocomplete="off" spellcheck="false" value="${esc(ST.cq)}"></div>
-        ${opts.length > 1 ? `<div class="scope-row"><div class="seg" id="cscope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.cscope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div></div>` : '<div style="height:10px"></div>'}
+        ${opts.length > 1 && !cls.remote ? `<div class="scope-row"><div class="seg" id="cscope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.cscope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div></div>` : '<div style="height:10px"></div>'}
         <div id="cres" class="results"></div>
         <button class="manual-cta" id="newStu"><span class="mc-ico">${ICON.userPlus}</span><span><b>Alumno nuevo</b><small>No es miembro o no aparece en la base · solo nombre, estaca y barrio</small></span>${ICON.next}</button>
       </section>`}
@@ -1790,7 +2409,7 @@ function renderClassTab(){
     renderClassShare(cls, body);
   }
 }
-function stuSub(s){ const d = s.data || {}; return [s.src === 'nuevo' ? 'Nuevo' : '', d.w, d.k].filter(Boolean).join(' · '); }
+function stuSub(s){ const d = s.data || {}; return [s.src === 'nuevo' ? 'Nuevo' : '', d.w, SB.on() ? stakeShort(d.k) : d.k, SB.admin && s.vinculo === 'pendiente' ? '⚠ Sin coincidencia en la base' : '', SB.admin && s.vinculo === 'no_miembro' ? 'No miembro' : ''].filter(Boolean).join(' · '); }
 function setAtt(cls, d, sid, v, noSave){
   if(!cls.att[d]) cls.att[d] = {};
   if(v) cls.att[d][sid] = v; else delete cls.att[d][sid];
@@ -1800,11 +2419,12 @@ function setAtt(cls, d, sid, v, noSave){
 }
 function refreshRoll(cls, d){
   const att = cls.att[d] || {}; const studs = classStudents(cls);
-  $$('#roll .roll-item').forEach(it => { const v = att[it.dataset.sid] || ''; it.classList.toggle('p', v==='P'); it.classList.toggle('f', v==='F'); $('.pf-btn.p', it).classList.toggle('on', v==='P'); $('.pf-btn.f', it).classList.toggle('on', v==='F'); });
-  const P = studs.filter(s => att[s.id] === 'P').length, F = studs.filter(s => att[s.id] === 'F').length;
+  $$('#roll .roll-item').forEach(it => { const v = att[it.dataset.sid] || ''; it.classList.toggle('p', ATT_OK(v)); it.classList.toggle('f', v==='F'); $('.pf-btn.p', it).classList.toggle('on', ATT_OK(v)); $('.pf-btn.f', it).classList.toggle('on', v==='F'); });
+  const P = studs.filter(s => ATT_OK(att[s.id])).length, F = studs.filter(s => att[s.id] === 'F').length;
   const t = $('.tally'); if(t) t.innerHTML = `<span style="color:var(--green)">✓ ${P}</span> · <span style="color:var(--red)">✗ ${F}</span> · ${studs.length - P - F} sin marcar`;
 }
 function renderClassSearch(cls){
+  if(cls.remote) return renderRemoteClassSearch(cls);
   const el = $('#cres'); if(!el) return;
   const q = ST.cq.trim();
   if(norm(q).length < 2){ el.innerHTML = '<p class="hint" style="margin:0 2px">Escribe el nombre o apellido para buscar en la base de datos.</p>'; return; }
@@ -1847,7 +2467,7 @@ function removeStudent(cls, sid, silent){
 }
 function studentStats(cls, sid, dates){
   let P = 0, F = 0, T = 0;
-  dates.forEach(d => { const a = cls.att[d]; if(!a || !Object.keys(a).length) return; T++; if(a[sid] === 'P') P++; else if(a[sid] === 'F') F++; });
+  dates.forEach(d => { const a = cls.att[d]; if(!a || !Object.keys(a).length) return; T++; if(ATT_OK(a[sid])) P++; else if(a[sid] === 'F') F++; });
   return { P, F, T, pct: T ? Math.round(P*100/T) : '' };
 }
 function showStudent(cls, s){
@@ -1875,7 +2495,7 @@ function openStudentCal(cls, sid, onClose){
         const s = studs[i]; if(!s){ close(); return; }
         const dates = classDates(cls); const dset = new Set(dates);
         const t = todayISO();
-        const P = dates.filter(d => (cls.att[d]||{})[s.id] === 'P').length;
+        const P = dates.filter(d => ATT_OK((cls.att[d]||{})[s.id])).length;
         const F = dates.filter(d => (cls.att[d]||{})[s.id] === 'F').length;
         const T = dates.length, pct = studentStats(cls, s.id, dates).pct;
         const rng = classRange(cls);
@@ -1896,7 +2516,7 @@ function openStudentCal(cls, sid, onClose){
             const ds = `${key}-${pad2(dd)}`;
             if(dset.has(ds)){
               const v = (cls.att[ds]||{})[s.id] || '';
-              cells += `<button class="cal-d ${v==='P'?'p':v==='F'?'f':'e'} ${ds===t?'t':''}" data-d="${ds}" ${ro?'disabled':''} title="${esc(fmtDate(ds))}"><span class="n">${dd}</span>${v==='P' ? CAL_OK : v==='F' ? CAL_NO : '<i></i>'}</button>`;
+              cells += `<button class="cal-d ${ATT_OK(v)?'p':v==='F'?'f':'e'} ${ds===t?'t':''}" data-d="${ds}" ${ro?'disabled':''} title="${esc(fmtDate(ds))}"><span class="n">${dd}</span>${ATT_OK(v) ? CAL_OK : v==='F' ? CAL_NO : '<i></i>'}</button>`;
             } else {
               const why = blockedReason(ds);
               const isHol = why && why !== 'Domingo' && cdays.includes(new Date(y, mo, dd).getDay()) && ds >= rng.s && (!rng.e || ds <= rng.e);
@@ -1918,7 +2538,7 @@ function openStudentCal(cls, sid, onClose){
         if(!ro){
           $$('.cal-d', box).forEach(b => b.onclick = () => {
             const d = b.dataset.d; const v = (cls.att[d]||{})[s.id] || '';
-            setAtt(cls, d, s.id, v === '' ? 'P' : v === 'P' ? 'F' : '');
+            setAtt(cls, d, s.id, v === '' ? 'P' : ATT_OK(v) ? 'F' : '');
             const top = el.scrollTop; render(); el.scrollTop = top;
           });
           $$('[data-fill]', box).forEach(b => b.onclick = () => {
@@ -1951,7 +2571,7 @@ function openNewStudent(cls){
       $('#ok', el).onclick = () => {
         const v = collectPersonForm(el); if(!v) return;
         const loc = readSW(el, 'm');
-        const s = { id: uid('s'), pid: null, n: `${v.apellidos}, ${v.nombres}`, src:'nuevo', form:{ nombres:v.nombres, apellidos:v.apellidos }, data:{ k: loc.stake, w: loc.ward }, addedAt: Date.now() };
+        const s = { id: cls.remote ? crypto.randomUUID() : uid('s'), pid: null, n: `${v.apellidos}, ${v.nombres}`, src:'nuevo', form:{ nombres:v.nombres, apellidos:v.apellidos }, data:{ k: loc.stake, w: loc.ward }, addedAt: Date.now() };
         cls.students[s.id] = s; markDirty(cls, 'students/'+s.id);
         saveClasses(); queueSync(); close();
         toast(`✓ ${v.nombres} agregado a la clase`, 'ok');
@@ -1971,10 +2591,10 @@ function renderPlanilla(cls, body){
   const mLabel = k => { const [y,m] = k.split('-'); return MES_L[+m-1][0].toUpperCase()+MES_L[+m-1].slice(1)+' '+y; };
   if(!studs.length){ body.innerHTML = '<div class="empty">Agrega alumnos para ver la planilla.</div>'; return; }
   const t = todayISO();
-  body.innerHTML = `<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario' : 'Casilla: ✓ asistió → ✗ falta → vacío · Nombre: calendario del alumno'}</span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
+  body.innerHTML = `<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}</span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
     ${ds.length ? `<div class="plan-wrap"><table class="plan ${ro?'ro':''}" id="plan"><thead><tr><th class="sticky">Alumno</th>${ds.map(d => `<th class="${d===t?'today':''}${wks.has(d)?' wk':''}"><span>${DOW[parseISO(d).getDay()]}</span>${fmtShort(d)}</th>`).join('')}<th>%</th></tr></thead>
-      <tbody>${studs.map(s => { const st = studentStats(cls, s.id, ds); return `<tr data-sid="${s.id}"><td class="sticky" title="${esc(prettyName(s.n))}">${esc(prettyName(s.n))}</td>${ds.map(d => { const v = (cls.att[d]||{})[s.id] || ''; return `<td class="cell ${v==='P'?'p':v==='F'?'f':''}${wks.has(d)?' wk':''}" data-d="${d}">${v==='P'?'✓':v==='F'?'✗':''}</td>`; }).join('')}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')}</tbody>
-      <tfoot><tr><td class="sticky">Asistentes</td>${ds.map(d => `<td data-foot="${d}"${wks.has(d)?' class="wk"':''}>${studs.filter(s => (cls.att[d]||{})[s.id] === 'P').length}</td>`).join('')}<td></td></tr></tfoot></table></div>` : '<div class="empty">No hay sesiones en este periodo.</div>'}`;
+      <tbody>${studs.map(s => { const st = studentStats(cls, s.id, ds); return `<tr data-sid="${s.id}"><td class="sticky" title="${esc(prettyName(s.n))}">${esc(prettyName(s.n))}</td>${ds.map(d => { const v = (cls.att[d]||{})[s.id] || ''; return `<td class="cell ${ATT_OK(v)?'p':v==='F'?'f':''}${wks.has(d)?' wk':''}" data-d="${d}">${ATT_TXT[v]||''}</td>`; }).join('')}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')}</tbody>
+      <tfoot><tr><td class="sticky">Asistentes</td>${ds.map(d => `<td data-foot="${d}"${wks.has(d)?' class="wk"':''}>${studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length}</td>`).join('')}<td></td></tr></tfoot></table></div>` : '<div class="empty">No hay sesiones en este periodo.</div>'}`;
   $('#pm').onchange = e => { ST.planMonth = e.target.value; renderPlanilla(cls, body); };
   $('#pX').onclick = () => exportClass(cls, false);
   $('#pP').onclick = () => exportClassHtml(cls, true);
@@ -1985,14 +2605,15 @@ function renderPlanilla(cls, body){
     const td = e.target.closest('td.cell'); if(!td) return;
     const sid = td.parentElement.dataset.sid, d = td.dataset.d;
     const cur = (cls.att[d]||{})[sid] || '';
-    const nv = cur === '' ? 'P' : cur === 'P' ? 'F' : '';
+    const nv = cur === '' ? 'P' : ATT_OK(cur) ? 'F' : '';
     setAtt(cls, d, sid, nv);
-    td.classList.toggle('p', nv==='P'); td.classList.toggle('f', nv==='F'); td.textContent = nv==='P'?'✓':nv==='F'?'✗':'';
+    td.classList.toggle('p', ATT_OK(nv)); td.classList.toggle('f', nv==='F'); td.textContent = ATT_TXT[nv]||'';
     const st = studentStats(cls, sid, ds); $('td.pct', td.parentElement).textContent = st.pct === '' ? '—' : st.pct+'%';
-    const ft = $(`[data-foot="${d}"]`); if(ft) ft.textContent = studs.filter(s => (cls.att[d]||{})[s.id] === 'P').length;
+    const ft = $(`[data-foot="${d}"]`); if(ft) ft.textContent = studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length;
   };
 }
 function renderClassShare(cls, body){
+  if(cls.remote) return renderRemoteShare(cls, body);
   const ro = !cls.canEdit; const code = cls.code;
   const d = ST.classDate || defaultClassDate(classDates(cls));
   body.innerHTML = `
@@ -2029,7 +2650,7 @@ function renderClassShare(cls, body){
   $('#xs2').onclick = () => exportClassHtml(cls, true);
   $('#ws').onclick = () => {
     const studs = classStudents(cls); const a = cls.att[d] || {};
-    const pres = studs.filter(s => a[s.id] === 'P'), fal = studs.filter(s => a[s.id] === 'F');
+    const pres = studs.filter(s => ATT_OK(a[s.id])), fal = studs.filter(s => a[s.id] === 'F');
     waOpen(`*${cls.meta.title}* · ${cls.meta.teacher}\n📅 ${fmtDate(d)}\n\n✅ Asistieron: *${pres.length}/${studs.length}*\n${pres.map(s => '• '+prettyName(s.n)).join('\n')}${fal.length ? `\n\n❌ Faltaron (${fal.length}):\n${fal.map(s => '• '+prettyName(s.n)).join('\n')}` : ''}`);
   };
   $('#bk').onclick = async () => { await ensureClassSigs(cls); downloadBackup({ kind:'ca-backup', type:'class', ver:1, exportedAt:new Date().toISOString(), data: cleanForBackup(cls) }, 'Backup clase '+cls.meta.title); };
@@ -2248,13 +2869,13 @@ async function exportClass(cls, share){
     ws.getRow(hr).values = heads; xlHeader(ws.getRow(hr));
     studs.forEach((s, i) => {
       const st = studentStats(cls, s.id, dates);
-      const row = ws.addRow([i+1, s.n, ...dates.map(d => { const v = (cls.att[d]||{})[s.id]; return v === 'P' ? '✓' : v === 'F' ? '✗' : ''; }), st.P, st.F, st.pct === '' ? '' : st.pct/100]);
+      const row = ws.addRow([i+1, s.n, ...dates.map(d => { const v = (cls.att[d]||{})[s.id]; return ATT_TXT[v] || ''; }), st.P, st.F, st.pct === '' ? '' : st.pct/100]);
       xlBody(row, i);
       dates.forEach((d, j) => { const c = row.getCell(3+j); c.alignment = {horizontal:'center',vertical:'middle'}; if(c.value === '✓'){ c.font = {bold:true,color:{argb:'FF1E8449'}}; c.fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFE7F5EC'}}; } else if(c.value === '✗'){ c.font = {bold:true,color:{argb:'FFC0392B'}}; c.fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFFBEAE8'}}; } });
       const pc = row.getCell(heads.length); pc.numFmt = '0%'; pc.font = {bold:true}; pc.alignment = {horizontal:'center'};
       row.getCell(1).alignment = {horizontal:'center'};
     });
-    const tot = ws.addRow(['', 'Asistentes por sesión', ...dates.map(d => studs.filter(s => (cls.att[d]||{})[s.id] === 'P').length), '', '', '']);
+    const tot = ws.addRow(['', 'Asistentes por sesión', ...dates.map(d => studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length), '', '', '']);
     tot.eachCell({includeEmpty:true}, c => { c.font = {bold:true,color:{argb:'FF132C3E'}}; c.border = BORDER; c.alignment = {horizontal:'center'}; c.fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFE6F2F2'}}; });
     ws.getColumn(1).width = 5; ws.getColumn(2).width = 36;
     dates.forEach((d, j) => ws.getColumn(3+j).width = 6.5);
@@ -2354,7 +2975,7 @@ function reportDetail(id, title, badge, kv, sig, {pre='', sub='', nav=false}={})
 function reportCalendar(cls, s, dates){
   const t = todayISO(), dset = new Set(dates), rng = classRange(cls), cdays = cls.meta.days || [];
   const att = d => (cls.att[d]||{})[s.id] || '';
-  const P = dates.filter(d => att(d) === 'P').length, F = dates.filter(d => att(d) === 'F').length, T = dates.length;
+  const P = dates.filter(d => ATT_OK(att(d))).length, F = dates.filter(d => att(d) === 'F').length, T = dates.length;
   const pct = studentStats(cls, s.id, dates).pct;
   const start = parseISO(dates.length && dates[0] < rng.s ? dates[0] : rng.s);
   const months = []; const cur = new Date(start.getFullYear(), start.getMonth(), 1); const end = parseISO(rng.e && rng.e < t ? rng.e : t);
@@ -2364,7 +2985,7 @@ function reportCalendar(cls, s, dates){
     let c = '<i>lun</i><i>mar</i><i>mié</i><i>jue</i><i>vie</i><i>sáb</i><i>dom</i>' + '<s></s>'.repeat(lead);
     for(let dd=1; dd<=days; dd++){
       const ds = `${key}-${pad2(dd)}`;
-      if(dset.has(ds)){ const v = att(ds); c += `<b class="${v==='P'?'p':v==='F'?'f':'e'}${ds===t?' t':''}">${dd}</b>`; }
+      if(dset.has(ds)){ const v = att(ds); c += `<b class="${ATT_OK(v)?'p':v==='F'?'f':'e'}${ds===t?' t':''}">${dd}</b>`; }
       else { const why = blockedReason(ds); c += (why && why !== 'Domingo' && cdays.includes(new Date(y, mo, dd).getDay()) && ds >= rng.s && (!rng.e || ds <= rng.e)) ? `<b class="h" title="${esc(why)}">${dd}</b>` : `<u>${dd}</u>`; }
     }
     return `<div class="cm"><h4>${MES_L[mo][0].toUpperCase()+MES_L[mo].slice(1)} de ${y}</h4><div class="cg">${c}</div></div>`;
@@ -2463,11 +3084,11 @@ function buildClassReport(cls){
   body += `<nav class="tabs"><button data-t="plan" class="on">Planilla</button><button data-t="dia">Por fecha</button><button data-t="alu">Alumnos</button></nav>`;
   body += `<section data-s="plan"><div class="tools"><select id="m">${months.map(k => `<option value="${k}" ${k===curM?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${curM==='all'?'selected':''}>Todo el periodo</option></select><input id="f" type="search" placeholder="Buscar alumno…"></div>`
     + `<div class="wrap"><table class="plan"><thead><tr><th class="nm">Alumno</th>${dates.map(d => `<th class="dt${rwk.has(d)?' wk':''}" data-m="${d.slice(0,7)}"><small>${DOW[parseISO(d).getDay()]}</small>${fmtShort(d)}</th>`).join('')}<th>Asist.</th><th>Faltas</th><th>%</th></tr></thead><tbody>`
-    + studs.map((s, i) => { const st = studentStats(cls, s.id, dates); return `<tr data-n="${nzAttr(s.n)}"><td class="nm clk" data-det="s${i}" style="cursor:pointer">${i+1}. ${esc(prettyName(s.n))}${s.src === 'nuevo' ? ' <span class="bd">Nuevo</span>' : ''}</td>${dates.map(d => { const v = (cls.att[d]||{})[s.id] || ''; return `<td class="c ${v==='P'?'p':v==='F'?'f':''}${rwk.has(d)?' wk':''}" data-m="${d.slice(0,7)}">${v==='P'?'✓':v==='F'?'✗':''}</td>`; }).join('')}<td class="pct">${st.P}</td><td class="pct">${st.F}</td><td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')
-    + `</tbody><tfoot><tr><td class="nm">Asistentes</td>${dates.map(d => `<td${rwk.has(d)?' class="wk"':''} data-m="${d.slice(0,7)}">${studs.filter(s => (cls.att[d]||{})[s.id] === 'P').length}</td>`).join('')}<td></td><td></td><td></td></tr></tfoot></table></div></section>`;
+    + studs.map((s, i) => { const st = studentStats(cls, s.id, dates); return `<tr data-n="${nzAttr(s.n)}"><td class="nm clk" data-det="s${i}" style="cursor:pointer">${i+1}. ${esc(prettyName(s.n))}${s.src === 'nuevo' ? ' <span class="bd">Nuevo</span>' : ''}</td>${dates.map(d => { const v = (cls.att[d]||{})[s.id] || ''; return `<td class="c ${ATT_OK(v)?'p':v==='F'?'f':''}${rwk.has(d)?' wk':''}" data-m="${d.slice(0,7)}">${ATT_TXT[v]||''}</td>`; }).join('')}<td class="pct">${st.P}</td><td class="pct">${st.F}</td><td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')
+    + `</tbody><tfoot><tr><td class="nm">Asistentes</td>${dates.map(d => `<td${rwk.has(d)?' class="wk"':''} data-m="${d.slice(0,7)}">${studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length}</td>`).join('')}<td></td><td></td><td></td></tr></tfoot></table></div></section>`;
   const lastTaken = taken[taken.length-1] || dates[dates.length-1] || '';
   body += `<section data-s="dia" hidden><div class="tools"><select id="d">${dates.slice().reverse().map(d => `<option value="${d}" ${d===lastTaken?'selected':''}>${esc(fmtDate(d))}</option>`).join('')}</select></div>`
-    + dates.map(d => { const a = cls.att[d] || {}; const P = studs.filter(s => a[s.id] === 'P'), F = studs.filter(s => a[s.id] === 'F'), N = studs.filter(s => !a[s.id]);
+    + dates.map(d => { const a = cls.att[d] || {}; const P = studs.filter(s => ATT_OK(a[s.id])), F = studs.filter(s => a[s.id] === 'F'), N = studs.filter(s => !a[s.id]);
       const li = arr => arr.length ? `<ol>${arr.map(s => `<li>${esc(prettyName(s.n))}</li>`).join('')}</ol>` : '<p style="color:#8A9AA5;margin:6px 0 0">—</p>';
       return `<div class="card" data-d="${d}"><h2>${esc(fmtDate(d))} · ${P.length} de ${studs.length} asistieron</h2><div class="lists"><div class="ok"><h3>✓ Asistieron (${P.length})</h3>${li(P)}</div><div class="no"><h3>✗ Faltaron (${F.length})</h3>${li(F)}</div><div class="nm2"><h3>Sin marcar (${N.length})</h3>${li(N)}</div></div></div>`; }).join('')
     + `</section>`;
@@ -2497,7 +3118,7 @@ async function exportClassHtml(cls, share){
   }catch(e){ console.error(e); toast(e.message || 'No se pudo generar el reporte', 'error'); }
 }
 
-const isAdmin = () => { try{ return sessionStorage.getItem('ca_admin') === '1'; }catch(e){ return false; } };
+const isAdmin = () => { if(SB.on()) return SB.admin; try{ return sessionStorage.getItem('ca_admin') === '1'; }catch(e){ return false; } };
 function bindAdminTriggers(){
   let taps = [], timer = null;
   const tapZone = $('#verTap');
@@ -2512,6 +3133,7 @@ function bindAdminTriggers(){
   }
 }
 function askAdmin(){
+  if(SB.on()){ if(SB.admin) go('#/todas'); else askAdminOnline(); return; }
   if(isAdmin()){ go('#/admin'); return; }
   sheet(`${sheetHead(ICON.lock.replace('<svg','<svg style="vertical-align:-3px;margin-right:6px"')+'Acceso restringido')}<div class="field"><label>Contraseña</label><input id="pw" type="password" autocomplete="off"></div><div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">Entrar</button></div>`, {
     onMount(el, close){
@@ -2527,7 +3149,7 @@ function renderAdmin(){
   const P = ROSTER.people;
   const byStake = {}; P.forEach(p => { const k = p.k || '(sin estaca)'; const o = byStake[k] = byStake[k] || {t:0}; o.t++; });
   const manualN = P.filter(p => p.src === 'manual').length;
-  app.innerHTML = topbar({ back:'#/', title:'Administración', sub:'Base de datos y sincronización' }) + `<main class="wrap">
+  app.innerHTML = topbar({ back:'#/', title:'Administración', sub:SB.on() ? 'Base de personas y periodos' : 'Base de datos y sincronización' }) + `<main class="wrap">
     <section class="card"><h2>${ICON.db} Base de datos</h2>
       <div class="kpis"><div class="kpi"><b>${P.length.toLocaleString('es-PE')}</b><span>personas</span></div><div class="kpi"><b>${Object.keys(byStake).length}</b><span>estacas</span></div><div class="kpi"><b>${manualN}</b><span>agregadas a mano</span></div><div class="kpi"><b style="font-size:15px">${fmtVersion(ROSTER.v)}</b><span>versión · ${esc(ROSTER.src)}</span></div></div>
       <table class="mini"><thead><tr><th>Estaca</th><th class="r">Personas</th></tr></thead><tbody>${Object.entries(byStake).sort((a,b)=>b[1].t-a[1].t).map(([k,o]) => `<tr><td>${esc(k)}</td><td class="r">${o.t}</td></tr>`).join('')}</tbody></table>
@@ -2586,6 +3208,7 @@ function renderAdmin(){
     <div class="btn-row" style="margin-top:16px"><button class="btn ghost" id="logout">${ICON.logout} Cerrar sesión de administrador</button></div>
   </main>`;
   bindTop();
+  if(SB.on()){ const db = $('#dbUrl'), pub = $('#pubCloud'); if(db) db.closest('section').classList.add('hide'); if(pub) pub.closest('section').classList.add('hide'); }
   $('#impFile').onchange = e => { const f = e.target.files[0]; if(f) handleImport(f); e.target.value = ''; };
   $('#addP').onclick = () => editPerson(null);
   const aq = $('#aq'); aq.oninput = debounce(() => adminSearch(aq.value), 150);
@@ -2767,6 +3390,7 @@ function applyImport(mode){
   people.forEach(p => { if(!p.id) p.id = pidFor(p.n, p.w); });
   people.sort((a,b) => a.n.localeCompare(b.n,'es'));
   saveRosterLocal(people, 'importada: '+IMPORT.name);
+  subirBaseEnLinea(rows, IMPORT.name);
   IMPORT = null;
   toast(`Base actualizada: ${people.length.toLocaleString('es-PE')} personas ✓`, 'ok');
   renderAdmin();
@@ -2847,13 +3471,14 @@ const params = new URLSearchParams(location.search);
 const deep = normCode(params.get('e') || params.get('c') || '');
 const deepMeta = params.get('m') ? unpackMeta(params.get('m')) : null;
 if(deep){ history.replaceState(null, '', location.pathname + location.hash); }
+SB.init();
 route();
 if(deep) openByCode(deep, deepMeta);
 checkCloudRoster();
 syncAllPending();
 const idle = window.requestIdleCallback || (f => setTimeout(f, 2500));
 idle(() => { loadScript(EXCELJS_URL).catch(()=>{}); });
-window.__CA = { sha256, searchPeople, get ROSTER(){ return ROSTER; }, EVENTS, CLASSES, classDates, compactPeople, expandCompact, openByCode, unpackMeta };
+window.__CA = { sha256, searchPeople, get ROSTER(){ return ROSTER; }, EVENTS, CLASSES, classDates, compactPeople, expandCompact, openByCode, unpackMeta, SB, parseRollWorkbook, importRollClases, subirBaseEnLinea, rollName, classStudents, classDates };
 })();
 </script>
 </body>
