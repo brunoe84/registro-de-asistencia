@@ -400,10 +400,7 @@ const ADMIN_HASH = '2d1e25b8ed2c78e01870af395aef39403643c48f5abcebe18207d4e3a824
 const EXCELJS_URL = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
 const SHEETJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 const POLL_MS = 15000;
-const FIELD_DEFS = [
-  {k:'a', label:'Edad'}, {k:'s', label:'Sexo'}, {k:'k', label:'Estaca'}, {k:'w', label:'Barrio'},
-  {k:'g', label:'Programa'}, {k:'ph', label:'Celular'}, {k:'nac', label:'Fecha de nacimiento'}
-];
+const FIELD_DEFS = [{k:'k', label:'Estaca'}, {k:'w', label:'Barrio'}];
 
 /* ============================================================
    UTILIDADES
@@ -426,13 +423,11 @@ function fmtDate(s){ if(!s) return ''; const d = parseISO(s); return DOW_L[d.get
 function fmtShort(s){ const d = parseISO(s); return pad2(d.getDate())+'/'+pad2(d.getMonth()+1); }
 function fmtTime(ts){ const d = new Date(ts); return pad2(d.getHours())+':'+pad2(d.getMinutes()); }
 function fmtDMY(s){ if(!s) return ''; const d = parseISO(s); return pad2(d.getDate())+'/'+pad2(d.getMonth()+1)+'/'+d.getFullYear(); }
-function ageFrom(nac){ if(!nac) return ''; const d = parseISO(nac); if(isNaN(d)) return ''; const t = new Date(); let a = t.getFullYear()-d.getFullYear(); if(t.getMonth()<d.getMonth() || (t.getMonth()===d.getMonth() && t.getDate()<d.getDate())) a--; return a>=0 && a<120 ? a : ''; }
 function uid(p){ return p + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function prettyName(n){ n = String(n||''); const i = n.indexOf(','); return i>0 ? (n.slice(i+1).trim()+' '+n.slice(0,i).trim()) : n; }
 function initials(n){ n = String(n||'').trim(); const i = n.indexOf(','); if(i>0) return (n.slice(i+1).trim()[0]||'') + (n[0]||''); const p = n.split(/\s+/); return (p[0]||'')[0] + ((p[1]||'')[0]||''); }
 function titleCase(s){ return String(s||'').toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (m,a,b)=>a+b.toUpperCase()).trim(); }
 const progLabel = g => g==='S' ? 'Seminario' : g==='I' ? 'Instituto' : '';
-const sexLabel = s => s==='M' ? 'Hombre' : s==='F' ? 'Mujer' : (s||'');
 function slug(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^\w\- ]+/g,'').trim().slice(0,50) || 'archivo'; }
 function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; }
 function hash32(s, seed){ let h = seed>>>0; for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h>>>0; }
@@ -640,8 +635,8 @@ function expandCompact(c){
   if(!c || !Array.isArray(c.p)) return people;
   c.p.forEach(r => {
     const wi = c.wards[r[3]] || [0,''];
-    const p = { n:r[0], a:r[1]||'', s:r[2]||'', k:c.stakes[wi[0]]||'', w:wi[1]||'', g:r[4]||'' };
-    if(r[5] && typeof r[5] === 'object') Object.assign(p, r[5]);
+    const p = { n:r[0], k:c.stakes[wi[0]]||'', w:wi[1]||'' };
+    if(r[5] && typeof r[5] === 'object') ['id','src','added'].forEach(k => { if(r[5][k]) p[k] = r[5][k]; });
     let id = p.id || pidFor(p.n, p.w);
     while(used.has(id)) id += 'x';
     used.add(id); p.id = id;
@@ -656,9 +651,9 @@ function compactPeople(people, v){
     if(!(st in sIdx)){ sIdx[st] = stakes.length; stakes.push(st); }
     const wk = st+'|'+wd;
     if(!(wk in wIdx)){ wIdx[wk] = wards.length; wards.push([sIdx[st], wd]); }
-    const row = [x.n, Number(x.a)||0, x.s||'', wIdx[wk], x.g||''];
+    const row = [x.n, 0, '', wIdx[wk], ''];
     const extra = {};
-    ['ph','nac','src','added'].forEach(k => { if(x[k]) extra[k] = x[k]; });
+    ['src','added'].forEach(k => { if(x[k]) extra[k] = x[k]; });
     if(x.id && x.id !== pidFor(x.n, x.w)) extra.id = x.id;
     if(Object.keys(extra).length) row.push(extra);
     return row;
@@ -716,7 +711,7 @@ function highlight(name, q){
     return t ? `<mark>${esc(word.slice(0,t.length))}</mark>${esc(word.slice(t.length))}` : esc(word);
   }).join(' ');
 }
-function personSub(p){ return [p.w || p.k, p.a ? p.a+' años' : '', progLabel(p.g)].filter(Boolean).join(' · '); }
+function personSub(p){ return [p.w, p.k].filter(Boolean).join(' · '); }
 
 /* ============================================================
    SINCRONIZACIÓN (Firebase Realtime Database vía REST)
@@ -1096,7 +1091,7 @@ function unpackMeta(s){
   try{
     s = String(s).replace(/-/g,'+').replace(/_/g,'/');
     const o = JSON.parse(decodeURIComponent(escape(atob(s))));
-    return { title:o.t || '', stake:o.k || '', ward:o.w || '', date:o.d || todayISO(), fields:Array.isArray(o.f) ? o.f : ['k','w','a'], custom:Array.isArray(o.c) ? o.c : [], wa:o.p || '' };
+    return { title:o.t || '', stake:o.k || '', ward:o.w || '', date:o.d || todayISO(), fields:Array.isArray(o.f) ? o.f : ['k','w'], custom:Array.isArray(o.c) ? o.c : [], wa:o.p || '' };
   }catch(e){ return null; }
 }
 function eventLink(ev){ return appLink('e', ev.code) + (ev.meta.placeholder ? '' : '&m=' + packMeta(ev.meta)); }
@@ -1121,7 +1116,7 @@ async function openEvent(code, linkMeta){
     }catch(e){}
   }
   if(!linkMeta && !(await confirmBox(`No hay datos del evento <b>${code}</b> en este celular. Puedes unirte igual: marca a los asistentes y al final envía tu Excel al organizador, que lo unirá con los demás por el código.<br><br>Revisa que el código esté bien escrito.`, { title:'Unirme como colaborador', ok:'Unirme' }))) return;
-  const meta = linkMeta ? Object.assign({}, linkMeta) : { title:'Evento '+code, stake:'', ward:'', date:todayISO(), fields:['k','w','a'], custom:[], placeholder:true };
+  const meta = linkMeta ? Object.assign({}, linkMeta) : { title:'Evento '+code, stake:'', ward:'', date:todayISO(), fields:['k','w'], custom:[], placeholder:true };
   meta.joinedAt = Date.now();
   const ev = newEventObj(code, meta); ev.metaPending = false; ev.contrib = true;
   EVENTS[code] = ev; saveEvents();
@@ -1196,9 +1191,8 @@ function renderEventForm(code){
   const ev = code ? EVENTS[code] : null;
   if(code && !ev){ go('#/'); return; }
   CUR = { type: ev ? 'event-edit' : 'event-new', code };
-  const m = ev ? ev.meta : { title:'', stake:'', ward:'', date:todayISO(), fields:['k','w','a'], custom:[] };
-  const hasPh = ROSTER.people.some(p => p.ph), hasNac = ROSTER.people.some(p => p.nac);
-  const defs = FIELD_DEFS.filter(f => (f.k!=='ph' || hasPh || (m.fields||[]).includes('ph')) && (f.k!=='nac' || hasNac || (m.fields||[]).includes('nac')));
+  const m = ev ? ev.meta : { title:'', stake:'', ward:'', date:todayISO(), fields:['k','w'], custom:[] };
+  const defs = FIELD_DEFS;
   app.innerHTML = topbar({ back: ev ? '#/evento/'+code : '#/', title: ev ? 'Editar evento' : 'Nuevo evento', sub:'Check-in de evento' }) + `<main class="wrap">
     <form class="card" id="evForm" autocomplete="off">
       <div class="field"><label>Título del evento <span class="req">*</span></label><input id="fTitle" maxlength="90" placeholder="Ej. Devocional de jóvenes adultos" value="${esc(m.title)}"></div>
@@ -1447,7 +1441,7 @@ function readCustomFields(el, custom){
   return out;
 }
 function markPerson(ev, p, custom){
-  const data = {}; ['a','s','k','w','g','ph','nac'].forEach(k => { if(p[k]) data[k] = p[k]; });
+  const data = {}; ['k','w'].forEach(k => { if(p[k]) data[k] = p[k]; });
   const row = { id: uid('r'), pid: p.id, n: p.n, src:'base', t: Date.now(), by: myName(), dev: DEV, data, custom: custom || {} };
   ev.rows[row.id] = row; ev.pending[row.id] = Date.now();
   saveEvents(); queueSync();
@@ -1463,9 +1457,6 @@ function removeEvRow(ev, id){
 }
 function fieldVal(r, k){
   const v = r.data ? r.data[k] : '';
-  if(k === 'g') return progLabel(v);
-  if(k === 's') return sexLabel(v);
-  if(k === 'nac') return fmtDMY(v);
   return v ?? '';
 }
 function renderEvList(){
@@ -1491,8 +1482,8 @@ function renderEvList(){
 }
 function showRowDetail(ev, r){
   const kv = [['Hora', fmtTime(r.t)], ['Registrado por', r.by || '—'], ['Origen', r.src === 'manual' ? 'Inscripción manual' : 'Base de datos']];
-  if(r.src === 'manual' && r.manual){ const mm = r.manual; kv.push(['Nombres', mm.nombres], ['Apellidos', mm.apellidos], ['Fecha de nacimiento', fmtDMY(mm.nac) + (r.data && r.data.a!=='' && r.data.a!=null ? ' ('+r.data.a+' años)' : '')], ['Dirección', mm.dir], ['Padre o madre', mm.padre], ['Teléfono padre/madre', mm.telPadre]); }
-  FIELD_DEFS.forEach(f => { const v = fieldVal(r, f.k); if(v !== '' && !(r.src==='manual' && f.k==='nac')) kv.push([f.label, v]); });
+  if(r.src === 'manual' && r.manual){ const mm = r.manual; kv.push(['Nombres', mm.nombres], ['Apellidos', mm.apellidos]); }
+  FIELD_DEFS.forEach(f => { const v = fieldVal(r, f.k); if(v !== '') kv.push([f.label, v]); });
   (ev.meta.custom||[]).forEach(c => { if(r.custom && r.custom[c.id]) kv.push([c.label, r.custom[c.id]]); });
   sheet(`${sheetHead(esc(prettyName(r.n)))}<dl class="kv">${kv.filter(x => x[1]!==''&&x[1]!=null).map(([k,v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>${ev.sigs[r.id] ? `<img class="sig-big" src="${ev.sigs[r.id]}" alt="Firma">` : (r.sig ? '<p class="hint">Firma registrada en otro dispositivo (se descarga al sincronizar).</p>' : '')}
     <div class="sh-foot"><button class="btn danger" id="rm">${ICON.trash} Quitar</button><button class="btn primary" data-close>Cerrar</button></div>`, {
@@ -1513,47 +1504,13 @@ function showEventCode(code, isNew){
 /* ============================================================
    FORMULARIO DE PERSONA NUEVA + FIRMA
    ============================================================ */
-function personFormHTML(kind, {sw, sigLabel}={}){
+function personFormHTML({sw}={}){
   const R = ' <span class="req">*</span>';
   let h = `<div class="row2"><div class="field"><label>Nombres completos${R}</label><input name="nombres" autocomplete="off" autocapitalize="words"></div><div class="field"><label>Apellidos${R}</label><input name="apellidos" autocomplete="off" autocapitalize="words"></div></div><div id="dupHint"></div>`;
-  if(kind === 'inst') h += `<div class="row2"><div class="field"><label>Teléfono${R}</label><input name="tel" type="tel" inputmode="tel" autocomplete="off"></div><div class="field"><label>Correo <span class="opt">(opcional)</span></label><input name="email" type="email" inputmode="email" autocomplete="off"></div></div>`;
-  h += `<div class="field"><label>Fecha de nacimiento${R}</label><input name="nac" type="date" max="${todayISO()}" min="1930-01-01"></div>`;
-  h += `<div class="field"><label>Dirección${kind==='inst' ? ' <span class="opt">(opcional)</span>' : ''}</label><input name="dir" autocomplete="off"></div>`;
-  if(kind === 'sem') h += `<div class="row2"><div class="field"><label>Nombre del padre o madre</label><input name="padre" autocomplete="off" autocapitalize="words"></div><div class="field"><label>Número del padre o madre</label><input name="telPadre" type="tel" inputmode="tel" autocomplete="off"></div></div>
-    <div class="field"><label>${sigLabel || 'Firma del padre, madre o apoderado'}</label><div class="sig-wrap" id="sigWrap"><canvas class="sig" id="sigCanvas"></canvas><span class="sig-ph">✍️ Firma aquí con el dedo</span><button type="button" class="btn sm sig-clear" id="sigClear">Borrar</button></div></div>`;
   if(sw) h += `<div class="row2">${swFields(sw.stake, sw.ward, 'm')}</div>`;
   return h;
 }
-function SigPad(wrap){
-  const canvas = $('canvas', wrap); const ctx = canvas.getContext('2d');
-  let drawing = false, has = false, last = null, ratio = 1;
-  function setup(){
-    const r = canvas.getBoundingClientRect(); ratio = Math.max(window.devicePixelRatio || 1, 1);
-    canvas.width = Math.round(r.width * ratio); canvas.height = Math.round(r.height * ratio);
-    ctx.setTransform(ratio,0,0,ratio,0,0); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#10243A'; ctx.lineWidth = 2.4;
-  }
-  const pos = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  canvas.addEventListener('pointerdown', e => { e.preventDefault(); drawing = true; try{ canvas.setPointerCapture(e.pointerId); }catch(_){} last = pos(e); ctx.beginPath(); ctx.arc(last.x, last.y, 1.1, 0, Math.PI*2); ctx.fillStyle = '#10243A'; ctx.fill(); has = true; wrap.classList.add('has'); });
-  canvas.addEventListener('pointermove', e => { if(!drawing) return; e.preventDefault(); const p = pos(e); ctx.beginPath(); ctx.moveTo(last.x, last.y); const mx = (last.x+p.x)/2, my = (last.y+p.y)/2; ctx.quadraticCurveTo(last.x, last.y, mx, my); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; });
-  const end = () => { drawing = false; };
-  canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end); canvas.addEventListener('pointerleave', end);
-  requestAnimationFrame(setup);
-  return {
-    clear(){ ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.restore(); has = false; wrap.classList.remove('has'); },
-    empty(){ return !has; },
-    data(){
-      if(!has) return '';
-      const W = 480, H = Math.round(W * canvas.height / canvas.width);
-      const out = document.createElement('canvas'); out.width = W; out.height = H;
-      const o = out.getContext('2d'); o.fillStyle = '#fff'; o.fillRect(0,0,W,H); o.drawImage(canvas, 0, 0, W, H);
-      return out.toDataURL('image/png');
-    }
-  };
-}
-function bindPersonForm(el, kind, {onUseExisting, sw}={}){
-  let pad = null;
-  const wrap = $('#sigWrap', el);
-  if(wrap){ pad = SigPad(wrap); $('#sigClear', el).onclick = () => pad.clear(); }
+function bindPersonForm(el, {onUseExisting, sw}={}){
   if(sw) bindSW(el, 'm', sw.ward);
   const no = $('[name=nombres]', el), ap = $('[name=apellidos]', el), dup = $('#dupHint', el);
   const check = debounce(() => {
@@ -1565,44 +1522,34 @@ function bindPersonForm(el, kind, {onUseExisting, sw}={}){
     $$('[data-pid]', dup).forEach(b => b.onclick = () => onUseExisting(PBY.get(b.dataset.pid)));
   }, 350);
   no.oninput = check; ap.oninput = check;
-  return pad;
 }
-async function collectPersonForm(el, kind, pad){
+function collectPersonForm(el){
   const v = {}; $$('input[name]', el).forEach(i => v[i.name] = i.value.trim());
   v.nombres = titleCase(v.nombres); v.apellidos = titleCase(v.apellidos);
-  if(v.padre) v.padre = titleCase(v.padre);
   $$('.field', el).forEach(f => f.classList.remove('err'));
-  const req = kind === 'inst' ? ['nombres','apellidos','tel','nac'] : ['nombres','apellidos','nac'];
-  const miss = req.filter(k => !v[k]);
+  const miss = ['nombres','apellidos'].filter(k => !v[k]);
   if(miss.length){ miss.forEach(k => $(`[name=${k}]`, el).closest('.field').classList.add('err')); $(`[name=${miss[0]}]`, el).focus(); toast('Completa los campos obligatorios (*)', 'error'); return null; }
-  if(v.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.email)){ $('[name=email]', el).closest('.field').classList.add('err'); toast('El correo no parece válido', 'error'); return null; }
-  const sig = pad ? pad.data() : '';
-  if(kind === 'sem'){
-    const soft = []; if(!v.dir) soft.push('dirección'); if(!v.padre) soft.push('nombre del padre/madre'); if(!v.telPadre) soft.push('número del padre/madre'); if(!sig) soft.push('firma');
-    if(soft.length && !(await confirmBox(`Faltan: <b>${soft.join(', ')}</b>. Son importantes para la inscripción en Wise.`, {title:'Datos incompletos', ok:'Guardar igual', cancel:'Completar'}))) return null;
-  }
-  return { v, sig };
+  return v;
 }
 function openManualEvent(ev){
   const m = ev.meta; const custom = m.custom || [];
   const pre = ST.q.trim();
-  sheet(`${sheetHead('Registro manual', 'Datos para inscribirlo en Wise · ' + esc(m.title))}
-    <form id="pf" autocomplete="off">${personFormHTML('sem', { sw:{stake:m.stake, ward:m.ward}, sigLabel:'Firma (alumno o padre/madre)' })}${custom.length ? `<div style="border-top:1px solid var(--line);margin:4px 0 14px"></div>${customFieldsHTML(custom)}` : ''}</form>
+  sheet(`${sheetHead('Registro manual', esc(m.title))}
+    <form id="pf" autocomplete="off">${personFormHTML({ sw:{stake:m.stake, ward:m.ward} })}${custom.length ? `<div style="border-top:1px solid var(--line);margin:4px 0 14px"></div>${customFieldsHTML(custom)}` : ''}</form>
     <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">${ICON.check} Registrar asistencia</button></div>`, {
     wide: true,
     onMount(el, close){
-      const pad = bindPersonForm(el, 'sem', { sw:{stake:m.stake, ward:m.ward}, onUseExisting: p => { close(); const ex = eventRows(ev).find(r => r.pid === p.id); onPickEvent(ev, p, ex); } });
+      bindPersonForm(el, { sw:{stake:m.stake, ward:m.ward}, onUseExisting: p => { close(); const ex = eventRows(ev).find(r => r.pid === p.id); onPickEvent(ev, p, ex); } });
       bindCustomFields(el);
       if(pre && !/\d/.test(pre)){ const parts = pre.split(/\s+/); $('[name=nombres]', el).value = titleCase(parts.slice(0, Math.ceil(parts.length/2)).join(' ')); if(parts.length > 1) $('[name=apellidos]', el).value = titleCase(parts.slice(Math.ceil(parts.length/2)).join(' ')); }
       setTimeout(() => $('[name=nombres]', el).focus(), 250);
-      $('#ok', el).onclick = async () => {
-        const res = await collectPersonForm(el, 'sem', pad); if(!res) return;
-        const { v, sig } = res; const sw = readSW(el, 'm');
+      $('#ok', el).onclick = () => {
+        const v = collectPersonForm(el); if(!v) return;
+        const sw = readSW(el, 'm');
         const row = { id: uid('r'), pid: null, n: `${v.apellidos}, ${v.nombres}`, src:'manual', t: Date.now(), by: myName(), dev: DEV,
-          data: { a: ageFrom(v.nac), k: sw.stake, w: sw.ward, nac: v.nac }, custom: readCustomFields(el, custom),
-          manual: { nombres:v.nombres, apellidos:v.apellidos, nac:v.nac, dir:v.dir, padre:v.padre, telPadre:v.telPadre }, sig: !!sig };
+          data: { k: sw.stake, w: sw.ward }, custom: readCustomFields(el, custom),
+          manual: { nombres:v.nombres, apellidos:v.apellidos } };
         ev.rows[row.id] = row; ev.pending[row.id] = Date.now();
-        if(sig){ ev.sigs[row.id] = sig; ev.sigPending[row.id] = 1; }
         saveEvents(); queueSync(); close();
         toast(`✓ ${v.nombres} ${v.apellidos} registrado`, 'ok');
         afterMark();
@@ -1828,7 +1775,7 @@ function renderClassTab(){
         <div class="search-box sm"><span class="si">${ICON.search}</span><input id="cq" type="search" placeholder="Buscar en la base por nombre…" autocomplete="off" spellcheck="false" value="${esc(ST.cq)}"></div>
         ${opts.length > 1 ? `<div class="scope-row"><div class="seg" id="cscope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.cscope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div></div>` : '<div style="height:10px"></div>'}
         <div id="cres" class="results"></div>
-        <button class="manual-cta" id="newStu"><span class="mc-ico">${ICON.userPlus}</span><span><b>Alumno nuevo</b><small>No es miembro o no aparece en la base · ${m.program === 'S' ? 'con firma del padre/madre' : 'datos de Instituto'}</small></span>${ICON.next}</button>
+        <button class="manual-cta" id="newStu"><span class="mc-ico">${ICON.userPlus}</span><span><b>Alumno nuevo</b><small>No es miembro o no aparece en la base · solo nombre, estaca y barrio</small></span>${ICON.next}</button>
       </section>`}
       <section class="section"><div class="section-h"><h2>Alumnos de la clase (<span id="stuN">${studs.length}</span>)</h2></div><div id="stuList" class="att-list"></div></section>`;
     if(!ro){
@@ -1843,7 +1790,7 @@ function renderClassTab(){
     renderClassShare(cls, body);
   }
 }
-function stuSub(s){ const d = s.data || {}; return [s.src === 'nuevo' ? 'Nuevo' : '', d.w || d.k, d.a !== '' && d.a != null ? d.a+' años' : ''].filter(Boolean).join(' · '); }
+function stuSub(s){ const d = s.data || {}; return [s.src === 'nuevo' ? 'Nuevo' : '', d.w, d.k].filter(Boolean).join(' · '); }
 function setAtt(cls, d, sid, v, noSave){
   if(!cls.att[d]) cls.att[d] = {};
   if(v) cls.att[d][sid] = v; else delete cls.att[d][sid];
@@ -1871,7 +1818,7 @@ function renderClassSearch(cls){
   $$('.person[data-pid]', el).forEach(b => b.onclick = () => {
     const p = PBY.get(b.dataset.pid); if(!p) return;
     if(inClass.has(p.id)){ toast('Ya está en la clase'); return; }
-    const data = {}; ['a','s','k','w','g','ph','nac'].forEach(k => { if(p[k]) data[k] = p[k]; });
+    const data = {}; ['k','w'].forEach(k => { if(p[k]) data[k] = p[k]; });
     const s = { id: uid('s'), pid: p.id, n: p.n, src:'base', data, addedAt: Date.now() };
     cls.students[s.id] = s; markDirty(cls, 'students/'+s.id); saveClasses(); queueSync();
     toast(`✓ ${prettyName(p.n)} agregado`, 'ok', { action:'Deshacer', onAction: () => removeStudent(cls, s.id, true) });
@@ -1906,8 +1853,8 @@ function studentStats(cls, sid, dates){
 function showStudent(cls, s){
   const f = s.form || {}; const d = s.data || {};
   const kv = [['Origen', s.src === 'nuevo' ? 'Alumno nuevo (registro manual)' : 'Base de datos']];
-  if(s.src === 'nuevo'){ kv.push(['Nombres', f.nombres], ['Apellidos', f.apellidos], ['Fecha de nacimiento', fmtDMY(f.nac) + (d.a !== '' && d.a != null ? ' ('+d.a+' años)' : '')], ['Teléfono', f.tel], ['Correo', f.email], ['Dirección', f.dir], ['Padre o madre', f.padre], ['Teléfono padre/madre', f.telPadre]); }
-  else { kv.push(['Edad', d.a], ['Sexo', sexLabel(d.s)], ['Estaca', d.k], ['Barrio', d.w], ['Programa', progLabel(d.g)], ['Celular', d.ph]); }
+  if(s.src === 'nuevo'){ kv.push(['Nombres', f.nombres], ['Apellidos', f.apellidos], ['Estaca', d.k], ['Barrio', d.w]); }
+  else { kv.push(['Estaca', d.k], ['Barrio', d.w]); }
   const st = studentStats(cls, s.id, classDates(cls));
   kv.push(['Asistencia', st.T ? `${st.P} de ${st.T} sesiones (${st.pct}%)` : 'Sin sesiones registradas']);
   sheet(`${sheetHead(esc(prettyName(s.n)))}<dl class="kv">${kv.filter(x => x[1] !== '' && x[1] != null && x[1] !== undefined).map(([k,v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>${cls.sigs[s.id] ? `<img class="sig-big" src="${cls.sigs[s.id]}" alt="Firma">` : ''}<div class="sh-foot"><button class="btn primary" data-close>Cerrar</button></div>`);
@@ -1959,7 +1906,7 @@ function openStudentCal(cls, sid, onClose){
           return `<div class="cal-m"><div class="cal-mh"><b>${MES_L[mo][0].toUpperCase() + MES_L[mo].slice(1)} de ${y}</b>${!ro && empties ? `<button class="btn sm ghost" data-fill="${key}">${ICON.check} Marcar ${empties} vacío${empties>1?'s':''}</button>` : ''}</div>
             <div class="cal-g">${['lun','mar','mié','jue','vie','sáb','dom'].map(x => `<span class="cal-dow">${x}</span>`).join('')}${cells}</div></div>`;
         };
-        box.innerHTML = `<div class="sh-head"><div style="display:flex;gap:12px;align-items:center;min-width:0"><span class="av" style="width:48px;height:48px">${esc(initials(s.n))}</span><div style="min-width:0"><h3>${esc(prettyName(s.n))} ${s.src==='nuevo'?'<span class="badge b-new">Nuevo</span>':''}</h3><p>${esc([d0.a !== '' && d0.a != null ? d0.a+' años' : '', d0.w || d0.k, progLabel(cls.meta.program)].filter(Boolean).join(' · '))} · <button class="link-btn" id="calInfo">Ver datos</button></p></div></div><button class="icon-btn" data-close aria-label="Cerrar">${ICON.x}</button></div>
+        box.innerHTML = `<div class="sh-head"><div style="display:flex;gap:12px;align-items:center;min-width:0"><span class="av" style="width:48px;height:48px">${esc(initials(s.n))}</span><div style="min-width:0"><h3>${esc(prettyName(s.n))} ${s.src==='nuevo'?'<span class="badge b-new">Nuevo</span>':''}</h3><p>${esc([d0.w, d0.k, progLabel(cls.meta.program)].filter(Boolean).join(' · '))} · <button class="link-btn" id="calInfo">Ver datos</button></p></div></div><button class="icon-btn" data-close aria-label="Cerrar">${ICON.x}</button></div>
           <div class="cal-stats"><div><b>${P}/${T}</b><span>Asistencia</span></div><div><b>${pct === '' ? '—' : pct+'%'}</b><span>Porcentaje</span></div><div><b>${F}</b><span>Faltas</span></div><div><b>${T - P - F}</b><span>Sin marcar</span></div></div>
           <div class="cal-legend"><span><i class="lgd p"></i>Asistió</span><span><i class="lgd f"></i>Falta</span><span><i class="lgd e"></i>Sin marcar</span><span><i class="lgd h"></i>Feriado</span>${ro ? '<span class="badge b-ro">Solo lectura</span>' : '<span class="hint">Toca un día para cambiarlo</span>'}</div>
           <div class="cal-months">${months.map(monthHTML).join('') || '<div class="empty">La clase aún no tiene días de clase.</div>'}</div>
@@ -1992,23 +1939,20 @@ function openStudentCal(cls, sid, onClose){
   });
 }
 function openNewStudent(cls){
-  const kind = cls.meta.program === 'I' ? 'inst' : 'sem';
+  const sw = { stake:cls.meta.stake, ward:cls.meta.ward };
   const pre = ST.cq.trim();
-  sheet(`${sheetHead('Alumno nuevo', kind === 'sem' ? 'Seminario · datos para la inscripción' : 'Instituto · correo y dirección son opcionales')}<form id="pf" autocomplete="off">${personFormHTML(kind)}</form>
+  sheet(`${sheetHead('Alumno nuevo', progLabel(cls.meta.program))}<form id="pf" autocomplete="off">${personFormHTML({ sw })}</form>
     <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">${ICON.check} Agregar a la clase</button></div>`, {
     wide: true,
     onMount(el, close){
-      const pad = bindPersonForm(el, kind, { onUseExisting: p => { close(); ST.cq = prettyName(p.n); renderClassTab(); } });
+      bindPersonForm(el, { sw, onUseExisting: p => { close(); ST.cq = prettyName(p.n); renderClassTab(); } });
       if(pre && !/\d/.test(pre)){ const parts = pre.split(/\s+/); $('[name=nombres]', el).value = titleCase(parts.slice(0, Math.ceil(parts.length/2)).join(' ')); if(parts.length > 1) $('[name=apellidos]', el).value = titleCase(parts.slice(Math.ceil(parts.length/2)).join(' ')); }
       setTimeout(() => $('[name=nombres]', el).focus(), 250);
-      $('#ok', el).onclick = async () => {
-        const res = await collectPersonForm(el, kind, pad); if(!res) return;
-        const { v, sig } = res;
-        const form = { nombres:v.nombres, apellidos:v.apellidos, nac:v.nac, dir:v.dir };
-        if(kind === 'inst'){ form.tel = v.tel; form.email = v.email; } else { form.padre = v.padre; form.telPadre = v.telPadre; }
-        const s = { id: uid('s'), pid: null, n: `${v.apellidos}, ${v.nombres}`, src:'nuevo', form, data:{ a: ageFrom(v.nac), k: cls.meta.stake, w: cls.meta.ward, g: cls.meta.program, nac: v.nac, ph: v.tel || v.telPadre || '' }, sig: !!sig, addedAt: Date.now() };
+      $('#ok', el).onclick = () => {
+        const v = collectPersonForm(el); if(!v) return;
+        const loc = readSW(el, 'm');
+        const s = { id: uid('s'), pid: null, n: `${v.apellidos}, ${v.nombres}`, src:'nuevo', form:{ nombres:v.nombres, apellidos:v.apellidos }, data:{ k: loc.stake, w: loc.ward }, addedAt: Date.now() };
         cls.students[s.id] = s; markDirty(cls, 'students/'+s.id);
-        if(sig){ cls.sigs[s.id] = sig; cls.sigPending[s.id] = 1; }
         saveClasses(); queueSync(); close();
         toast(`✓ ${v.nombres} agregado a la clase`, 'ok');
         ST.cq = ''; renderClassTab(); liveClass(true);
@@ -2253,9 +2197,6 @@ function xlInfo(ws, title, lines, ncols){
 }
 function xlBody(row, i){ row.eachCell({includeEmpty:true}, c => { c.border = BORDER; c.alignment = Object.assign({vertical:'middle', wrapText:true}, c.alignment||{}); if(i % 2) c.fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFF6F9FA'}}; }); }
 async function xlBlob(wb){ const buf = await wb.xlsx.writeBuffer(); return new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}); }
-function addSig(wb, ws, dataUrl, col, row){
-  try{ const id = wb.addImage({ base64: dataUrl, extension:'png' }); ws.addImage(id, { tl:{ col: col-1+0.1, row: row-1+0.12 }, ext:{ width:140, height:46 } }); }catch(e){}
-}
 async function exportEvent(ev, share){
   try{
     toast('Generando Excel…');
@@ -2274,18 +2215,16 @@ async function exportEvent(ev, share){
     if(rows.length) ws.autoFilter = { from:{row:hr, column:1}, to:{row:hr, column:heads.length} };
     const man = rows.filter(r => r.src === 'manual');
     if(man.length){
-      const w2 = wb.addWorksheet('Inscripción Wise');
-      const h2 = ['N°','Nombres','Apellidos','Fecha de nacimiento','Edad','Dirección','Nombre padre o madre','Número padre o madre','Estaca','Barrio', ...cus.map(c => c.label), 'Firma'];
-      const hr2 = xlInfo(w2, 'Inscripción manual en Wise · '+m.title, [`Personas que no estaban en la base · ${fmtDate(m.date)} · Código ${ev.code}`], h2.length);
+      const w2 = wb.addWorksheet('Registro manual');
+      const h2 = ['N°','Nombres','Apellidos','Estaca','Barrio', ...cus.map(c => c.label)];
+      const hr2 = xlInfo(w2, 'Registro manual · '+m.title, [`Personas que no estaban en la base · ${fmtDate(m.date)} · Código ${ev.code}`], h2.length);
       w2.getRow(hr2).values = h2; xlHeader(w2.getRow(hr2));
       man.forEach((r, i) => {
         const mm = r.manual || {};
-        const row = w2.addRow([i+1, mm.nombres, mm.apellidos, fmtDMY(mm.nac), r.data && r.data.a !== '' ? r.data.a : '', mm.dir, mm.padre, mm.telPadre, r.data && r.data.k, r.data && r.data.w, ...cus.map(c => (r.custom||{})[c.id] || ''), '']);
-        xlBody(row, i); row.height = 42;
-        if(ev.sigs[r.id]) addSig(wb, w2, ev.sigs[r.id], h2.length, row.number);
+        const row = w2.addRow([i+1, mm.nombres, mm.apellidos, r.data && r.data.k, r.data && r.data.w, ...cus.map(c => (r.custom||{})[c.id] || '')]);
+        xlBody(row, i);
       });
-      w2.columns.forEach((c, i) => { c.width = [5,22,22,13,7,32,24,16,18,20][i] || 16; });
-      w2.getColumn(h2.length).width = 22;
+      w2.columns.forEach((c, i) => { c.width = [5,22,22,18,20][i] || 16; });
       w2.views = [{ state:'frozen', ySplit: hr2 }];
     }
     addBackupSheet(wb, { kind:'ca-backup', type:'event', ver:1, exportedAt:new Date().toISOString(), from: myName(), contrib: !!ev.contrib, data: cleanForBackup(ev) });
@@ -2322,19 +2261,15 @@ async function exportClass(cls, share){
     [1,2,3].forEach(k => ws.getColumn(heads.length - 3 + k).width = 8);
     ws.views = [{ state:'frozen', ySplit: hr, xSplit: 2 }];
     const w2 = wb.addWorksheet('Alumnos');
-    const sem = m.program !== 'I';
-    const h2 = ['N°','Apellidos y nombres','Origen','Edad','Estaca','Barrio', ...(sem ? ['Fecha de nacimiento','Dirección','Nombre padre o madre','Número padre o madre','Firma'] : ['Teléfono','Correo','Fecha de nacimiento','Dirección']), 'Asistencia %'];
+    const h2 = ['N°','Apellidos y nombres','Origen','Estaca','Barrio','Asistencia %'];
     const hr2 = xlInfo(w2, 'Alumnos · '+m.title, [`${progLabel(m.program)} · Maestro: ${m.teacher} · Código ${cls.code}`], h2.length);
     w2.getRow(hr2).values = h2; xlHeader(w2.getRow(hr2));
     studs.forEach((s, i) => {
-      const f = s.form || {}, d = s.data || {}; const st = studentStats(cls, s.id, dates);
-      const base = [i+1, s.n, s.src === 'nuevo' ? 'Nuevo (manual)' : 'Base', d.a !== '' && d.a != null ? d.a : '', d.k || '', d.w || ''];
-      const extra = sem ? [fmtDMY(f.nac || d.nac), f.dir || '', f.padre || '', f.telPadre || '', ''] : [f.tel || d.ph || '', f.email || '', fmtDMY(f.nac || d.nac), f.dir || ''];
-      const row = w2.addRow([...base, ...extra, st.pct === '' ? '' : st.pct/100]);
+      const d = s.data || {}; const st = studentStats(cls, s.id, dates);
+      const row = w2.addRow([i+1, s.n, s.src === 'nuevo' ? 'Nuevo (manual)' : 'Base', d.k || '', d.w || '', st.pct === '' ? '' : st.pct/100]);
       xlBody(row, i); row.getCell(h2.length).numFmt = '0%';
-      if(sem && cls.sigs[s.id]){ row.height = 42; addSig(wb, w2, cls.sigs[s.id], h2.length - 1, row.number); }
     });
-    w2.columns.forEach((c, i) => { c.width = [5,36,14,7,18,20][i] || 20; });
+    w2.columns.forEach((c, i) => { c.width = [5,36,14,18,20][i] || 14; });
     w2.views = [{ state:'frozen', ySplit: hr2 }];
     addBackupSheet(wb, { kind:'ca-backup', type:'class', ver:1, exportedAt:new Date().toISOString(), from: myName(), data: cleanForBackup(cls) });
     const blob = await xlBlob(wb);
@@ -2486,16 +2421,16 @@ function buildEventReport(ev){
   const detail = (r, i) => {
     const mm = r.manual || {}, d = r.data || {};
     const kv = r.src === 'manual'
-      ? [['Nombres', mm.nombres], ['Apellidos', mm.apellidos], ['Fecha de nacimiento', fmtDMY(mm.nac)], ['Edad', d.a !== '' && d.a != null ? d.a+' años' : ''], ['Dirección', mm.dir], ['Padre o madre', mm.padre], ['Teléfono padre/madre', mm.telPadre], ['Estaca', d.k], ['Barrio', d.w]]
-      : [['Edad', d.a ? d.a+' años' : ''], ['Sexo', sexLabel(d.s)], ['Estaca', d.k], ['Barrio', d.w], ['Programa', progLabel(d.g)], ['Celular', d.ph], ['Fecha de nacimiento', fmtDMY(d.nac)]];
+      ? [['Nombres', mm.nombres], ['Apellidos', mm.apellidos], ['Estaca', d.k], ['Barrio', d.w]]
+      : [['Estaca', d.k], ['Barrio', d.w]];
     cus.forEach(c => { if((r.custom||{})[c.id]) kv.push([c.label, r.custom[c.id]]); });
     kv.push(['Ingresó', fmtStamp(r.t)], ['Registró', r.by || '']);
     return reportDetail('e'+i, r.src === 'manual' ? `${mm.nombres||''} ${mm.apellidos||''}`.trim() : prettyName(r.n), r.src === 'manual' ? 'Inscripción manual' : '', kv, ev.sigs[r.id]);
   };
   let body = `<div class="stats"><div class="st"><b>${rows.length}</b>Asistentes</div><div class="st"><b>${rows.length - man.length}</b>De la base</div><div class="st"><b>${man.length}</b>Inscripción manual</div>${Object.keys(byWho).length > 1 ? Object.entries(byWho).map(([k,v]) => `<div class="st"><b>${v}</b>${esc(k)}</div>`).join('') : ''}</div>`;
-  if(man.length) body += `<div class="card"><h2>Inscripción manual en Wise (${man.length}) <span class="tap">· toca para ver sus datos</span></h2><div class="mcards">` + man.map(r => {
+  if(man.length) body += `<div class="card"><h2>Registro manual (${man.length}) <span class="tap">· toca para ver sus datos</span></h2><div class="mcards">` + man.map(r => {
     const mm = r.manual || {}; const i = rows.indexOf(r);
-    return `<div class="mc clk" data-det="e${i}"><b>${esc(mm.nombres || '')} ${esc(mm.apellidos || '')}</b><dl><dt>Ingresó</dt><dd>${esc(fmtStamp(r.t))}</dd><dt>Nacimiento</dt><dd>${esc(fmtDMY(mm.nac))}${r.data && r.data.a !== '' && r.data.a != null ? ` (${r.data.a} años)` : ''}</dd><dt>Padre/madre</dt><dd>${esc(mm.padre || '—')}</dd><dt>Teléfono</dt><dd>${esc(mm.telPadre || '—')}</dd></dl>${ev.sigs[r.id] ? `<img class="sig" src="${ev.sigs[r.id]}" alt="Firma">` : ''}</div>`;
+    return `<div class="mc clk" data-det="e${i}"><b>${esc(mm.nombres || '')} ${esc(mm.apellidos || '')}</b><dl><dt>Ingresó</dt><dd>${esc(fmtStamp(r.t))}</dd><dt>Estaca</dt><dd>${esc((r.data||{}).k || '—')}</dd><dt>Barrio</dt><dd>${esc((r.data||{}).w || '—')}</dd></dl></div>`;
   }).join('') + `</div></div>`;
   body += `<div class="card"><h2>Lista de asistencia <span class="tap">· toca un nombre para ver sus datos</span></h2><div class="tools"><input id="f" type="search" placeholder="Buscar nombre…"></div><div class="wrap"><table><thead><tr><th>N°</th><th>Ingresó</th><th>Apellidos y nombres</th>${fields.map(f => `<th>${esc(f.label)}</th>`).join('')}${cus.map(c => `<th>${esc(c.label)}</th>`).join('')}<th>Registró</th></tr></thead><tbody>`
     + rows.map((r, i) => `<tr class="clk" data-det="e${i}" data-n="${nzAttr(r.n)}"><td>${i+1}</td><td>${esc(fmtStamp(r.t))}</td><td><b>${esc(r.n)}</b> ${r.src === 'manual' ? '<span class="bd">Manual</span>' : ''}</td>${fields.map(f => `<td>${esc(fieldVal(r, f.k))}</td>`).join('')}${cus.map(c => `<td>${esc((r.custom||{})[c.id] || '')}</td>`).join('')}<td>${esc(r.by || '')}</td></tr>`).join('')
@@ -2512,20 +2447,19 @@ function buildClassReport(cls){
   const mLabel = k => { const [y,mm] = k.split('-'); return MES_L[+mm-1][0].toUpperCase()+MES_L[+mm-1].slice(1)+' '+y; };
   const curM = months.includes(todayISO().slice(0,7)) ? todayISO().slice(0,7) : (months[months.length-1] || 'all');
   const sub = [progLabel(m.program), 'Maestro: '+m.teacher, m.ward || m.stake, 'Código '+cls.code].filter(Boolean).join(' · ');
-  const sem = m.program !== 'I';
   const nuevos = studs.filter(s => s.src === 'nuevo').sort((a,b) => (b.addedAt||0) - (a.addedAt||0));
   const detail = (s, i) => {
     const f = s.form || {}, d = s.data || {}, st = studentStats(cls, s.id, dates);
     const kv = s.src === 'nuevo'
-      ? [['Nombres', f.nombres], ['Apellidos', f.apellidos], ['Fecha de nacimiento', fmtDMY(f.nac)], ['Edad', d.a !== '' && d.a != null ? d.a+' años' : ''], ...(sem ? [['Dirección', f.dir], ['Padre o madre', f.padre], ['Teléfono padre/madre', f.telPadre]] : [['Teléfono', f.tel], ['Correo', f.email], ['Dirección', f.dir]]), ['Estaca', d.k], ['Barrio', d.w]]
-      : [['Edad', d.a ? d.a+' años' : ''], ['Sexo', sexLabel(d.s)], ['Estaca', d.k], ['Barrio', d.w], ['Programa', progLabel(d.g)], ['Celular', d.ph]];
+      ? [['Nombres', f.nombres], ['Apellidos', f.apellidos], ['Estaca', d.k], ['Barrio', d.w]]
+      : [['Estaca', d.k], ['Barrio', d.w]];
     kv.push(['Agregado a la clase', fmtStamp(s.addedAt)], ['Asistencia', st.T ? `${st.P} de ${st.T} sesiones (${st.pct}%)` : 'Sin sesiones']);
     return reportDetail('s'+i, s.src === 'nuevo' ? `${f.nombres||''} ${f.apellidos||''}`.trim() || prettyName(s.n) : prettyName(s.n), s.src === 'nuevo' ? 'Alumno nuevo' : '', kv, cls.sigs[s.id],
-      { pre: reportCalendar(cls, s, dates), sub: [d.a !== '' && d.a != null ? d.a+' años' : '', d.w || d.k, progLabel(m.program)].filter(Boolean).join(' · '), nav: true });
+      { pre: reportCalendar(cls, s, dates), sub: [d.w, d.k, progLabel(m.program)].filter(Boolean).join(' · '), nav: true });
   };
   const idx = new Map(studs.map((s, i) => [s.id, i]));
   let body = `<div class="stats"><div class="st"><b>${studs.length}</b>Alumnos</div><div class="st"><b>${nuevos.length}</b>Nuevos</div><div class="st"><b>${taken.length}</b>Sesiones registradas</div><div class="st"><b>${avg === '' ? '—' : avg+'%'}</b>Asistencia promedio</div><div class="st"><b>${esc((m.days||[]).slice().sort((a,b)=>((a||7)-(b||7))).map(d => DOW[d]).join(' '))}</b>${m.program === 'I' ? 'Semanal' : 'Días de clase'}</div></div>`;
-  if(nuevos.length) body += `<div class="card"><h2>Alumnos nuevos por inscribir (${nuevos.length}) <span class="tap">· toca para ver sus datos</span></h2><div class="newl">${nuevos.map(s => { const f = s.form || {}; return `<div class="newi" data-det="s${idx.get(s.id)}"><span><b>${esc(`${f.nombres||''} ${f.apellidos||''}`.trim() || prettyName(s.n))}</b><small>Ingresó: ${esc(fmtStamp(s.addedAt))}${f.nac ? ' · Nac. '+esc(fmtDMY(f.nac)) : ''}</small></span><span class="bd">Ver datos</span></div>`; }).join('')}</div></div>`;
+  if(nuevos.length) body += `<div class="card"><h2>Alumnos nuevos por inscribir (${nuevos.length}) <span class="tap">· toca para ver sus datos</span></h2><div class="newl">${nuevos.map(s => { const f = s.form || {}; return `<div class="newi" data-det="s${idx.get(s.id)}"><span><b>${esc(`${f.nombres||''} ${f.apellidos||''}`.trim() || prettyName(s.n))}</b><small>Ingresó: ${esc(fmtStamp(s.addedAt))}</small></span><span class="bd">Ver datos</span></div>`; }).join('')}</div></div>`;
   body += `<nav class="tabs"><button data-t="plan" class="on">Planilla</button><button data-t="dia">Por fecha</button><button data-t="alu">Alumnos</button></nav>`;
   body += `<section data-s="plan"><div class="tools"><select id="m">${months.map(k => `<option value="${k}" ${k===curM?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${curM==='all'?'selected':''}>Todo el periodo</option></select><input id="f" type="search" placeholder="Buscar alumno…"></div>`
     + `<div class="wrap"><table class="plan"><thead><tr><th class="nm">Alumno</th>${dates.map(d => `<th class="dt${rwk.has(d)?' wk':''}" data-m="${d.slice(0,7)}"><small>${DOW[parseISO(d).getDay()]}</small>${fmtShort(d)}</th>`).join('')}<th>Asist.</th><th>Faltas</th><th>%</th></tr></thead><tbody>`
@@ -2537,11 +2471,9 @@ function buildClassReport(cls){
       const li = arr => arr.length ? `<ol>${arr.map(s => `<li>${esc(prettyName(s.n))}</li>`).join('')}</ol>` : '<p style="color:#8A9AA5;margin:6px 0 0">—</p>';
       return `<div class="card" data-d="${d}"><h2>${esc(fmtDate(d))} · ${P.length} de ${studs.length} asistieron</h2><div class="lists"><div class="ok"><h3>✓ Asistieron (${P.length})</h3>${li(P)}</div><div class="no"><h3>✗ Faltaron (${F.length})</h3>${li(F)}</div><div class="nm2"><h3>Sin marcar (${N.length})</h3>${li(N)}</div></div></div>`; }).join('')
     + `</section>`;
-  body += `<section data-s="alu" hidden><p class="tap" style="margin:0 0 8px">Toca un alumno para ver sus datos completos.</p><div class="wrap"><table><thead><tr><th>N°</th><th>Apellidos y nombres</th><th>Origen</th><th>Agregado</th><th>Edad</th><th>Barrio</th>${sem ? '<th>F. nac.</th><th>Padre o madre</th><th>Teléfono</th><th>Firma</th>' : '<th>Teléfono</th><th>Correo</th><th>F. nac.</th>'}<th>%</th></tr></thead><tbody>`
-    + studs.map((s, i) => { const f = s.form || {}, d = s.data || {}, st = studentStats(cls, s.id, dates);
-      const extra = sem ? [fmtDMY(f.nac || d.nac), f.padre, f.telPadre].map(x => `<td>${esc(x || '')}</td>`).join('') + `<td>${cls.sigs[s.id] ? `<img class="sig" src="${cls.sigs[s.id]}" alt="Firma">` : ''}</td>`
-                        : [f.tel || d.ph, f.email, fmtDMY(f.nac || d.nac)].map(x => `<td>${esc(x || '')}</td>`).join('');
-      return `<tr class="clk" data-det="s${i}"><td>${i+1}</td><td><b>${esc(s.n)}</b></td><td>${s.src === 'nuevo' ? '<span class="bd">Nuevo</span>' : 'Base'}</td><td>${esc(fmtStamp(s.addedAt))}</td><td>${esc(d.a !== '' && d.a != null ? d.a : '')}</td><td>${esc(d.w || d.k || '')}</td>${extra}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')
+  body += `<section data-s="alu" hidden><p class="tap" style="margin:0 0 8px">Toca un alumno para ver sus datos completos.</p><div class="wrap"><table><thead><tr><th>N°</th><th>Apellidos y nombres</th><th>Origen</th><th>Agregado</th><th>Estaca</th><th>Barrio</th><th>%</th></tr></thead><tbody>`
+    + studs.map((s, i) => { const d = s.data || {}, st = studentStats(cls, s.id, dates);
+      return `<tr class="clk" data-det="s${i}"><td>${i+1}</td><td><b>${esc(s.n)}</b></td><td>${s.src === 'nuevo' ? '<span class="bd">Nuevo</span>' : 'Base'}</td><td>${esc(fmtStamp(s.addedAt))}</td><td>${esc(d.k || '')}</td><td>${esc(d.w || '')}</td><td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')
     + `</tbody></table></div></section>`;
   body += studs.map(detail).join('');
   return reportShell(m.title, sub, body, { kind:'ca-backup', type:'class', ver:1, exportedAt:new Date().toISOString(), from: myName(), data: cleanForBackup(cls) });
@@ -2593,15 +2525,15 @@ let IMPORT = null;
 function renderAdmin(){
   CUR = { type:'admin', code:null };
   const P = ROSTER.people;
-  const byStake = {}; P.forEach(p => { const k = p.k || '(sin estaca)'; const o = byStake[k] = byStake[k] || {t:0,S:0,I:0}; o.t++; if(p.g === 'S') o.S++; else if(p.g === 'I') o.I++; });
+  const byStake = {}; P.forEach(p => { const k = p.k || '(sin estaca)'; const o = byStake[k] = byStake[k] || {t:0}; o.t++; });
   const manualN = P.filter(p => p.src === 'manual').length;
   app.innerHTML = topbar({ back:'#/', title:'Administración', sub:'Base de datos y sincronización' }) + `<main class="wrap">
     <section class="card"><h2>${ICON.db} Base de datos</h2>
       <div class="kpis"><div class="kpi"><b>${P.length.toLocaleString('es-PE')}</b><span>personas</span></div><div class="kpi"><b>${Object.keys(byStake).length}</b><span>estacas</span></div><div class="kpi"><b>${manualN}</b><span>agregadas a mano</span></div><div class="kpi"><b style="font-size:15px">${fmtVersion(ROSTER.v)}</b><span>versión · ${esc(ROSTER.src)}</span></div></div>
-      <table class="mini"><thead><tr><th>Estaca</th><th class="r">Personas</th><th class="r">Seminario</th><th class="r">Instituto</th></tr></thead><tbody>${Object.entries(byStake).sort((a,b)=>b[1].t-a[1].t).map(([k,o]) => `<tr><td>${esc(k)}</td><td class="r">${o.t}</td><td class="r">${o.S}</td><td class="r">${o.I}</td></tr>`).join('')}</tbody></table>
+      <table class="mini"><thead><tr><th>Estaca</th><th class="r">Personas</th></tr></thead><tbody>${Object.entries(byStake).sort((a,b)=>b[1].t-a[1].t).map(([k,o]) => `<tr><td>${esc(k)}</td><td class="r">${o.t}</td></tr>`).join('')}</tbody></table>
     </section>
     <section class="card"><h2>${ICON.upload} Cargar o complementar data</h2>
-      <p class="hint" style="margin-top:0">Acepta el export de <b>Potenciales</b> de Wise (.xlsx) o cualquier Excel/CSV con columnas como: <i>Nombres</i> (o Apellidos + Nombres), Edad, Sexo, Estaca, Barrio, Programa, Celular, Fecha de nacimiento.</p>
+      <p class="hint" style="margin-top:0">Acepta el export de <b>Potenciales</b> de Wise (.xlsx) o cualquier Excel/CSV con columnas como: <i>Nombres</i> (o Apellidos + Nombres), Estaca y Barrio. Las demás columnas se ignoran.</p>
       <label class="drop">${ICON.upload}<b>Elegir archivo</b><span>.xlsx · .xls · .csv</span><input type="file" id="impFile" accept=".xlsx,.xls,.csv" class="sr"></label>
       <div id="impPrev"></div>
     </section>
@@ -2709,34 +2641,29 @@ function adminSearch(q){
   const el = $('#ares'); if(!el) return;
   if(norm(q).length < 2){ el.innerHTML = ''; return; }
   const r = searchPeople(q, null, 30);
-  el.innerHTML = r.list.map(p => `<div class="person" style="cursor:default"><span class="av">${esc(initials(p.n))}</span><span class="pi"><b>${highlight(p.n, q)} ${p.src==='manual'?'<span class="badge b-new">Agregado</span>':''}</b><small>${esc([p.k, p.w, p.a ? p.a+' años' : '', progLabel(p.g), sexLabel(p.s)].filter(Boolean).join(' · '))}</small></span><button class="icon-btn sm" data-ed="${p.id}" aria-label="Editar">${ICON.edit}</button><button class="icon-btn sm danger" data-rm="${p.id}" aria-label="Eliminar">${ICON.trash}</button></div>`).join('') || '<div class="empty">Sin resultados</div>';
+  el.innerHTML = r.list.map(p => `<div class="person" style="cursor:default"><span class="av">${esc(initials(p.n))}</span><span class="pi"><b>${highlight(p.n, q)} ${p.src==='manual'?'<span class="badge b-new">Agregado</span>':''}</b><small>${esc([p.k, p.w].filter(Boolean).join(' · '))}</small></span><button class="icon-btn sm" data-ed="${p.id}" aria-label="Editar">${ICON.edit}</button><button class="icon-btn sm danger" data-rm="${p.id}" aria-label="Eliminar">${ICON.trash}</button></div>`).join('') || '<div class="empty">Sin resultados</div>';
   $$('[data-ed]', el).forEach(b => b.onclick = () => editPerson(PBY.get(b.dataset.ed)));
   $$('[data-rm]', el).forEach(b => b.onclick = async () => { const p = PBY.get(b.dataset.rm); if(!(await confirmBox(`¿Eliminar a <b>${esc(prettyName(p.n))}</b> de la base?`, {title:'Eliminar persona', ok:'Eliminar', danger:true}))) return; saveRosterLocal(ROSTER.people.filter(x => x.id !== p.id), ROSTER.src); toast('Persona eliminada','ok'); adminSearch(q); });
 }
 function editPerson(p, prefill){
   const isNew = !p;
-  const v = p || Object.assign({ n:'', a:'', s:'', k:'', w:'', g:'', ph:'', nac:'' }, prefill || {});
+  const v = p || Object.assign({ n:'', k:'', w:'' }, prefill || {});
   const i = v.n.indexOf(',');
   const ap = i > 0 ? v.n.slice(0,i).trim() : '', no = i > 0 ? v.n.slice(i+1).trim() : v.n;
   sheet(`${sheetHead(isNew ? 'Agregar persona' : 'Editar persona')}
     <form id="ep" autocomplete="off">
       <div class="row2"><div class="field"><label>Apellidos <span class="req">*</span></label><input name="ap" value="${esc(ap)}"></div><div class="field"><label>Nombres <span class="req">*</span></label><input name="no" value="${esc(no)}"></div></div>
-      <div class="row2"><div class="field"><label>Fecha de nacimiento</label><input name="nac" type="date" value="${esc(v.nac||'')}"></div><div class="field"><label>Edad</label><input name="a" type="number" min="0" max="120" value="${esc(v.a||'')}"></div></div>
-      <div class="row2"><div class="field"><label>Sexo</label><select name="s"><option value="">—</option><option value="M" ${v.s==='M'?'selected':''}>Hombre</option><option value="F" ${v.s==='F'?'selected':''}>Mujer</option></select></div><div class="field"><label>Programa</label><select name="g"><option value="">—</option><option value="S" ${v.g==='S'?'selected':''}>Seminario</option><option value="I" ${v.g==='I'?'selected':''}>Instituto</option></select></div></div>
       <div class="row2">${swFields(v.k, v.w, 'e', {req:true, allWards:'(sin barrio)'})}</div>
-      <div class="field"><label>Celular <span class="opt">(opcional)</span></label><input name="ph" type="tel" value="${esc(v.ph||'')}"></div>
     </form>
     <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">${ICON.save} Guardar</button></div>`, {
     onMount(el, close){
       bindSW(el, 'e', v.w);
-      const nac = $('[name=nac]', el), age = $('[name=a]', el);
-      nac.onchange = () => { const a = ageFrom(nac.value); if(a !== '') age.value = a; };
       $('#ok', el).onclick = () => {
         const f = {}; $$('[name]', el).forEach(x => f[x.name] = x.value.trim());
         const sw = readSW(el, 'e');
         if(!f.ap || !f.no){ toast('Apellidos y nombres son obligatorios','error'); return; }
         if(!sw.stake){ toast('Selecciona la estaca','error'); return; }
-        const np = { n: `${titleCase(f.ap)}, ${titleCase(f.no)}`, a: f.a ? Number(f.a) : (ageFrom(f.nac) || ''), s: f.s, g: f.g || (f.a ? (Number(f.a) <= 18 ? 'S' : 'I') : ''), k: sw.stake, w: sw.ward, ph: f.ph, nac: f.nac };
+        const np = { n: `${titleCase(f.ap)}, ${titleCase(f.no)}`, k: sw.stake, w: sw.ward };
         let people = ROSTER.people.slice();
         if(isNew){ np.src = 'manual'; np.added = todayISO(); np.id = pidFor(np.n, np.w); if(PBY.has(np.id)) np.id += 'm'+Date.now().toString(36).slice(-3); people.push(np); }
         else { const idx = people.findIndex(x => x.id === p.id); people[idx] = Object.assign({}, p, np, { id: p.id }); }
@@ -2752,8 +2679,8 @@ function editPerson(p, prefill){
 function collectNewcomers(){
   const done = LS.get('ca_admin_done', {});
   const out = [];
-  Object.values(EVENTS).forEach(ev => eventRows(ev).filter(r => r.src === 'manual').forEach(r => out.push({ _key:'e:'+r.id, n:r.n, nac:(r.manual||{}).nac, a:(r.data||{}).a, k:(r.data||{}).k || ev.meta.stake, w:(r.data||{}).w || ev.meta.ward, g:'', ph:(r.manual||{}).telPadre || '', from:'Evento: '+ev.meta.title })));
-  Object.values(CLASSES).forEach(c => classStudents(c).filter(s => s.src === 'nuevo').forEach(s => out.push({ _key:'c:'+s.id, n:s.n, nac:(s.form||{}).nac, a:(s.data||{}).a, k:c.meta.stake, w:c.meta.ward, g:c.meta.program, ph:(s.form||{}).tel || (s.form||{}).telPadre || '', from:'Clase: '+c.meta.title })));
+  Object.values(EVENTS).forEach(ev => eventRows(ev).filter(r => r.src === 'manual').forEach(r => out.push({ _key:'e:'+r.id, n:r.n, k:(r.data||{}).k || ev.meta.stake, w:(r.data||{}).w || ev.meta.ward, from:'Evento: '+ev.meta.title })));
+  Object.values(CLASSES).forEach(c => classStudents(c).filter(s => s.src === 'nuevo').forEach(s => out.push({ _key:'c:'+s.id, n:s.n, k:(s.data||{}).k || c.meta.stake, w:(s.data||{}).w || c.meta.ward, from:'Clase: '+c.meta.title })));
   const names = new Set(ROSTER.people.map(p => norm(p.n)));
   return out.filter(x => !done[x._key] && !names.has(norm(x.n)));
 }
@@ -2761,25 +2688,16 @@ function renderNewcomers(){
   const el = $('#newcomers'); if(!el) return;
   const list = collectNewcomers();
   if(!list.length){ el.innerHTML = '<p class="hint" style="margin:0">No hay personas nuevas pendientes registradas en eventos o clases de este dispositivo.</p>'; return; }
-  el.innerHTML = `<div class="section-h" style="margin:0 0 8px"><b>Nuevos registrados en eventos y clases (${list.length})</b><button class="btn sm" id="addAll">${ICON.plus} Agregar todos</button></div>` + list.map((x, i) => `<div class="item"><span class="ii"><b>${esc(prettyName(x.n))}</b><small>${esc([x.from, x.w || x.k, x.a !== '' && x.a != null ? x.a+' años' : ''].filter(Boolean).join(' · '))}</small></span><button class="btn sm" data-i="${i}">Revisar</button></div>`).join('');
+  el.innerHTML = `<div class="section-h" style="margin:0 0 8px"><b>Nuevos registrados en eventos y clases (${list.length})</b><button class="btn sm" id="addAll">${ICON.plus} Agregar todos</button></div>` + list.map((x, i) => `<div class="item"><span class="ii"><b>${esc(prettyName(x.n))}</b><small>${esc([x.from, x.w, x.k].filter(Boolean).join(' · '))}</small></span><button class="btn sm" data-i="${i}">Revisar</button></div>`).join('');
   $$('[data-i]', el).forEach(b => b.onclick = () => editPerson(null, list[+b.dataset.i]));
   $('#addAll').onclick = async () => {
     if(!(await confirmBox(`Se agregarán ${list.length} personas a la base de este dispositivo.`, {title:'Agregar todos', ok:'Agregar'}))) return;
     const people = ROSTER.people.slice(); const done = LS.get('ca_admin_done', {});
-    list.forEach(x => { if(!x.k) return; const np = { n:x.n, a:x.a || ageFrom(x.nac) || '', s:'', k:x.k, w:x.w || '', g:x.g || ((x.a||ageFrom(x.nac)) !== '' ? ((x.a||ageFrom(x.nac)) <= 18 ? 'S' : 'I') : ''), ph:x.ph, nac:x.nac, src:'manual', added:todayISO() }; np.id = pidFor(np.n, np.w); people.push(np); done[x._key] = 1; });
+    list.forEach(x => { if(!x.k) return; const np = { n:x.n, k:x.k, w:x.w || '', src:'manual', added:todayISO() }; np.id = pidFor(np.n, np.w); people.push(np); done[x._key] = 1; });
     people.sort((a,b) => a.n.localeCompare(b.n,'es'));
     saveRosterLocal(people, ROSTER.src); LS.set('ca_admin_done', done);
     toast('Personas agregadas ✓','ok'); renderAdmin();
   };
-}
-function excelSerialToISO(v){
-  if(v == null || v === '') return '';
-  if(v instanceof Date && !isNaN(v)) return iso(v);
-  if(typeof v === 'number' || /^\d+(\.\d+)?$/.test(String(v).trim())){ const n = Number(v); if(n < 1000) return ''; const d = new Date(Math.round((n - 25569) * 86400000)); return iso(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); }
-  const s = String(v).trim();
-  let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/); if(m) return `${m[3]}-${pad2(m[2])}-${pad2(m[1])}`;
-  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return `${m[1]}-${m[2]}-${m[3]}`;
-  return '';
 }
 async function handleImport(file){
   const prev = $('#impPrev');
@@ -2796,9 +2714,7 @@ async function handleImport(file){
     const C = {
       full: col('student name','nombre completo','nombres y apellidos','apellidos y nombres','alumno'),
       nom: col('nombres','nombre','nombres completos'), ape: col('apellidos','apellido'),
-      a: col('age','edad'), s: col('sex','sexo','genero'),
       k: col(h => h.startsWith('stake') || h.includes('estaca')), w: col(h => h.startsWith('ward') || h.includes('barrio') || h === 'rama' || h === 'unidad'),
-      g: col('program name','programa'), ph: col('student phone','celular','telefono','phone','movil'), nac: col('birth date','fecha de nacimiento','nacimiento','fecha nacimiento')
     };
     const rows = [];
     for(let i=hi+1;i<raw.length;i++){
@@ -2809,12 +2725,7 @@ async function handleImport(file){
       else if(C.ape >= 0 && C.nom >= 0){ const a = get('ape'), b = get('nom'); n = a && b ? `${a}, ${b}` : (a || b); }
       else n = get('nom');
       n = n.replace(/\s+/g,' ').trim(); if(!n) continue;
-      const nac = C.nac >= 0 ? excelSerialToISO(r[C.nac]) : '';
-      let a = get('a'); a = /^\d+$/.test(a) ? Number(a) : (ageFrom(nac) || '');
-      const gs = get('g').toUpperCase();
-      let g = /\bSEM\b|SEMINARIO/.test(gs) ? 'S' : /\bIN\b|INSTITUTO/.test(gs) ? 'I' : (a !== '' ? (a <= 18 ? 'S' : 'I') : '');
-      const s = get('s').toUpperCase();
-      rows.push({ n, a, s: s.startsWith('M') || s.startsWith('H') ? 'M' : s.startsWith('F') ? 'F' : '', k: get('k'), w: get('w'), g, ph: get('ph'), nac });
+      rows.push({ n, k: get('k'), w: get('w') });
     }
     if(!rows.length) throw new Error('El archivo no tiene filas con nombres.');
     const byId = new Map(ROSTER.people.map(p => [p.id, p]));
@@ -2822,26 +2733,24 @@ async function handleImport(file){
     let nNew = 0, nUpd = 0;
     rows.forEach(r => { const ex = byId.get(pidFor(r.n, r.w)) || byName.get(norm(r.n)); if(ex) nUpd++; else nNew++; });
     IMPORT = { rows, name: file.name };
-    const found = Object.entries({ 'Nombre': C.full >= 0 || C.nom >= 0, 'Edad': C.a >= 0, 'Sexo': C.s >= 0, 'Estaca': C.k >= 0, 'Barrio': C.w >= 0, 'Programa': C.g >= 0, 'Celular': C.ph >= 0, 'Nacimiento': C.nac >= 0 }).map(([k, ok]) => `<span class="badge ${ok?'b-ok':'b-ro'}">${ok?'✓':'—'} ${k}</span>`).join(' ');
+    const found = Object.entries({ 'Nombre': C.full >= 0 || C.nom >= 0, 'Estaca': C.k >= 0, 'Barrio': C.w >= 0 }).map(([k, ok]) => `<span class="badge ${ok?'b-ok':'b-ro'}">${ok?'✓':'—'} ${k}</span>`).join(' ');
     prev.innerHTML = `<div style="margin-top:14px"><div class="info-box"><b>${esc(file.name)}</b>: ${rows.length.toLocaleString('es-PE')} personas · <b>${nNew}</b> nuevas · <b>${nUpd}</b> ya existen</div>
       <div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">${found}</div>
-      ${C.ph >= 0 ? '<div class="warn-box">El archivo trae celulares. Si publicas esta data, los teléfonos quedarán dentro del HTML público. Desmarca la opción si no quieres incluirlos.</div>' : ''}
       <div class="radio-list">
         <label><input type="radio" name="mode" value="merge" checked><span><b>Complementar</b><small>Agrega a las personas nuevas y actualiza los datos de las que ya existen. No borra a nadie.</small></span></label>
         <label><input type="radio" name="mode" value="replace"><span><b>Reemplazar toda la base</b><small>La base queda igual al archivo. Se conservan las personas agregadas a mano.</small></span></label>
       </div>
-      ${C.ph >= 0 ? '<label style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13.5px"><input type="checkbox" id="keepPh"> Incluir celulares</label>' : ''}
       <div class="btn-row"><button class="btn" id="impCancel">Cancelar</button><button class="btn primary" id="impApply">${ICON.check} Aplicar cambios</button></div></div>`;
     $('#impCancel').onclick = () => { IMPORT = null; prev.innerHTML = ''; };
-    $('#impApply').onclick = () => applyImport($('input[name=mode]:checked').value, !!($('#keepPh') && $('#keepPh').checked));
+    $('#impApply').onclick = () => applyImport($('input[name=mode]:checked').value);
   }catch(e){ prev.innerHTML = `<div class="warn-box" style="margin-top:12px">${esc(e.message || 'No se pudo leer el archivo')}</div>`; }
 }
-function applyImport(mode, keepPh){
+function applyImport(mode){
   if(!IMPORT) return;
-  const rows = IMPORT.rows.map(r => { const x = Object.assign({}, r); if(!keepPh) delete x.ph; Object.keys(x).forEach(k => { if(x[k] === '') delete x[k]; }); return x; });
+  const rows = IMPORT.rows.map(r => { const x = Object.assign({}, r); Object.keys(x).forEach(k => { if(x[k] === '') delete x[k]; }); return x; });
   let people;
   if(mode === 'replace'){
-    people = rows.map(r => Object.assign({ a:'', s:'', k:'', w:'', g:'' }, r));
+    people = rows.map(r => Object.assign({ k:'', w:'' }, r));
     const keep = ROSTER.people.filter(p => p.src === 'manual');
     const names = new Set(people.map(p => norm(p.n)));
     keep.forEach(p => { if(!names.has(norm(p.n))) people.push(p); });
@@ -2852,7 +2761,7 @@ function applyImport(mode, keepPh){
     rows.forEach(r => {
       const ex = byId.get(pidFor(r.n, r.w)) || byName.get(norm(r.n));
       if(ex){ const id = ex.id; Object.assign(ex, r); ex.id = id; if(ex.src === 'manual') delete ex.src; }
-      else people.push(Object.assign({ a:'', s:'', k:'', w:'', g:'' }, r, { added: todayISO() }));
+      else people.push(Object.assign({ k:'', w:'' }, r, { added: todayISO() }));
     });
   }
   people.forEach(p => { if(!p.id) p.id = pidFor(p.n, p.w); });
@@ -2887,11 +2796,11 @@ async function checkCloudRoster(){
 async function exportRoster(){
   try{
     const X = await excelLib(); const wb = new X.Workbook(); const ws = wb.addWorksheet('Base');
-    const heads = ['Apellidos y nombres','Edad','Sexo','Estaca','Barrio','Programa','Celular','Fecha de nacimiento','Origen','Agregado'];
+    const heads = ['Apellidos y nombres','Estaca','Barrio','Origen','Agregado'];
     ws.addRow(heads); xlHeader(ws.getRow(1));
-    ROSTER.people.forEach((p, i) => xlBody(ws.addRow([p.n, p.a || '', sexLabel(p.s), p.k, p.w, progLabel(p.g), p.ph || '', fmtDMY(p.nac), p.src === 'manual' ? 'Agregado a mano' : 'Potenciales', p.added ? fmtDMY(p.added) : '']), i));
-    ws.columns.forEach((c, i) => c.width = [38,7,9,20,24,12,14,14,16,12][i]);
-    ws.views = [{ state:'frozen', ySplit:1 }]; ws.autoFilter = { from:'A1', to:'J1' };
+    ROSTER.people.forEach((p, i) => xlBody(ws.addRow([p.n, p.k, p.w, p.src === 'manual' ? 'Agregado a mano' : 'Potenciales', p.added ? fmtDMY(p.added) : '']), i));
+    ws.columns.forEach((c, i) => c.width = [38,20,24,16,12][i]);
+    ws.views = [{ state:'frozen', ySplit:1 }]; ws.autoFilter = { from:'A1', to:'E1' };
     downloadBlob(await xlBlob(wb), `Base Check-in - ${todayISO()}.xlsx`); toast('Excel descargado ✓','ok');
   }catch(e){ toast(e.message || 'No se pudo exportar','error'); }
 }
