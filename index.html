@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#132C3E">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Check-in Asistencia · Seminarios e Institutos</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -393,7 +396,7 @@ ol.steps li{margin-bottom:5px}
 
 <!-- Datos: la base de personas y la URL de sincronización. El panel de administración reescribe este bloque. -->
 <script id="ca-data">
-window.CA_CONFIG = { db: /*DBURL_START*/""/*DBURL_END*/, supabaseUrl: "https://ovpakvxhtkkfkbnkeoma.supabase.co", supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im92cGFrdnhodGtrZmtibmtlb21hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM0OTQyODMsImV4cCI6MjEwOTA3MDI4M30.zxqtffZ6reqSpo1A58he78NjLRjZFv-o1ddWXkq7JRI" };
+window.CA_CONFIG = { db: /*DBURL_START*/""/*DBURL_END*/, supabaseUrl: "https://ovpakvxhtkkfkbnkeoma.supabase.co", supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im92cGFrdnhodGtrZmtibmtlb21hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM0OTQyODMsImV4cCI6MjEwOTA3MDI4M30.zxqtffZ6reqSpo1A58he78NjLRjZFv-o1ddWXkq7JRI", pushKey: "BKfU2kGnP4oigwQ4_saUGlI80n9PqmpAS4ilxiDZgFPeBGqx9_i4JUVpOsjEi2n-eMjBn2vFnik4korrN0Q4FY4" };
 window.CA_SETTINGS = /*SETTINGS_START*/{"v":"2026-10-15T19:53:46.000Z","periods":{"S":[{"n":"1er Periodo","s":"","e":""},{"n":"2do Periodo","s":"2026-08-03","e":"2026-11-28"}],"I":[{"n":"1er Periodo","s":"","e":""},{"n":"2do Periodo","s":"","e":""},{"n":"3er Periodo","s":"2026-10-12","e":"2026-11-28"}]},"holidays":[]}/*SETTINGS_END*/;
 window.ROSTER_EMBED = /*ROSTER_START*/{"v":"","stakes":[],"wards":[],"p":[]}/*ROSTER_END*/;
 </script>
@@ -1059,7 +1062,7 @@ function studentFromRow(a){
   return { id:a.id, pid:a.persona_id, n:a.nombre, src: a.origen === 'maestro' && a.vinculo !== 'vinculado' ? 'nuevo' : 'base', vinculo:a.vinculo, data:{ k:a.estaca, w:a.barrio }, addedAt: Date.parse(a.agregado_en) || 0, ...(a.retirado_en ? { del:true } : {}) };
 }
 function metaFromRow(c){
-  return { title:c.titulo, teacher:c.maestro_nombre, program:c.programa, stake:c.estaca, ward:c.barrio, days:c.dias || [], start:c.inicio || '', end:'', extraDates:c.fechas_extra || [], skipDates:c.fechas_omitidas || [], horario:c.horario, curso:c.curso, createdAt: Date.parse(c.creado_en) || 0 };
+  return { title:c.titulo, teacher:c.maestro_nombre, program:c.programa, stake:c.estaca, ward:c.barrio, days:c.dias || [], start:c.inicio || '', end:c.fin || '', extraDates:c.fechas_extra || [], skipDates:c.fechas_omitidas || [], horario:c.horario, curso:c.curso, createdAt: Date.parse(c.creado_en) || 0 };
 }
 async function pushRemoteClass(cls){
   const sent = Object.entries(cls.dirty||{});
@@ -1152,7 +1155,7 @@ const DIAS_RETRASO = 7;
 /* Una clase está atrasada si su primera sesión sin marcar tiene más de una semana. */
 function retrasoDe(c){
   if(!c || !c.inicio || !c.dias) return null;
-  const dates = classDates({ meta:{ days:c.dias, start:c.inicio, end:'', extraDates:c.fechas_extra || [], skipDates:c.fechas_omitidas || [] }, att:{} });
+  const dates = classDates({ meta:{ days:c.dias, start:c.inicio, end:c.fin || '', extraDates:c.fechas_extra || [], skipDates:c.fechas_omitidas || [] }, att:{} });
   const pend = dates.filter(d => d > (c.ultima_fecha || ''));
   if(!pend.length) return null;
   const dias = Math.floor((parseISO(todayISO()) - parseISO(pend[0])) / 864e5);
@@ -1162,7 +1165,7 @@ const fechaHora = ts => { if(!ts) return ''; const d = new Date(ts); return isNa
 function seguimientoHTML(c){
   const r = retrasoDe(c);
   return `<small>${c.titular ? `Adoptada por <b>${esc(c.titular)}</b>${c.adoptada_en ? ' · '+esc(fechaHora(c.adoptada_en)) : ''}` : 'Sin adoptar'}</small>
-    <small>${c.ultimo_cambio ? `Último cambio del maestro: <b>${esc(fechaHora(c.ultimo_cambio))}</b> · ${c.cambios} cambio${c.cambios===1?'':'s'}` : 'Sin cambios del maestro'}${r ? ` · <b class="late-txt">Atrasada ${r.dias} días</b>` : ''}</small>`;
+    <small>${c.ultimo_cambio ? `Último cambio del maestro: <b>${esc(fechaHora(c.ultimo_cambio))}</b> · ${c.cambios} cambio${c.cambios===1?'':'s'}` : 'Sin cambios del maestro'}${r ? ` · <b class="late-txt">Atrasada ${r.dias} días</b>` : ''}${Number(c.recordatorios) ? ' · 🔔 Recordatorios activos' : ''}</small>`;
 }
 async function renderSeguimiento(filtro='adoptadas'){
   CUR = { type:'seguimiento', code:null };
@@ -1188,6 +1191,49 @@ async function renderSeguimiento(filtro='adoptadas'){
   SB.watch('clase_accesos', null, load);
 }
 
+/* ---------- Recordatorios al celular ---------- */
+const pushDisponible = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const esIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+const instalada = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+function claveBytes(b64){ const s = atob(b64.replace(/-/g,'+').replace(/_/g,'/') + '='.repeat((4 - b64.length % 4) % 4)); return Uint8Array.from(s, c => c.charCodeAt(0)); }
+async function suscripcionActual(){ const reg = await navigator.serviceWorker.getRegistration('/'); return reg ? reg.pushManager.getSubscription() : null; }
+async function paintPush(){
+  const box = $('#pushBox'); if(!box) return;
+  const pinta = (b, s, boton='') => { box.innerHTML = `<div class="pend-box"><div><b>${b}</b><small>${s}</small></div>${boton}</div>`; };
+  if(!window.CA_CONFIG.pushKey){ box.innerHTML = ''; return; }
+  if(!pushDisponible()){
+    if(esIOS() && !instalada()) pinta('Activa los recordatorios en tu iPhone', 'En Safari toca Compartir y luego “Agregar a inicio”. Abre la app desde ese ícono y activa aquí los recordatorios.');
+    else pinta('Recordatorios no disponibles', 'Este navegador no permite notificaciones. Revisa la página cada semana para marcar tu asistencia.');
+    return;
+  }
+  const sub = await suscripcionActual().catch(() => null);
+  if(sub && Notification.permission === 'granted'){
+    pinta('Recordatorios activados', 'Te avisaremos si tu asistencia se atrasa más de una semana.', '<button class="btn sm" id="pushOff">Desactivar</button>');
+    $('#pushOff').onclick = () => desactivarPush().then(paintPush).catch(e => toast(errMsg(e), 'error'));
+    return;
+  }
+  if(Notification.permission === 'denied'){ pinta('Notificaciones bloqueadas', 'Actívalas en los ajustes del navegador para este sitio y vuelve a abrir la página.'); return; }
+  pinta('Recibe recordatorios en este celular', 'Te avisaremos si tu asistencia se atrasa más de una semana. Se detienen al ponerte al día.', '<button class="btn sm gold" id="pushOn">Activar</button>');
+  $('#pushOn').onclick = () => activarPush().then(paintPush).catch(e => { console.error(e); toast(errMsg(e), 'error'); });
+}
+async function activarPush(){
+  const permiso = await Notification.requestPermission();
+  if(permiso !== 'granted'){ toast('No se activaron: falta dar permiso de notificaciones.', 'warn'); return; }
+  await SB.ensureSession();
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:claveBytes(window.CA_CONFIG.pushKey) });
+  const j = sub.toJSON();
+  await SB.rpc('guardar_suscripcion', { punto:j.endpoint, clave_p256dh:j.keys.p256dh, clave_auth:j.keys.auth });
+  toast('✓ Recordatorios activados en este celular', 'ok');
+}
+async function desactivarPush(){
+  const sub = await suscripcionActual(); if(!sub) return;
+  await SB.rpc('quitar_suscripcion', { punto:sub.endpoint });
+  await sub.unsubscribe();
+  toast('Recordatorios desactivados');
+}
+
 /* ---------- Inicio con clases en línea ---------- */
 function homeOnlineHTML(){
   const mis = SB.mis || [];
@@ -1199,6 +1245,7 @@ function homeOnlineHTML(){
     ${mis.filter(retrasoDe).map(c => { const r = retrasoDe(c); return `<section class="section"><button class="late-box" data-go="#/clase/${c.codigo}"><span class="late-ico">🔔</span><span class="ii"><b>Tienes asistencia atrasada</b><small>${esc(prettyName(c.maestro))} · ${esc(c.horario)}: ${r.sesiones} sesión${r.sesiones===1?'':'es'} sin marcar desde el ${esc(fmtDate(r.desde))}.</small></span><span class="btn sm gold">Marcar ahora</span></button></section>`; }).join('')}
     ${mis.length ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/entrar">Buscar otra</button></div>
       ${mis.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}${c.tipo === 'colaborador' ? ' · Colaborador' : ''}</small></span><span class="num-badge">${c.alumnos} alum.</span></button>`).join('')}</section>` : ''}
+    ${mis.length || SB.admin ? '<section class="section" id="pushBox"></section>' : ''}
     ${(SB.solicitudes||[]).length ? `<section class="section">${SB.solicitudes.map(s => `<div class="pend-box"><div><b>Solicitud enviada</b><small>${esc(prettyName(s.maestro))} · ${esc(s.horario)}. El administrador la revisará.</small></div></div>`).join('')}</section>` : ''}
     ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2></div>
       <button class="item" data-go="#/todas"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Todas las clases</b><small>Por programa, estaca y maestro · asistencia en vivo</small></span>${ICON.next}</button>
@@ -1211,6 +1258,7 @@ function bindHomeOnline(){
   const b = $('#enterBtn');
   if(b) b.onclick = () => (SB.mis||[]).length === 1 ? go('#/clase/'+SB.mis[0].codigo) : go('#/entrar');
   const lo = $('#adminLink');
+  paintPush().catch(() => {});
   if(lo) lo.onclick = () => SB.admin ? SB.signOut().then(() => { toast('Sesión cerrada'); renderHome(); }) : askAdmin();
   paintBadges();
 }
@@ -1457,13 +1505,18 @@ async function parseRollFiles(files, prog){
   }
   return out;
 }
+function finDeClase(c){
+  if(c.programa === 'I') return c.fechas.slice().sort().pop() || '';
+  const p = currentPeriod('S');
+  return p ? p.e : '';
+}
 async function importRollClases(lista, onStep){
   const res = { nuevas:0, alumnos:0, marcas:0, errores:[] };
   for(let i=0;i<lista.length;i++){
     onStep && onStep(i+1);
     const c = lista[i];
     try{
-      const r = await SB.rpc('importar_clase', { datos:{ titulo:c.titulo, programa:c.programa, estaca:c.estaca, maestro:c.maestro, horario:c.horario, curso:c.curso, unidad:c.unidad, periodo:c.periodo, dias:c.dias, inicio:c.inicio, alumnos:c.alumnos } });
+      const r = await SB.rpc('importar_clase', { datos:{ titulo:c.titulo, programa:c.programa, estaca:c.estaca, maestro:c.maestro, horario:c.horario, curso:c.curso, unidad:c.unidad, periodo:c.periodo, dias:c.dias, inicio:c.inicio, fin:finDeClase(c), alumnos:c.alumnos } });
       if(r.nueva) res.nuevas++;
       res.alumnos += r.alumnos; res.marcas += r.marcas;
     }catch(e){ console.error(e); res.errores.push(`${c.maestro}: ${errMsg(e)}`); }

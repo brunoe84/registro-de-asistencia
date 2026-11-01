@@ -26,3 +26,7 @@ El esquema, los permisos y el tiempo real están en `supabase/migrations/`. Ejec
 ## Clases
 
 Las clases se crean desde **Todas las clases → programa → Importar clases**, con los Excel Class Roll. Los archivos en `CLASES/` y `data/` son privados y Git los ignora.
+
+## Recordatorios
+
+La función `supabase/functions/recordatorios` avisa al celular de los maestros con más de una semana de atraso. La base de datos la ejecuta a las 7:00, 12:00, 17:00 y 22:00 (hora de Perú). Sus claves privadas están solo en los secretos de Supabase.
