@@ -279,7 +279,12 @@ svg{width:18px;height:18px;flex-shrink:0}
 .ac-item b{display:block;font-size:14.5px}
 .ac-item small{display:block;color:var(--muted);font-size:12px}
 .qr-done{text-align:center;padding:26px 18px}
-.qr-done .big{font-size:44px;line-height:1}
+.ok-anim{display:block;width:88px;height:88px;margin:0 auto;animation:okPop .45s .8s cubic-bezier(.3,1.6,.5,1) both}
+.ok-c{fill:var(--green-50);stroke:var(--green);stroke-width:3;stroke-dasharray:176;stroke-dashoffset:176;transform:rotate(-90deg);transform-origin:center;animation:okTrazo .65s ease-out forwards}
+.ok-p{fill:none;stroke:var(--green);stroke-width:5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:40;stroke-dashoffset:40;animation:okTrazo .35s .55s ease-out forwards}
+@keyframes okTrazo{to{stroke-dashoffset:0}}
+@keyframes okPop{0%{transform:scale(1)}45%{transform:scale(1.1)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.ok-anim,.ok-c,.ok-p{animation:none;stroke-dashoffset:0}}
 .qr-done h2{margin:10px 0 6px;font-size:21px;justify-content:center}
 .qr-done p{margin:0;color:var(--text);font-size:15px}
 .who button{border:0;background:none;color:var(--teal-2);font-weight:700;text-decoration:underline;padding:0}
@@ -3008,16 +3013,18 @@ async function qrEnviar(){
     qrResultado(r);
   }catch(e){ console.error(e); if(btn) btn.disabled = false; toast(errMsg(e), 'error'); }
 }
+// Confirmación: un círculo que se dibuja y una palomita (igual en Android y iPhone, sin emojis).
+const OK_ANIM = '<svg class="ok-anim" viewBox="0 0 64 64" aria-hidden="true"><circle class="ok-c" cx="32" cy="32" r="28"/><path class="ok-p" d="M19 33.5l9 9 17-19"/></svg>';
 function qrResultado(r){
   const nom = prettyName(r.nombre);
-  const [ico, tit, txt] = r.estado === 'por_amigo'
-    ? ['🙌', '¡En buena hora!', `Tu amigo(a) <b>${esc(prettyName(r.amigo))}</b> ya registró tu asistencia, ${esc(nom.split(' ')[0])}.`]
-    : r.estado === 'ya_estaba' ? ['✅', 'Ya estabas registrado', `${esc(nom)}, tu asistencia ya está en la lista.`]
-    : ['✅', '¡Asistencia registrada!', `Gracias, ${esc(nom)}. Ya estás en la lista.`];
+  const [tit, txt] = r.estado === 'por_amigo'
+    ? ['¡En buena hora!', `Tu amigo(a) <b>${esc(prettyName(r.amigo))}</b> ya registró tu asistencia, ${esc(nom.split(' ')[0])}.`]
+    : r.estado === 'ya_estaba' ? ['Ya estabas registrado', `${esc(nom)}, tu asistencia ya está en la lista.`]
+    : ['¡Asistencia registrada!', `Gracias, ${esc(nom)}. Ya estás en la lista.`];
   const ac = r.acompanantes || [];
-  $('#qrMain').innerHTML = qrHead() + `<section class="card qr-done"><div class="big">${ico}</div><h2>${tit}</h2><p>${txt}</p></section>
+  $('#qrMain').innerHTML = qrHead() + `<section class="card qr-done">${OK_ANIM}<h2>${tit}</h2><p>${txt}</p></section>
     ${ac.length ? `<section class="card"><h2>Tus acompañantes</h2><div class="ac-list">${ac.map(a => `<div class="ac-item on"><span><b>${esc(prettyName(a.nombre))}</b><small>${a.estado === 'ya_estaba' ? 'Ya estaba registrado' : 'Anotado · un colaborador confirmará su asistencia'}</small></span></div>`).join('')}</div></section>` : ''}
-    <div class="btn-row"><button class="btn" id="masAc">${ICON.userPlus} Agregar más acompañantes</button></div>`;
+    <div class="btn-row" style="margin-top:14px"><button class="btn" id="masAc">${ICON.userPlus} Agregar más acompañantes</button></div>`;
   $('#masAc').onclick = () => { QRS.yo = miYo(); if(QRS.yo) qrPasoAcomp(); else qrPasoQuien(true); };
 }
 
@@ -3097,7 +3104,7 @@ async function qrcMarcar(d){
     const [tit, txt] = r.estado === 'ya_presente' ? ['Ya estás presente', `${esc(nom)}, tu maestro ya marcó tu asistencia de hoy.`]
       : r.estado === 'ya_enviada' ? ['Ya la habías enviado', `${esc(nom)}, tu asistencia de hoy ya está enviada. Tu maestro la confirmará.`]
       : ['¡Asistencia enviada!', `Gracias, ${esc(nom)}. Tu maestro la confirmará en un momento.`];
-    $('#qrMain').innerHTML = QRC.head + `<section class="card qr-done"><div class="big">✅</div><h2>${tit}</h2><p>${txt}</p></section>`;
+    $('#qrMain').innerHTML = QRC.head + `<section class="card qr-done">${OK_ANIM}<h2>${tit}</h2><p>${txt}</p></section>`;
   }catch(e){ console.error(e); $$('#qrMain button').forEach(b => b.disabled = false); toast(errMsg(e), 'error'); }
 }
 
