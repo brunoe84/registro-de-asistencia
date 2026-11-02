@@ -33,6 +33,14 @@ Para invitar a un colaborador, el maestro elige en **Compartir** cuánto durará
 
 Las clases que un maestro creó en su dispositivo antes de la base en línea aparecen en el inicio: la app busca su clase en línea (por alumnos, maestro y curso) y, si él confirma, suma sus alumnos y su asistencia sin cambiar lo que ya estaba marcado.
 
+## Eventos
+
+Los eventos se guardan en línea: el organizador y quienes entran con el código del evento (EV-…) marcan en la misma lista.
+
+En **Compartir → QR de asistencia** el organizador crea un QR. El asistente lo escanea, busca su nombre (o escribe sus datos si no está en la base) y puede anotar a quienes vinieron con él. Su celular lo recuerda para los siguientes eventos. Los acompañantes quedan **por aprobar** hasta que un colaborador confirma que vinieron, o hasta que ellos mismos escanean el QR. El QR solo funciona desde el día antes hasta el día después del evento, y para buscar en la base hay que escribir nombre y apellido.
+
+En la pestaña **Grupos** se reparte la lista al azar en grupos del mismo tamaño, con 0, 1 o 2 líderes por grupo.
+
 ## Base de personas
 
 Al subir el export de Potenciales de Wise se guardan nombre, estaca, barrio y programa (columna *Program Name*). El maestro filtra por programa, estaca y barrio al agregar alumnos.

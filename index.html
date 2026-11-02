@@ -230,6 +230,45 @@ svg{width:18px;height:18px;flex-shrink:0}
 .manual-cta b{display:block;color:#6E4A08}
 .manual-cta small{color:#8A6A2E;font-size:12.5px}
 .who{margin-top:14px;text-align:center;font-size:12.5px;color:var(--muted)}
+.mk.wait{background:var(--gold-50);color:#8A5A08}
+.aprob-cta{display:flex;align-items:center;gap:13px;width:100%;text-align:left;margin:0 0 14px;border:1.5px solid #E7C27A;background:var(--gold-50);border-radius:16px;padding:12px 14px}
+.aprob-cta .ap-ico{width:40px;height:40px;border-radius:12px;background:#fff;color:#9A6A12;display:grid;place-items:center;flex-shrink:0}
+.aprob-cta span:nth-child(2){flex:1;min-width:0}
+.aprob-cta b{display:block;color:#6E4A08}
+.aprob-cta small{color:#8A6A2E;font-size:12.5px}
+.aprob-cta .ap-n{background:var(--gold);color:#fff;border-radius:999px;min-width:28px;height:28px;display:grid;place-items:center;font-weight:800;font-size:13px}
+.ap-list{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+.ap-row{display:flex;align-items:center;gap:10px;border:1.5px solid var(--border);border-radius:14px;padding:9px 10px;flex-wrap:wrap}
+.ap-row .pi{flex:1;min-width:150px}
+.ap-row b{display:block;font-size:14.5px}
+.ap-row small{display:block;color:var(--muted);font-size:12px}
+.qr-wrap{display:flex;justify-content:center;margin:4px 0 10px}
+.qr-img{width:min(260px,70vw);height:auto;border:1px solid var(--border);border-radius:14px}
+.qr-full{display:flex;flex-direction:column;align-items:center}
+.qr-full canvas{width:min(560px,92vw);height:auto}
+.gr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:12px}
+.gr-card{margin:0}
+.gr-card h3{margin:0 0 8px;font-size:15px;display:flex;justify-content:space-between;align-items:baseline}
+.gr-card ol{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
+.gr-card li{border-radius:10px;padding:6px 8px;cursor:pointer;font-size:14px;font-weight:600}
+.gr-card li:hover{background:var(--line)}
+.gr-card li small{display:block;color:var(--muted);font-weight:500;font-size:11.5px}
+.gr-card li.lider{background:var(--gold-50);color:#6E4A08}
+.check-row{display:flex;gap:9px;align-items:flex-start;font-size:13.5px;margin:4px 0 12px}
+.check-row input{width:18px;height:18px;margin-top:1px;flex-shrink:0}
+.qr-ev small{color:var(--muted);font-size:12.5px}
+.qr-ev h1{margin:4px 0 0;font-size:21px}
+.ac-list{display:flex;flex-direction:column;gap:8px;margin:8px 0 12px}
+.ac-item{display:flex;align-items:center;gap:11px;border:1.5px solid var(--border);border-radius:14px;padding:10px 12px;background:#fff;cursor:pointer}
+.ac-item.on{border-color:#BFE3CC;background:#F6FBF8}
+.ac-item input{width:20px;height:20px;flex-shrink:0}
+.ac-item span{flex:1;min-width:0}
+.ac-item b{display:block;font-size:14.5px}
+.ac-item small{display:block;color:var(--muted);font-size:12px}
+.qr-done{text-align:center;padding:26px 18px}
+.qr-done .big{font-size:44px;line-height:1}
+.qr-done h2{margin:10px 0 6px;font-size:21px;justify-content:center}
+.qr-done p{margin:0;color:var(--text);font-size:15px}
 .who button{border:0;background:none;color:var(--teal-2);font-weight:700;text-decoration:underline;padding:0}
 
 /* ---------- Attendance list ---------- */
@@ -782,15 +821,71 @@ const saveEvents = () => LS.set('ca_events', EVENTS);
 const saveClasses = () => LS.set('ca_classes', CLASSES);
 
 function newEventObj(code, meta){ return { code, meta, rows:{}, pending:{}, sigs:{}, sigPending:{}, metaPending:true, lastSync:0 }; }
-function eventRows(ev){
-  const rows = Object.values(ev.rows||{}).filter(r => r && !r.del).sort((a,b)=>a.t-b.t);
+// Sin "todos", deja fuera a los acompañantes que un colaborador todavía no aprueba.
+function eventRows(ev, todos){
+  const rows = Object.values(ev.rows||{}).filter(r => r && !r.del && (todos || r.estado !== 'por_aprobar')).sort((a,b)=>a.t-b.t);
   const seen = new Set();
   return rows.filter(r => { if(!r.pid) return true; if(seen.has(r.pid)) return false; seen.add(r.pid); return true; });
 }
 function eventPendingCount(ev){ return Object.keys(ev.pending||{}).length + Object.keys(ev.sigPending||{}).length + (ev.metaPending?1:0); }
 
+const porAprobar = ev => eventRows(ev, true).filter(r => r.estado === 'por_aprobar');
+// El evento vive en Supabase: lo creó este dispositivo (se sube solo) o se unió con el código en línea.
+const eventoEnNube = ev => !!(ev && SB.on() && (ev.remote || !ev.contrib));
+function metaParaNube(m){ const o = Object.assign({}, m); delete o.joinedAt; delete o.placeholder; return o; }
+
+async function syncEventOnline(code, {silent=false}={}){
+  let ev = EVENTS[code]; if(!ev) return;
+  if(BUSY.has(code)) return; BUSY.add(code);
+  setSync('syncing');
+  try{
+    await SB.ensureSession();
+    if(!ev.remote){
+      const r = await SB.rpc('crear_evento', { codigo_deseado: code, meta: metaParaNube(ev.meta) });
+      ev.remote = r.id; ev.metaPending = false;
+      Object.keys(ev.rows || {}).forEach(id => ev.pending[id] = Date.now());
+      ev.sigPending = Object.assign({}, ev.sigPending, Object.fromEntries(Object.keys(ev.sigs || {}).map(id => [id, 1])));
+      if(r.codigo !== code){
+        // El código ya existía en línea: el evento queda con el código nuevo.
+        delete EVENTS[code]; ev.code = r.codigo; EVENTS[r.codigo] = ev; BUSY.delete(code); BUSY.add(r.codigo);
+        if(CUR.code === code){ CUR.code = r.codigo; history.replaceState(null, '', '#/evento/' + r.codigo); }
+        code = r.codigo;
+        toast(`El evento quedó con el código ${r.codigo}`, 'warn', { ms:5000 });
+      }
+      saveEvents();
+    }
+    if(ev.metaPending){ await SB.rpc('actualizar_evento', { evento: ev.remote, meta: metaParaNube(ev.meta) }); ev.metaPending = false; }
+    const sent = Object.entries(ev.pending || {});
+    const filas = sent.map(([id]) => {
+      const r = ev.rows[id]; if(!r) return null;
+      const f = Object.assign({}, r);
+      if(ev.sigs && ev.sigs[id] && ev.sigPending && ev.sigPending[id]) f.firma = ev.sigs[id];
+      return f;
+    }).filter(Boolean);
+    const res = await SB.rpc('sincronizar_evento', { evento: ev.remote, filas });
+    sent.forEach(([id, st]) => { if(ev.pending[id] === st) delete ev.pending[id]; });
+    filas.forEach(f => { if(f.firma) delete ev.sigPending[f.id]; });
+    if(res.meta && Object.keys(res.meta).length && !ev.metaPending) ev.meta = Object.assign({}, res.meta, ev.meta.joinedAt ? { joinedAt: ev.meta.joinedAt } : {});
+    ev.qr = res.qr || null;
+    if(res.organizador) ev.contrib = false;
+    const rows = {};
+    (res.filas || []).forEach(r => { rows[r.id] = r; });
+    Object.keys(ev.pending).forEach(id => { if(ev.rows[id]) rows[id] = ev.rows[id]; });
+    ev.rows = rows;
+    ev.lastSync = Date.now();
+    saveEvents(); setSync('ok');
+    if(!silent) toast('Asistencia guardada y sincronizada ✓', 'ok');
+  }catch(e){
+    console.error(e);
+    saveEvents(); setSync('error');
+    if(!silent) toast('Sin conexión: quedó guardado en este dispositivo y se enviará al reconectar.', 'warn', {ms:4200});
+  }finally{ BUSY.delete(code); }
+  if(CUR.type === 'event' && CUR.code === code) liveEvent();
+}
+
 async function syncEvent(code, {silent=false}={}){
   const ev = EVENTS[code]; if(!ev) return;
+  if(eventoEnNube(ev)) return syncEventOnline(code, {silent});
   if(!Sync.on()){ if(!silent) toast('Guardado en este dispositivo. (La sincronización entre dispositivos no está configurada.)', 'warn', {ms:4200}); paintSync(); return; }
   if(BUSY.has(code)) return; BUSY.add(code);
   setSync('syncing');
@@ -824,6 +919,10 @@ async function syncEvent(code, {silent=false}={}){
 }
 async function ensureEventSigs(ev){
   const need = Object.values(ev.rows||{}).filter(r => r && !r.del && r.sig && !ev.sigs[r.id]).map(r=>r.id);
+  if(need.length && ev.remote && SB.on()){
+    try{ (await SB.rpc('firmas_evento', { evento: ev.remote, ids: need })).forEach(f => { ev.sigs[f.id] = f.firma; }); saveEvents(); }catch(e){ console.error(e); }
+    return;
+  }
   if(!need.length || !Sync.on()) return;
   try{
     if(need.length > 6){ const all = await Sync.req(`eventsigs/${ev.code}`); if(all) Object.assign(ev.sigs, all); }
@@ -980,6 +1079,7 @@ function queueSync(){
 }
 async function syncAllPending(){
   for(const c of Object.keys(CLASSES)) if(CLASSES[c].remote && classPendingCount(CLASSES[c])) await syncRemoteClass(c, {silent:true});
+  for(const c of Object.keys(EVENTS)) if(eventoEnNube(EVENTS[c]) && EVENTS[c].remote && eventPendingCount(EVENTS[c])) await syncEvent(c, {silent:true});
   if(!Sync.on()) return;
   for(const c of Object.keys(EVENTS)) if(eventPendingCount(EVENTS[c])) await syncEvent(c, {silent:true});
   for(const c of Object.keys(CLASSES)) if(!CLASSES[c].remote && CLASSES[c].canEdit && classPendingCount(CLASSES[c])) await syncClass(c, {silent:true});
@@ -1908,6 +2008,7 @@ function route(){
   layer.innerHTML = '';
   SB.stopWatch();
   if(SB.on() && !SB.ready){ app.innerHTML = topbar() + `<main class="wrap">${loadingHTML()}</main>`; return; }
+  if(parts[0] === 'qr' && parts[1]) return renderQr(parts[1]);
   if(parts[0] === 'entrar') return renderEntrar();
   if(['todas','solicitudes','alertas','seguimiento'].includes(parts[0])){
     if(!SB.admin){ go('#/'); return; }
@@ -1951,7 +2052,7 @@ function paintSync(){
   let pending = 0;
   if(CUR.type === 'event' && EVENTS[CUR.code]) pending = eventPendingCount(EVENTS[CUR.code]);
   else if(CUR.type === 'class' && CLASSES[CUR.code]) pending = CLASSES[CUR.code].canEdit ? classPendingCount(CLASSES[CUR.code]) : 0;
-  const online = Sync.on() || (CUR.type === 'class' && classOnline(CLASSES[CUR.code])) || (SB.on() && CUR.type !== 'event');
+  const online = Sync.on() || (CUR.type === 'class' && classOnline(CLASSES[CUR.code])) || (SB.on() && CUR.type !== 'event') || (CUR.type === 'event' && eventoEnNube(EVENTS[CUR.code]));
   if(online){
     if(SYNC_STATE.s === 'syncing'){ cls = 'syncing'; lbl = 'Sincronizando…'; }
     else if(SYNC_STATE.s === 'error'){ cls = 'error'; lbl = pending ? `Sin conexión · ${pending} sin enviar` : 'Sin conexión'; }
@@ -2058,6 +2159,23 @@ async function openEvent(code, linkMeta){
   if(ex){
     if(linkMeta && ex.meta.placeholder){ ex.meta = Object.assign({}, linkMeta, { joinedAt: ex.meta.joinedAt }); saveEvents(); }
     go('#/evento/'+code); return;
+  }
+  if(SB.on()){
+    toast('Buscando evento…');
+    try{
+      await SB.init();   // con el enlace de invitación, la conexión todavía se está abriendo
+      await SB.ensureSession();
+      const r = await SB.rpc('unirme_evento', { codigo_evento: code });
+      if(r && r.estado === 'ok'){
+        const meta = Object.assign({ title:'Evento '+code, stake:'', ward:'', date:todayISO(), fields:['k','w'], custom:[] }, r.meta || {}, { joinedAt: Date.now() });
+        const ev = newEventObj(r.codigo, meta); ev.metaPending = false; ev.remote = r.id; ev.contrib = !r.organizador;
+        EVENTS[r.codigo] = ev; saveEvents();
+        ST.tab = 'marcar';
+        go('#/evento/'+r.codigo);
+        if(!myName()) setTimeout(askName, 400);
+        return;
+      }
+    }catch(e){ console.error(e); }
   }
   if(Sync.on()){
     toast('Buscando evento…');
@@ -2210,7 +2328,7 @@ function renderEvent(code){
   if(CUR.code !== code){ ST.q = ''; ST.scope = null; ST.lq = ''; ST.tab = 'marcar'; }
   CUR = { type:'event', code };
   const m = ev.meta;
-  const offline = !Sync.on();
+  const offline = !Sync.on() && !eventoEnNube(ev);
   app.innerHTML = topbar({ back:'#/', title:m.title, sub:'Check-in · '+code }) + `<main class="wrap has-savebar">
     <section class="card ev-head">
       <div class="eh-main"><div style="min-width:0">${ev.contrib ? '<span class="badge b-man">Colaborador</span>' : ''}<h1 ${ev.contrib?'style="margin-top:6px"':''}>${esc(m.title)}</h1><p class="meta">${esc(m.placeholder ? 'Te uniste solo con el código · ' + fmtDate(m.date) : [m.stake, m.ward || 'Todos los barrios', fmtDate(m.date)].filter(Boolean).join(' · '))}</p></div>
@@ -2218,7 +2336,8 @@ function renderEvent(code){
       <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button><span class="hint">${ev.contrib && offline ? 'Tus registros se unirán al evento por este código.' : 'Comparte este código para registrar desde otros celulares.'}</span></div>
       ${ev.contrib && offline ? `<div class="info-box" style="margin:14px 0 0">Marca a los asistentes que te toquen. Al terminar toca <b>Enviar asistencia</b> y mándalo al organizador: él lo importa y se suma a la lista total del evento.</div>` : ''}
     </section>
-    <nav class="tabs" id="tabs">${tabBtn('marcar','Marcar',ICON.check,'',ST.tab)}${tabBtn('lista','Lista',ICON.list,'<span class="tcount" id="tabCount">0</span>',ST.tab)}${tabBtn('mas','Compartir',ICON.share,'',ST.tab)}</nav>
+    <div id="aprobBox"></div>
+    <nav class="tabs" id="tabs">${tabBtn('marcar','Marcar',ICON.check,'',ST.tab)}${tabBtn('lista','Lista',ICON.list,'<span class="tcount" id="tabCount">0</span>',ST.tab)}${tabBtn('grupos','Grupos',ICON.users,'',ST.tab)}${tabBtn('mas','Compartir',ICON.share,'',ST.tab)}</nav>
     <div id="tabBody"></div>
   </main>${saveBar(offline ? 'Enviar asistencia' : 'Guardar asistencia', offline)}`;
   bindTop();
@@ -2227,16 +2346,50 @@ function renderEvent(code){
   $('#saveBtn').onclick = () => offline ? exportEventHtml(ev, true) : syncEvent(code);
   renderEventTab();
   liveEvent();
-  if(Sync.on()) syncEvent(code, {silent:true});
+  if(Sync.on() || eventoEnNube(ev)) syncEvent(code, {silent:true});
 }
 function liveEvent(){
   const ev = EVENTS[CUR.code]; if(!ev) return;
   const rows = eventRows(ev);
   const c = $('#evCount'); if(c) c.textContent = rows.length;
   const t = $('#tabCount'); if(t) t.textContent = rows.length;
+  paintAprobar(ev);
   if(ST.tab === 'marcar') renderResults();
   else if(ST.tab === 'lista') renderEvList();
+  else if(ST.tab === 'grupos') renderGrupos();
   paintSync();
+}
+// Aviso para los colaboradores: acompañantes anotados por un amigo desde el QR, por confirmar.
+function paintAprobar(ev){
+  const box = $('#aprobBox'); if(!box) return;
+  const n = porAprobar(ev).length;
+  box.innerHTML = n ? `<button class="aprob-cta" id="aprobBtn"><span class="ap-ico">${ICON.userPlus}</span><span><b>${n} acompañante${n>1?'s':''} por aprobar</b><small>Los anotó un amigo desde el QR. Confirma si vinieron.</small></span><span class="ap-n">${n}</span></button>` : '';
+  const b = $('#aprobBtn'); if(b) b.onclick = () => openAprobar(ev);
+}
+function aprobarFila(ev, r, si){
+  if(si){ r.estado = 'ok'; ev.pending[r.id] = Date.now(); saveEvents(); queueSync(); }
+  else { r.del = true; r.delAt = Date.now(); r.delBy = myName(); ev.pending[r.id] = Date.now(); saveEvents(); queueSync(); }
+  liveEvent();
+}
+function openAprobar(ev){
+  const paint = (el, close) => {
+    const list = porAprobar(ev);
+    if(!list.length){ close(); toast('No quedan acompañantes por aprobar', 'ok'); return; }
+    $('#apList', el).innerHTML = list.map(r => `<div class="ap-row" data-id="${esc(r.id)}"><span class="av">${esc(initials(r.n))}</span><span class="pi"><b>${esc(prettyName(r.n))}</b><small>Lo anotó ${esc(prettyName(r.amigo || r.by || 'un amigo'))}${r.data && r.data.w ? ' · ' + esc(r.data.w) : ''}${r.src === 'acompanante' && !r.pid ? ' · no está en la base' : ''}</small></span><button class="btn sm danger" data-no>No vino</button><button class="btn sm primary" data-si>${ICON.check} Vino</button></div>`).join('');
+    $$('.ap-row', el).forEach(row => {
+      const r = ev.rows[row.dataset.id];
+      $('[data-si]', row).onclick = () => { aprobarFila(ev, r, true); paint(el, close); };
+      $('[data-no]', row).onclick = () => { aprobarFila(ev, r, false); paint(el, close); };
+    });
+  };
+  sheet(`${sheetHead('Acompañantes por aprobar', 'Míralos en el evento y confirma si vinieron')}
+    <div id="apList" class="ap-list"></div>
+    <div class="sh-foot"><button class="btn" id="apTodos">${ICON.check} Aprobar a todos</button><button class="btn primary" data-close>Listo</button></div>`, {
+    onMount(el, close){
+      paint(el, close);
+      $('#apTodos', el).onclick = () => { porAprobar(ev).forEach(r => aprobarFila(ev, r, true)); paint(el, close); };
+    }
+  });
 }
 function scopeOptions(stake, ward){
   const o = [];
@@ -2282,17 +2435,21 @@ function renderEventTab(){
     $('#xlsSh').onclick = () => exportEventHtml(ev, true);
     $('#pdfDl').onclick = () => exportEventHtml(ev, false);
     renderEvList();
+  } else if(ST.tab === 'grupos'){
+    body.innerHTML = `<div id="grBox"></div>`;
+    renderGrupos();
   } else {
     const rows = eventRows(ev);
     body.innerHTML = `
+      ${eventoEnNube(ev) ? `<section class="card" id="qrCard"></section>` : ''}
       <section class="card">
         <h2>${ICON.users} Invitar a colaborar</h2>
-        ${Sync.on() ? `<p class="hint" style="margin-top:0">Quien ingrese este código en su celular podrá marcar en esta misma lista. Cada uno toca <b>Guardar asistencia</b> y todo se une.</p>`
+        ${Sync.on() || eventoEnNube(ev) ? `<p class="hint" style="margin-top:0">Quien ingrese este código en su celular podrá marcar en esta misma lista. Cada uno toca <b>Guardar asistencia</b> y todo se une.</p>`
           : `<ol class="steps" style="margin-top:0"><li>Envía el <b>enlace por WhatsApp</b> a tus colaboradores: así reciben el título, la estaca, el barrio y las preguntas del evento. También pueden entrar solo con el código.</li><li>Cada uno marca en su celular y al final toca <b>Enviar asistencia</b>.</li><li>Tú tocas <b>Importar aportes</b> y eliges sus reportes (o Excel): todos se suman a este evento por el código.</li></ol>`}
         <div class="code-big">${CUR.code}</div>
         <div class="btn-row"><button class="btn primary" id="waInv">${ICON.chat} Invitar por WhatsApp</button><button class="btn" id="cpLink">${ICON.link} Copiar enlace</button><button class="btn" id="cpCode">${ICON.copy} Copiar código</button></div>
       </section>
-      ${ev.contrib ? '' : `<section class="card">
+      ${ev.contrib || eventoEnNube(ev) ? '' : `<section class="card">
         <h2>${ICON.upload} Unir aportes de colaboradores</h2>
         <p class="hint" style="margin-top:0">Elige uno o varios reportes o Excel recibidos (puedes seleccionarlos todos a la vez). Los registros repetidos de una misma persona se cuentan una sola vez.</p>
         <div class="btn-row"><button class="btn primary" id="impAp">${ICON.upload} Importar aportes recibidos</button></div>
@@ -2308,6 +2465,7 @@ function renderEventTab(){
         <div class="btn-row" style="margin-top:10px"><button class="btn danger" id="rmEv">${ICON.trash} Quitar de este dispositivo</button></div>
       </section>`;
     $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
+    paintQrCard(ev);
     $('#cpCode').onclick = () => copyText(CUR.code, 'Código copiado');
     $('#cpLink').onclick = () => copyText(eventLink(ev), 'Enlace copiado');
     $('#waInv').onclick = () => waOpen(inviteText(ev));
@@ -2332,7 +2490,8 @@ function renderResults(){
   const ev = EVENTS[CUR.code]; const m = ev.meta;
   const q = ST.q.trim();
   const hint = $('#scopeHint');
-  const marked = new Map(); eventRows(ev).forEach(r => { if(r.pid) marked.set(r.pid, r); });
+  const marked = new Map(); eventRows(ev, true).forEach(r => { if(r.pid) marked.set(r.pid, r); });
+  if(norm(q).length >= 2 && ev.remote && SB.on()) return renderResultsOnline(el, ev, q, marked, hint);
   if(norm(q).length < 2){
     if(hint) hint.textContent = '';
     const last = eventRows(ev).slice(-3).reverse();
@@ -2354,6 +2513,43 @@ function renderResults(){
   $$('.person[data-pid]', el).forEach(b => b.onclick = () => onPickEvent(ev, PBY.get(b.dataset.pid), marked.get(b.dataset.pid)));
   const more = $('#moreScope'); if(more) more.onclick = () => { const o = scopeOptions(m.stake, m.ward); const i = o.findIndex(x => x[0] === ST.scope); ST.scope = o[Math.min(i+1, o.length-1)][0]; $$('#scope button').forEach(x => x.classList.toggle('on', x.dataset.s === ST.scope)); renderResults(); };
 }
+// Evento en línea: la base de personas se busca en Supabase (el celular ya no la guarda).
+let EVQ = { key:'', list:[] };
+const EVP = new Map();
+const personaDe = id => PBY.get(id) || EVP.get(id);
+function renderResultsOnline(el, ev, q, marked, hint){
+  const m = ev.meta;
+  const fk = ST.scope === 'all' ? '' : (m.stake || ''), fw = ST.scope === 'w' ? (m.ward || '') : '';
+  const key = [ev.remote, norm(q), fk, fw].join('|');
+  const paint = () => {
+    const dentro = EVQ.list.filter(p => p.en_filtro), fuera = EVQ.list.filter(p => !p.en_filtro);
+    const show = ST.evMore ? EVQ.list : dentro;
+    if(hint) hint.textContent = dentro.length ? `${dentro.length}${EVQ.list.length >= 40 ? '+' : ''} coincidencia${dentro.length > 1 ? 's' : ''}` : '';
+    let html = show.map(p => {
+      const r = marked.get(p.id);
+      const mk = !r ? `<span class="mk">Marcar</span>` : r.estado === 'por_aprobar' ? `<span class="mk wait">Por aprobar</span>` : `<span class="mk done">${ICON.check} ${fmtTime(r.t)}</span>`;
+      return `<button class="person ${r && r.estado !== 'por_aprobar' ? 'is-marked' : ''}" data-pid="${p.id}"><span class="av">${esc(initials(p.n))}</span><span class="pi"><b>${highlight(p.n, q)}</b><small>${esc(personSub(p))}</small></span>${mk}</button>`;
+    }).join('');
+    if(!show.length) html = `<div class="empty-hint">${ICON.search}<p>No se encontró “${esc(q)}”${fk ? ' en ' + (fw ? 'el barrio' : 'la estaca') : ''}</p><small>Revisa la ortografía o regístralo manualmente abajo.</small></div>`;
+    if(!ST.evMore && fuera.length) html += `<button class="btn sm ghost more-btn" id="moreScope">Ver ${fuera.length} coincidencia${fuera.length > 1 ? 's' : ''} fuera de ${fw ? 'este barrio' : 'esta estaca'}</button>`;
+    el.innerHTML = html;
+    $$('.person[data-pid]', el).forEach(b => b.onclick = () => onPickEvent(ev, personaDe(b.dataset.pid), marked.get(b.dataset.pid)));
+    const more = $('#moreScope'); if(more) more.onclick = () => { ST.evMore = true; paint(); };
+  };
+  if(EVQ.key === key) return paint();
+  if(!el.children.length) el.innerHTML = loadingHTML('Buscando…');
+  clearTimeout(EVQ.t);
+  EVQ.t = setTimeout(async () => {
+    try{
+      const list = await SB.rpc('buscar_personas_evento', { evento: ev.remote, texto: q, f_estaca: fk || null, f_barrio: fw || null });
+      if(norm(ST.q.trim()) !== norm(q) || !$('#results')) return;
+      EVQ = { key, list: (list || []).map(r => ({ id:r.id, n:r.nombre, k:r.estaca, w:r.barrio, en_filtro:r.en_filtro })) };
+      ST.evMore = false;
+      EVQ.list.forEach(p => EVP.set(p.id, p));
+      paint();
+    }catch(e){ console.error(e); el.innerHTML = `<div class="empty-hint">${ICON.search}<p>No se pudo buscar en la base</p><small>${esc(errMsg(e))}</small></div>`; }
+  }, 250);
+}
 function afterMark(){
   const q = $('#q');
   ST.q = ''; if(q){ q.value = ''; $('#qClear').classList.add('hide'); }
@@ -2362,6 +2558,14 @@ function afterMark(){
 }
 function onPickEvent(ev, p, existing){
   if(!p) return;
+  if(existing && existing.estado === 'por_aprobar'){
+    sheet(`${sheetHead(esc(prettyName(p.n)), 'Acompañante por aprobar')}
+      <div class="info-box">Lo anotó <b>${esc(prettyName(existing.amigo || existing.by || 'un amigo'))}</b> desde el QR. ¿Está en el evento?</div>
+      <div class="sh-foot"><button class="btn danger" id="no">No vino</button><button class="btn primary" id="si">${ICON.check} Sí, vino</button></div>`, {
+      onMount(el, close){ $('#si', el).onclick = () => { aprobarFila(ev, existing, true); close(); afterMark(); }; $('#no', el).onclick = () => { aprobarFila(ev, existing, false); close(); }; }
+    });
+    return;
+  }
   if(existing){
     sheet(`${sheetHead(esc(prettyName(p.n)), 'Ya está en la lista')}
       <div class="info-box">Registrado a las <b>${fmtTime(existing.t)}</b>${existing.by ? ' por <b>'+esc(existing.by)+'</b>' : ''}.</div>
@@ -2424,8 +2628,9 @@ function renderEvList(){
   const st = $('#evStats');
   if(st){
     const man = all.filter(r => r.src === 'manual').length;
-    const byDev = {}; all.forEach(r => { const k = r.by || 'Sin nombre'; byDev[k] = (byDev[k]||0)+1; });
-    st.innerHTML = `<span class="stat">Total<b>${all.length}</b></span><span class="stat">De la base<b>${all.length-man}</b></span><span class="stat">Manuales<b>${man}</b></span>` + (Object.keys(byDev).length > 1 ? Object.entries(byDev).map(([k,v]) => `<span class="stat">${esc(k)}<b>${v}</b></span>`).join('') : '');
+    const byDev = {}; all.forEach(r => { const k = r.src === 'acompanante' ? 'QR' : (r.by || 'Sin nombre'); byDev[k] = (byDev[k]||0)+1; });
+    const porQr = all.filter(r => r.src === 'qr' || r.src === 'acompanante').length;
+    st.innerHTML = `<span class="stat">Total<b>${all.length}</b></span><span class="stat">De la base<b>${all.length-man}</b></span><span class="stat">Manuales<b>${man}</b></span>${porQr ? `<span class="stat">Con QR<b>${porQr}</b></span>` : ''}` + (Object.keys(byDev).length > 1 ? Object.entries(byDev).map(([k,v]) => `<span class="stat">${esc(k)}<b>${v}</b></span>`).join('') : '');
   }
   const qq = norm(ST.lq);
   const rows = all.map((r,i) => ({r, i:i+1})).filter(x => !qq || norm(x.r.n).includes(qq) || qq.split(' ').every(t => norm(x.r.n).split(' ').some(w => w.startsWith(t)))).reverse();
@@ -2433,7 +2638,7 @@ function renderEvList(){
   if(!all.length){ el.innerHTML = `<div class="empty">Todavía no hay asistentes. Ve a <b>Marcar</b> y busca el primer nombre.</div>`; return; }
   el.innerHTML = rows.map(({r, i}) => {
     const sub = [...flds.map(k => fieldVal(r,k)).filter(Boolean), ...(ev.meta.custom||[]).map(c => r.custom && r.custom[c.id] ? c.label+': '+r.custom[c.id] : '').filter(Boolean)].join(' · ');
-    return `<div class="att-item" data-id="${r.id}"><span class="n">${i}</span><div class="ai"><b>${esc(prettyName(r.n))} ${r.src==='manual'?'<span class="badge b-man">Manual</span>':''}</b><small>${esc(sub) || '&nbsp;'}</small></div>${r.src==='manual' && ev.sigs[r.id] ? `<img class="sig-thumb" src="${ev.sigs[r.id]}" alt="firma">` : ''}<div class="at"><b>${fmtTime(r.t)}</b><br>${esc(r.by||'')}</div><button class="icon-btn sm danger" data-del="${r.id}" aria-label="Quitar">${ICON.trash}</button></div>`;
+    return `<div class="att-item" data-id="${r.id}"><span class="n">${i}</span><div class="ai"><b>${esc(prettyName(r.n))} ${r.src==='manual'?'<span class="badge b-man">Manual</span>':''}${r.src==='qr'?'<span class="badge b-ok">QR</span>':''}${r.src==='acompanante'?`<span class="badge b-ro">Vino con ${esc(prettyName(r.amigo || r.by || ''))}</span>`:''}</b><small>${esc(sub) || '&nbsp;'}</small></div>${r.src==='manual' && ev.sigs[r.id] ? `<img class="sig-thumb" src="${ev.sigs[r.id]}" alt="firma">` : ''}<div class="at"><b>${fmtTime(r.t)}</b><br>${esc(r.by||'')}</div><button class="icon-btn sm danger" data-del="${r.id}" aria-label="Quitar">${ICON.trash}</button></div>`;
   }).join('') || `<div class="empty">Nadie coincide con el filtro.</div>`;
   $$('[data-del]', el).forEach(b => b.onclick = async e => { e.stopPropagation(); const r = ev.rows[b.dataset.del]; if(await confirmBox(`¿Quitar a <b>${esc(prettyName(r.n))}</b> de la lista?`, {title:'Quitar asistente', ok:'Quitar', danger:true})) removeEvRow(ev, r.id); });
   $$('.att-item', el).forEach(it => it.onclick = () => showRowDetail(ev, ev.rows[it.dataset.id]));
@@ -2452,11 +2657,322 @@ function showEventCode(code, isNew){
   const ev = EVENTS[code]; if(!ev) return;
   sheet(`${sheetHead(isNew ? '¡Evento creado! 🎉' : 'Código del evento', esc(ev.meta.title))}
     <div class="code-big">${code}</div>
-    ${Sync.on() ? '<p class="hint" style="text-align:center;margin-top:0">Otros colaboradores ingresan este código en la pantalla de inicio para registrar en la misma lista.</p>' : '<p class="hint" style="text-align:center;margin-top:0">Invita a tus colaboradores por WhatsApp. Cada uno marca en su celular y te envía su Excel; tú lo importas en <b>Compartir → Importar aportes</b> y se suma a este evento.</p>'}
+    ${Sync.on() || eventoEnNube(ev) ? '<p class="hint" style="text-align:center;margin-top:0">Otros colaboradores ingresan este código en la pantalla de inicio para registrar en la misma lista.</p>' : '<p class="hint" style="text-align:center;margin-top:0">Invita a tus colaboradores por WhatsApp. Cada uno marca en su celular y te envía su Excel; tú lo importas en <b>Compartir → Importar aportes</b> y se suma a este evento.</p>'}
     <div class="btn-row"><button class="btn" id="c1">${ICON.copy} Copiar código</button><button class="btn" id="c2">${ICON.chat} WhatsApp</button></div>
     <div class="sh-foot"><button class="btn primary" data-close>Empezar a marcar</button></div>`, {
     onMount(el){ $('#c1',el).onclick = () => copyText(code, 'Código copiado'); $('#c2',el).onclick = () => waOpen(inviteText(ev)); }
   });
+}
+
+/* ============================================================
+   QR DE ASISTENCIA (organizador)
+   ============================================================ */
+const QR_JS_URL = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+const qrLink = token => appLink('q', token);
+// Dibuja el QR en un canvas, con el título del evento arriba y un texto abajo si se piden.
+async function qrCanvas(text, { title='', sub='', size=720 }={}){
+  if(!window.qrcode) await loadScript(QR_JS_URL);
+  const q = window.qrcode(0, 'M'); q.addData(text); q.make();
+  const n = q.getModuleCount(), pad = 4, cell = Math.max(2, Math.floor(size / (n + pad * 2)));
+  const qs = cell * (n + pad * 2);
+  const head = title ? Math.round(qs * 0.26) : 0, foot = sub ? Math.round(qs * 0.1) : 0;
+  const c = document.createElement('canvas'); c.width = qs; c.height = qs + head + foot;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  g.textAlign = 'center';
+  if(title){
+    let fs = Math.round(qs * 0.07);
+    g.font = `800 ${fs}px Manrope, system-ui, sans-serif`;
+    while(fs > 14 && g.measureText(title).width > qs * 0.92){ fs -= 2; g.font = `800 ${fs}px Manrope, system-ui, sans-serif`; }
+    g.fillStyle = '#132C3E'; g.fillText(title, qs / 2, head * 0.45);
+    g.font = `600 ${Math.round(qs * 0.042)}px system-ui, sans-serif`; g.fillStyle = '#1F7A83';
+    g.fillText('Escanea para registrar tu asistencia', qs / 2, head * 0.85);
+  }
+  g.fillStyle = '#000';
+  for(let r = 0; r < n; r++) for(let k = 0; k < n; k++) if(q.isDark(r, k)) g.fillRect((k + pad) * cell, head + (r + pad) * cell, cell, cell);
+  if(sub){ g.font = `500 ${Math.round(qs * 0.036)}px system-ui, sans-serif`; g.fillStyle = '#5C7080'; g.fillText(sub, qs / 2, head + qs + foot * 0.45); }
+  return c;
+}
+async function paintQrCard(ev){
+  const box = $('#qrCard'); if(!box) return;
+  if(!ev.remote){ box.innerHTML = `<h2>${ICON.users} QR de asistencia</h2><p class="hint" style="margin:0">Estará disponible en cuanto el evento termine de guardarse en línea.</p>`; return; }
+  if(!ev.qr){
+    box.innerHTML = `<h2>${ICON.users} QR de asistencia</h2>
+      <p class="hint" style="margin-top:0">Los asistentes escanean el QR con su celular, buscan su nombre y registran su asistencia y la de quienes vinieron con ellos. Funciona desde un día antes hasta un día después de la fecha del evento.</p>
+      <div class="btn-row"><button class="btn primary" id="qrOn">Crear QR de asistencia</button></div>`;
+    $('#qrOn', box).onclick = async () => {
+      try{ await SB.ensureSession(); ev.qr = await SB.rpc('qr_evento', { evento: ev.remote, activo: true }); saveEvents(); paintQrCard(ev); }
+      catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+    };
+    return;
+  }
+  const link = qrLink(ev.qr);
+  const d = parseISO(ev.meta.date), hoy = parseISO(todayISO());
+  const fuera = Math.abs(Math.round((d - hoy) / 86400000)) > 1;
+  box.innerHTML = `<h2>${ICON.users} QR de asistencia</h2>
+    <div class="qr-wrap"></div>
+    ${fuera ? `<div class="info-box">Ojo: el QR solo funciona entre el día antes y el día después de la fecha del evento (${esc(fmtDate(ev.meta.date))}). Si la fecha cambió, corrígela en <b>Editar evento</b>.</div>` : ''}
+    <p class="hint" style="margin-top:0">Proyéctalo o imprímelo. Los acompañantes que anote un asistente te aparecen arriba para aprobar.</p>
+    <div class="btn-row"><button class="btn primary" id="qrBig">Mostrar en pantalla</button><button class="btn" id="qrDl">${ICON.download} Descargar</button><button class="btn" id="qrCp">${ICON.link} Copiar enlace</button><button class="btn" id="qrWa">${ICON.chat} WhatsApp</button></div>
+    <div class="btn-row" style="margin-top:10px"><button class="btn danger" id="qrOff">Apagar QR</button></div>`;
+  try{ const cv = await qrCanvas(link, { size:420 }); cv.className = 'qr-img'; $('.qr-wrap', box).appendChild(cv); }
+  catch(e){ $('.qr-wrap', box).innerHTML = `<p class="hint">No se pudo dibujar el QR (revisa tu internet). El enlace sí funciona.</p>`; }
+  const poster = () => qrCanvas(link, { title: ev.meta.title, sub: [fmtDate(ev.meta.date), ev.meta.ward || ev.meta.stake].filter(Boolean).join(' · '), size:900 });
+  $('#qrBig', box).onclick = async () => {
+    const cv = await poster();
+    sheet(`${sheetHead('QR de asistencia', esc(ev.meta.title))}<div class="qr-full" id="qrFull"></div><div class="sh-foot"><button class="btn primary" data-close>Cerrar</button></div>`, { wide:true, onMount(el){ $('#qrFull', el).appendChild(cv); } });
+  };
+  $('#qrDl', box).onclick = async () => { const cv = await poster(); cv.toBlob(b => downloadBlob(b, 'QR asistencia ' + slug(ev.meta.title) + '.png'), 'image/png'); };
+  $('#qrCp', box).onclick = () => copyText(link, 'Enlace copiado');
+  $('#qrWa', box).onclick = () => waOpen(`Registra tu asistencia a *${ev.meta.title}* aquí 👇\n${link}`);
+  $('#qrOff', box).onclick = async () => {
+    if(!(await confirmBox('Nadie podrá registrarse con este QR. Si lo vuelves a crear, saldrá un QR distinto.', { title:'Apagar QR', ok:'Apagar', danger:true }))) return;
+    try{ await SB.rpc('qr_evento', { evento: ev.remote, activo: false }); ev.qr = null; saveEvents(); paintQrCard(ev); }
+    catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+  };
+}
+
+/* ============================================================
+   GRUPOS O COMPAÑÍAS (con la lista del evento)
+   ============================================================ */
+function rndInt(n){ const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; }
+function barajar(a){ for(let i = a.length - 1; i > 0; i--){ const j = rndInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+const barrioDe = r => (r.data && (r.data.w || r.data.k)) || '';
+// Reparte al azar en grupos del mismo tamaño (±1). Con "mezclar", cada barrio se reparte entre todos los grupos.
+function formarGrupos(rows, nGrupos, nLideres, mezclar, nombre){
+  let orden;
+  if(mezclar){
+    const porB = {}; rows.forEach(r => { (porB[barrioDe(r)] = porB[barrioDe(r)] || []).push(r); });
+    orden = barajar(Object.values(porB)).map(barajar).sort((a, b) => b.length - a.length).flat();
+  } else orden = barajar(rows.slice());
+  const lista = Array.from({ length:nGrupos }, (_, i) => ({ n: `${nombre} ${i + 1}`, lideres:[], miembros:[] }));
+  const off = rndInt(nGrupos);
+  orden.forEach((r, i) => lista[(i + off) % nGrupos].miembros.push(r.id));
+  lista.forEach(g => { g.lideres = barajar(g.miembros.slice()).slice(0, nLideres); });
+  return { nombre, lideres:nLideres, mezclar, creados: Date.now(), por: myName(), lista };
+}
+function guardarGrupos(ev, g){
+  if(g) ev.meta.grupos = g; else delete ev.meta.grupos;
+  ev.metaPending = true; saveEvents(); queueSync(); renderGrupos();
+}
+function renderGrupos(){
+  const box = $('#grBox'); const ev = EVENTS[CUR.code]; if(!box || !ev) return;
+  if(box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
+  const g = ev.meta.grupos;
+  const rows = eventRows(ev); const byId = new Map(rows.map(r => [r.id, r]));
+  if(!g || !g.lista || !g.lista.length){
+    const prev = ST.grForm || { modo:'n', num:4, lid:1, nom:'Compañía', mix:true };
+    box.innerHTML = `<section class="card">
+      <h2>${ICON.users} Formar grupos o compañías</h2>
+      <p class="hint" style="margin-top:0">Se reparten al azar los <b>${rows.length}</b> asistentes de la lista, en grupos del mismo tamaño. Todos los que colaboran en el evento ven los mismos grupos.</p>
+      <div class="field"><label>Repartir por</label><div class="seg" id="grModo"><button data-m="n" class="${prev.modo==='n'?'on':''}">Número de grupos</button><button data-m="t" class="${prev.modo==='t'?'on':''}">Personas por grupo</button></div></div>
+      <div class="row2"><div class="field"><label id="grNumL">${prev.modo==='n' ? '¿Cuántos grupos?' : '¿Cuántas personas por grupo?'}</label><input id="grNum" type="number" inputmode="numeric" min="1" value="${prev.num}"></div>
+      <div class="field"><label>Líderes por grupo</label><div class="seg" id="grLid">${[0,1,2].map(l => `<button data-l="${l}" class="${prev.lid===l?'on':''}">${l || 'Ninguno'}</button>`).join('')}</div></div></div>
+      <div class="field"><label>Nombre de cada grupo</label><input id="grNom" maxlength="30" value="${esc(prev.nom)}" placeholder="Compañía, Grupo, Equipo…"></div>
+      <label class="check-row"><input type="checkbox" id="grMix" ${prev.mix?'checked':''}><span>Mezclar barrios: cada grupo con gente de distintos barrios</span></label>
+      <p class="hint" id="grPrev"></p>
+      <div class="btn-row"><button class="btn primary" id="grGo" ${rows.length < 2 ? 'disabled' : ''}>Formar grupos al azar</button></div>
+    </section>`;
+    const leer = () => {
+      const f = { modo: $('#grModo .on', box).dataset.m, num: Math.max(1, parseInt($('#grNum', box).value, 10) || 1), lid: +$('#grLid .on', box).dataset.l, nom: $('#grNom', box).value.trim() || 'Grupo', mix: $('#grMix', box).checked };
+      ST.grForm = f;
+      const n = f.modo === 'n' ? Math.min(f.num, rows.length) : Math.max(1, Math.round(rows.length / f.num));
+      return Object.assign(f, { n });
+    };
+    const prevw = () => {
+      const f = leer(); const t = rows.length;
+      const a = Math.floor(t / Math.max(1, f.n)), b = Math.ceil(t / Math.max(1, f.n));
+      $('#grPrev', box).textContent = t ? `Quedarán ${f.n} grupo${f.n > 1 ? 's' : ''} de ${a === b ? a : a + ' o ' + b} personas.` : 'Todavía no hay asistentes en la lista.';
+    };
+    $$('#grModo button', box).forEach(b => b.onclick = () => { $$('#grModo button', box).forEach(x => x.classList.toggle('on', x === b)); $('#grNumL', box).textContent = b.dataset.m === 'n' ? '¿Cuántos grupos?' : '¿Cuántas personas por grupo?'; prevw(); });
+    $$('#grLid button', box).forEach(b => b.onclick = () => { $$('#grLid button', box).forEach(x => x.classList.toggle('on', x === b)); prevw(); });
+    $('#grNum', box).oninput = prevw; $('#grMix', box).onchange = prevw;
+    prevw();
+    $('#grGo', box).onclick = () => { const f = leer(); guardarGrupos(ev, formarGrupos(rows, f.n, f.lid, f.mix, f.nom)); toast(`✓ ${f.n} grupos formados`, 'ok'); };
+    return;
+  }
+  const asignados = new Set(g.lista.flatMap(x => x.miembros));
+  const sin = rows.filter(r => !asignados.has(r.id));
+  box.innerHTML = `<section class="card">
+      <h2>${ICON.users} ${g.lista.length} grupos formados</h2>
+      <p class="hint" style="margin-top:0">Toca a una persona para hacerla líder o cambiarla de grupo.</p>
+      ${sin.length ? `<div class="info-box">${sin.length} asistente${sin.length > 1 ? 's llegaron' : ' llegó'} después de formar los grupos. <button class="link-btn" id="grSin">Repartir${sin.length > 1 ? 'los' : 'lo'} en los grupos</button></div>` : ''}
+      <div class="btn-row"><button class="btn primary" id="grWa">${ICON.chat} Enviar por WhatsApp</button><button class="btn" id="grRe">Volver a sortear</button><button class="btn danger" id="grDel">${ICON.trash} Quitar grupos</button></div>
+    </section>
+    <div class="gr-grid">${g.lista.map((x, i) => {
+      const miembros = x.miembros.filter(id => byId.has(id)).sort((a, b) => (x.lideres.includes(b) ? 1 : 0) - (x.lideres.includes(a) ? 1 : 0));
+      return `<section class="card gr-card"><h3>${esc(x.n)} <span class="hint">${miembros.length}</span></h3><ol>${miembros.map(id => { const r = byId.get(id), lid = x.lideres.includes(id); return `<li data-g="${i}" data-id="${esc(id)}" class="${lid ? 'lider' : ''}">${lid ? '★ ' : ''}${esc(prettyName(r.n))}${lid ? ' · líder' : ''}<small>${esc(barrioDe(r))}</small></li>`; }).join('')}</ol></section>`;
+    }).join('')}</div>`;
+  const sinB = $('#grSin', box); if(sinB) sinB.onclick = () => {
+    sin.forEach(r => { const menor = g.lista.reduce((m, x) => x.miembros.filter(id => byId.has(id)).length < m.miembros.filter(id => byId.has(id)).length ? x : m, g.lista[0]); menor.miembros.push(r.id); });
+    guardarGrupos(ev, g);
+  };
+  $('#grWa', box).onclick = () => waOpen(`*Grupos · ${ev.meta.title}*\n` + g.lista.map(x => {
+    const ms = x.miembros.filter(id => byId.has(id));
+    return `\n*${x.n}* (${ms.length})\n` + ms.sort((a, b) => (x.lideres.includes(b) ? 1 : 0) - (x.lideres.includes(a) ? 1 : 0)).map(id => (x.lideres.includes(id) ? '★ ' : '• ') + prettyName(byId.get(id).n) + (x.lideres.includes(id) ? ' (líder)' : '')).join('\n');
+  }).join('\n'));
+  $('#grRe', box).onclick = async () => {
+    if(!(await confirmBox('Se forman grupos nuevos con toda la lista actual. Los grupos de ahora se pierden.', { title:'Volver a sortear', ok:'Sortear' }))) return;
+    guardarGrupos(ev, formarGrupos(rows, g.lista.length, g.lideres || 0, g.mezclar !== false, g.nombre || 'Grupo'));
+  };
+  $('#grDel', box).onclick = async () => {
+    if(!(await confirmBox('Se quitan los grupos para todos los que colaboran en el evento.', { title:'Quitar grupos', ok:'Quitar', danger:true }))) return;
+    guardarGrupos(ev, null);
+  };
+  $$('.gr-card li', box).forEach(li => li.onclick = () => {
+    const x = g.lista[+li.dataset.g], id = li.dataset.id, r = byId.get(id), lid = x.lideres.includes(id);
+    sheet(`${sheetHead(esc(prettyName(r.n)), esc(x.n))}
+      <div class="btn-row"><button class="btn ${lid ? '' : 'primary'}" id="mLid">${lid ? 'Quitar como líder' : '★ Hacer líder'}</button></div>
+      ${g.lista.length > 1 ? `<p class="hint">Mover a:</p><div class="chips">${g.lista.map((y, j) => y === x ? '' : `<button class="chip" data-to="${j}">${esc(y.n)}</button>`).join('')}</div>` : ''}
+      <div class="sh-foot"><button class="btn" data-close>Cerrar</button></div>`, {
+      onMount(el, close){
+        $('#mLid', el).onclick = () => { x.lideres = lid ? x.lideres.filter(v => v !== id) : [...x.lideres, id]; close(); guardarGrupos(ev, g); };
+        $$('[data-to]', el).forEach(b => b.onclick = () => {
+          const y = g.lista[+b.dataset.to];
+          x.miembros = x.miembros.filter(v => v !== id); x.lideres = x.lideres.filter(v => v !== id); y.miembros.push(id);
+          close(); guardarGrupos(ev, g);
+        });
+      }
+    });
+  });
+}
+
+/* ============================================================
+   PÁGINA DEL QR (el asistente se registra solo)
+   ============================================================ */
+// En el celular del asistente se recuerda quién es y quiénes lo han acompañado.
+const QRS = { token:'', ev:null, yo:null, lista:[], sel:new Set() };
+const miYo = () => LS.get('ca_yo', null);
+const misAcomp = () => LS.get('ca_acomp', []);
+const claveP = p => p.persona_id || norm(p.nombre || ((p.apellidos || '') + ', ' + (p.nombres || '')));
+const quienPara = x => x.persona_id ? { persona_id:x.persona_id } : { nombres:x.nombres, apellidos:x.apellidos, estaca:x.estaca || '', barrio:x.barrio || '' };
+function qrShell(inner){
+  return `<header class="top"><div class="top-in"><div class="brand"><span class="mark">CA</span><span class="bt"><b>Registro de asistencia</b><small>Seminarios e Institutos</small></span></div></div></header><main class="wrap" id="qrMain">${inner}</main>`;
+}
+function qrHead(){
+  const e = QRS.ev;
+  return `<section class="card qr-ev"><small>Registro de asistencia</small><h1>${esc(e.titulo)}</h1><p class="meta">${esc([e.barrio || e.estaca, fmtDate(e.fecha)].filter(Boolean).join(' · '))}</p></section>`;
+}
+async function renderQr(token){
+  CUR = { type:'qr', code:null };
+  QRS.token = token;
+  app.innerHTML = qrShell(loadingHTML('Abriendo el evento…'));
+  let r;
+  try{ r = await SB.rpc('evento_por_qr', { token }); }
+  catch(e){ console.error(e); $('#qrMain').innerHTML = `<div class="empty">No se pudo abrir el registro. Revisa tu internet.<br><br><button class="btn primary" id="qrRe">Intentar otra vez</button></div>`; $('#qrRe').onclick = () => renderQr(token); return; }
+  if(!r || r.estado === 'no_existe'){ $('#qrMain').innerHTML = `<div class="empty">Este QR ya no está activo. Pide al organizador el QR actualizado.</div>`; return; }
+  QRS.ev = r;
+  if(r.estado === 'cerrado'){ $('#qrMain').innerHTML = qrHead() + `<div class="empty">El registro con QR de este evento está cerrado. Solo funciona desde un día antes hasta un día después del evento.</div>`; return; }
+  const hecho = LS.get('ca_qr_hechos', {})[token];
+  if(hecho && miYo()) return qrResultado(hecho);
+  qrPasoQuien();
+}
+// Buscador de la base para el asistente (su nombre o el de un acompañante), con registro manual si no aparece.
+function qrBuscador(box, { onPick, quien='tu' }){
+  box.innerHTML = `<div class="search-box"><span class="si">${ICON.search}</span><input id="qbq" type="search" placeholder="Nombre y apellido" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
+    <div id="qbRes" class="results"><div class="empty-hint"><small>Escribe al menos un nombre y un apellido.</small></div></div>
+    <button class="manual-cta" id="qbMan"><span class="mc-ico">${ICON.userPlus}</span><span><b>No aparece en la lista</b><small>Escribir ${quien === 'tu' ? 'tus' : 'sus'} datos</small></span>${ICON.next}</button>
+    <form id="qbForm" class="hide" autocomplete="off" style="margin-top:14px">
+      <div class="row2"><div class="field"><label>Nombres <span class="req">*</span></label><input name="nombres" autocapitalize="words"></div><div class="field"><label>Apellidos <span class="req">*</span></label><input name="apellidos" autocapitalize="words"></div></div>
+      <div class="row2"><div class="field"><label>Estaca</label><select name="estaca"><option value="">Seleccionar…</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${s === QRS.ev.estaca ? 'selected' : ''}>${esc(stakeShort(s))}</option>`).join('')}<option value="Otra">Otra</option></select></div><div class="field"><label>Barrio o rama</label><input name="barrio" autocapitalize="words"></div></div>
+      <div class="btn-row"><button class="btn primary" type="submit">${ICON.check} Continuar</button></div>
+    </form>`;
+  const q = $('#qbq', box), res = $('#qbRes', box);
+  let n = 0;
+  q.oninput = debounce(async () => {
+    const t = q.value.trim(); const id = ++n;
+    if(norm(t).split(' ').filter(w => w.length >= 2).length < 2){ res.innerHTML = `<div class="empty-hint"><small>Escribe al menos un nombre y un apellido.</small></div>`; return; }
+    res.innerHTML = loadingHTML('Buscando…');
+    try{
+      const list = await SB.rpc('buscar_en_qr', { token: QRS.token, texto: t });
+      if(id !== n) return;
+      res.innerHTML = list.length ? list.map((p, i) => `<button class="person" data-i="${i}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, t)}</b><small>${esc([p.barrio, stakeShort(p.estaca)].filter(Boolean).join(' · '))}${p.registrado ? ' · ya registrado' : ''}</small></span><span class="mk">${quien === 'tu' ? 'Soy yo' : 'Elegir'}</span></button>`).join('')
+        : `<div class="empty-hint"><p>No encontramos “${esc(t)}”</p><small>Revisa cómo lo escribiste o usa “No aparece en la lista”.</small></div>`;
+      $$('[data-i]', res).forEach(b => b.onclick = () => { const p = list[+b.dataset.i]; onPick({ persona_id:p.id, nombre:p.nombre, barrio:p.barrio, estaca:p.estaca }); });
+    }catch(e){ console.error(e); if(id === n) res.innerHTML = `<div class="empty-hint"><small>${esc(errMsg(e))}</small></div>`; }
+  }, 350);
+  $('#qbMan', box).onclick = () => { $('#qbForm', box).classList.remove('hide'); $('#qbMan', box).classList.add('hide'); const t = q.value.trim().split(/\s+/); if(t[0]) $('[name=nombres]', box).value = titleCase(t[0]); if(t.length > 1) $('[name=apellidos]', box).value = titleCase(t.slice(1).join(' ')); $('[name=nombres]', box).focus(); };
+  $('#qbForm', box).onsubmit = e => {
+    e.preventDefault();
+    const v = {}; $$('[name]', box).forEach(i => v[i.name] = i.value.trim());
+    v.nombres = titleCase(v.nombres); v.apellidos = titleCase(v.apellidos);
+    $$('.field', box).forEach(f => f.classList.remove('err'));
+    const miss = ['nombres', 'apellidos'].filter(k => !v[k]);
+    if(miss.length){ miss.forEach(k => $(`[name=${k}]`, box).closest('.field').classList.add('err')); toast('Escribe nombres y apellidos', 'error'); return; }
+    onPick({ nombres:v.nombres, apellidos:v.apellidos, estaca:v.estaca, barrio:v.barrio, nombre:`${v.apellidos}, ${v.nombres}` });
+  };
+  setTimeout(() => q.focus(), 200);
+}
+function qrPasoQuien(cambiar){
+  const main = $('#qrMain');
+  const yo = cambiar ? null : miYo();
+  if(yo){
+    main.innerHTML = qrHead() + `<section class="card"><h2>¿Eres ${esc(prettyName(yo.nombre))}?</h2>${yo.barrio ? `<p class="hint" style="margin-top:0">${esc(yo.barrio)}</p>` : ''}
+      <div class="btn-row"><button class="btn primary lg" id="siYo">${ICON.check} Sí, soy yo</button><button class="btn" id="noYo">No, soy otra persona</button></div></section>`;
+    $('#siYo').onclick = () => { QRS.yo = yo; qrPasoAcomp(); };
+    $('#noYo').onclick = () => qrPasoQuien(true);
+    return;
+  }
+  main.innerHTML = qrHead() + `<section class="card"><h2>¿Quién eres?</h2><p class="hint" style="margin-top:0">Busca tu nombre. Solo lo harás la primera vez en este celular.</p><div id="qrBusca"></div></section>`;
+  qrBuscador($('#qrBusca'), { onPick: p => { QRS.yo = p; qrPasoAcomp(true); } });
+}
+function qrPasoAcomp(nuevo){
+  const yo = QRS.yo;
+  QRS.lista = misAcomp().filter(a => claveP(a) !== claveP(yo));
+  QRS.sel = new Set();
+  const main = $('#qrMain');
+  const paint = () => {
+    const n = QRS.sel.size;
+    main.innerHTML = qrHead() + `<section class="card">
+      <h2>Hola, ${esc(prettyName(yo.nombre).split(' ')[0])} 👋</h2>
+      <h3 style="margin:10px 0 4px;font-size:16px">¿Vino alguien contigo?</h3>
+      <p class="hint" style="margin-top:0">${QRS.lista.length ? 'Marca a quienes te acompañan hoy. ' : ''}Si viniste con amigos o familia, agrégalos y registra su asistencia. Un colaborador la confirmará.</p>
+      <div class="ac-list">${QRS.lista.map((a, i) => `<label class="ac-item ${QRS.sel.has(claveP(a)) ? 'on' : ''}"><input type="checkbox" data-i="${i}" ${QRS.sel.has(claveP(a)) ? 'checked' : ''}><span><b>${esc(prettyName(a.nombre))}</b><small>${esc(a.barrio || '')}</small></span></label>`).join('')}</div>
+      <button class="btn" id="addAc">${ICON.userPlus} Agregar acompañante</button>
+      <div id="acBusca" class="hide" style="margin-top:14px"></div>
+    </section>
+    <div class="btn-row"><button class="btn primary lg block" id="qrOk">${ICON.check} Registrar mi asistencia${n ? ` y la de ${n} acompañante${n > 1 ? 's' : ''}` : ''}</button></div>
+    <p class="who"><button id="noSoy">No soy ${esc(prettyName(yo.nombre))}</button></p>`;
+    $$('.ac-item input', main).forEach(c => c.onchange = () => { const k = claveP(QRS.lista[+c.dataset.i]); if(c.checked) QRS.sel.add(k); else QRS.sel.delete(k); paint(); });
+    $('#addAc').onclick = () => {
+      $('#addAc').classList.add('hide'); const b = $('#acBusca'); b.classList.remove('hide');
+      qrBuscador(b, { quien:'su', onPick: p => {
+        if(claveP(p) === claveP(yo)){ toast('Esa persona eres tú 🙂', 'warn'); return; }
+        if(!QRS.lista.some(a => claveP(a) === claveP(p))) QRS.lista.unshift(p);
+        QRS.sel.add(claveP(p)); paint();
+      } });
+    };
+    $('#noSoy').onclick = () => qrPasoQuien(true);
+    $('#qrOk').onclick = qrEnviar;
+  };
+  paint();
+}
+async function qrEnviar(){
+  const btn = $('#qrOk'); if(btn) btn.disabled = true;
+  const elegidos = QRS.lista.filter(a => QRS.sel.has(claveP(a)));
+  try{
+    const r = await SB.rpc('registrar_por_qr', { token: QRS.token, yo: quienPara(QRS.yo), acompanantes: elegidos.map(quienPara), dispositivo: DEV });
+    const yo = Object.assign({}, QRS.yo, { nombre: r.nombre }); if(r.persona_id) yo.persona_id = r.persona_id;
+    LS.set('ca_yo', yo);
+    const vistos = new Set([claveP(yo)]);
+    LS.set('ca_acomp', [...elegidos, ...misAcomp()].filter(a => { const k = claveP(a); if(vistos.has(k)) return false; vistos.add(k); return true; }).slice(0, 30));
+    const hechos = LS.get('ca_qr_hechos', {}); hechos[QRS.token] = r;
+    LS.set('ca_qr_hechos', Object.fromEntries(Object.entries(hechos).slice(-20)));
+    if(navigator.vibrate) navigator.vibrate(40);
+    qrResultado(r);
+  }catch(e){ console.error(e); if(btn) btn.disabled = false; toast(errMsg(e), 'error'); }
+}
+function qrResultado(r){
+  const nom = prettyName(r.nombre);
+  const [ico, tit, txt] = r.estado === 'por_amigo'
+    ? ['🙌', '¡En buena hora!', `Tu amigo(a) <b>${esc(prettyName(r.amigo))}</b> ya registró tu asistencia, ${esc(nom.split(' ')[0])}.`]
+    : r.estado === 'ya_estaba' ? ['✅', 'Ya estabas registrado', `${esc(nom)}, tu asistencia ya está en la lista.`]
+    : ['✅', '¡Asistencia registrada!', `Gracias, ${esc(nom)}. Ya estás en la lista.`];
+  const ac = r.acompanantes || [];
+  $('#qrMain').innerHTML = qrHead() + `<section class="card qr-done"><div class="big">${ico}</div><h2>${tit}</h2><p>${txt}</p></section>
+    ${ac.length ? `<section class="card"><h2>Tus acompañantes</h2><div class="ac-list">${ac.map(a => `<div class="ac-item on"><span><b>${esc(prettyName(a.nombre))}</b><small>${a.estado === 'ya_estaba' ? 'Ya estaba registrado' : 'Anotado · un colaborador confirmará su asistencia'}</small></span></div>`).join('')}</div></section>` : ''}
+    <div class="btn-row"><button class="btn" id="masAc">${ICON.userPlus} Agregar más acompañantes</button></div>`;
+  $('#masAc').onclick = () => { QRS.yo = miYo(); if(QRS.yo) qrPasoAcomp(); else qrPasoQuien(true); };
 }
 
 /* ============================================================
@@ -3806,7 +4322,9 @@ window.addEventListener('online', () => { syncAllPending(); });
 window.addEventListener('keydown', e => { if(e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')){ e.preventDefault(); askAdmin(); } });
 document.addEventListener('visibilitychange', () => { if(!document.hidden){ if(CUR.type === 'event') syncEvent(CUR.code, {silent:true}); else if(CUR.type === 'class') syncClass(CUR.code, {silent:true}); } });
 setInterval(() => {
-  if(document.hidden || !Sync.on()) return;
+  if(document.hidden) return;
+  if(CUR.type === 'event' && eventoEnNube(EVENTS[CUR.code])){ syncEvent(CUR.code, {silent:true}); return; }
+  if(!Sync.on()) return;
   if(CUR.type === 'event') syncEvent(CUR.code, {silent:true});
   else if(CUR.type === 'class') syncClass(CUR.code, {silent:true});
 }, POLL_MS);
@@ -3817,6 +4335,9 @@ const params = new URLSearchParams(location.search);
 const deep = normCode(params.get('e') || params.get('c') || '');
 const deepMeta = params.get('m') ? unpackMeta(params.get('m')) : null;
 if(deep){ history.replaceState(null, '', location.pathname + location.hash); }
+// QR de asistencia: ?q=TOKEN abre la página donde el asistente se registra solo.
+const qrTok = (params.get('q') || '').replace(/[^A-Za-z0-9_-]/g, '');
+if(qrTok){ history.replaceState(null, '', location.pathname + '#/qr/' + qrTok); }
 SB.init();
 route();
 if(deep) openByCode(deep, deepMeta);
