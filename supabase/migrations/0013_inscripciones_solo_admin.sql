@@ -17,19 +17,26 @@ create index inscripciones_pendientes on public.inscripciones (creado_en) where 
 alter table public.inscripciones enable row level security;
 revoke all on public.inscripciones from anon, authenticated;
 
--- Lo que ya se hubiera guardado en las columnas anteriores.
-insert into public.inscripciones (clase_id, alumno_id, persona_id, qr_id, nombre, datos, creado_en)
-select q.clase_id, q.alumno_id, q.persona_id, q.id, q.nombre, q.datos, q.creado_en
-from public.asistencia_qr q where q.datos <> '{}'::jsonb;
-insert into public.inscripciones (clase_id, alumno_id, persona_id, nombre, datos)
-select a.clase_id, a.id, a.persona_id, a.nombre, a.inscripcion
-from public.clase_alumnos a
-where a.inscripcion is not null and a.inscripcion <> '{}'::jsonb
-  and not exists (select 1 from public.inscripciones i where i.alumno_id = a.id);
-alter table public.asistencia_qr drop column datos;
-alter table public.clase_alumnos drop column inscripcion;
+-- La 0012 aplicada fue la versión sin datos de inscripción: no hay nada que mover. Por si acaso,
+-- se quitan esas columnas si existieran.
+alter table public.asistencia_qr drop column if exists datos;
+alter table public.clase_alumnos drop column if exists inscripcion;
 
-create or replace function public.marcar_por_qr_clase(token text, alumno uuid default null, nombres text default null, apellidos text default null, dispositivo text default '', persona uuid default null, datos jsonb default '{}')
+-- Solo se guardan estas cuatro claves, recortadas.
+create or replace function public.datos_inscripcion(d jsonb)
+returns jsonb
+language sql
+immutable
+as $$
+  select coalesce(jsonb_object_agg(k, left(trim(d ->> k), 60)), '{}'::jsonb)
+  from unnest(array['cedula', 'usuario', 'nacimiento', 'celular']) k
+  where coalesce(trim(d ->> k), '') <> '';
+$$;
+
+-- Se reemplaza la versión anterior (sin el parámetro datos) para que no queden dos.
+drop function if exists public.marcar_por_qr_clase(text, uuid, text, text, text, uuid);
+drop function if exists public.marcar_por_qr_clase(text, uuid, text, text, text, uuid, jsonb);
+create function public.marcar_por_qr_clase(token text, alumno uuid default null, nombres text default null, apellidos text default null, dispositivo text default '', persona uuid default null, datos jsonb default '{}')
 returns jsonb
 language plpgsql
 security definer
@@ -151,7 +158,8 @@ end;
 $$;
 
 -- El maestro ve el nombre; los datos de inscripción solo llegan si quien pregunta es el administrador.
-create or replace function public.qr_pendientes_clase(clase uuid)
+drop function if exists public.qr_pendientes_clase(uuid);
+create function public.qr_pendientes_clase(clase uuid)
 returns table (id uuid, alumno_id uuid, persona_id uuid, nombre text, fecha date, creado_en timestamptz, datos jsonb)
 language plpgsql
 stable
@@ -214,6 +222,10 @@ begin
 end;
 $$;
 
+revoke execute on function public.marcar_por_qr_clase(text, uuid, text, text, text, uuid, jsonb) from public;
+grant execute on function public.marcar_por_qr_clase(text, uuid, text, text, text, uuid, jsonb) to anon, authenticated;
+revoke execute on function public.qr_pendientes_clase(uuid) from public, anon;
+grant execute on function public.qr_pendientes_clase(uuid) to authenticated;
 revoke execute on function public.inscripciones_wise(boolean) from public, anon;
 revoke execute on function public.atender_inscripcion(uuid, boolean) from public, anon;
 grant execute on function public.inscripciones_wise(boolean) to authenticated;
