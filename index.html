@@ -646,6 +646,23 @@ let DEV = LS.get('ca_dev', '');
 if(!DEV){ DEV = uid('d'); LS.set('ca_dev', DEV); }
 const myName = () => LS.get('ca_name', '');
 function setMyName(n){ LS.set('ca_name', String(n||'').trim().slice(0,40)); }
+// Clases en línea a las que este dispositivo ya entró, con el nombre para volver a entrar.
+const misAccesos = () => LS.get('ca_mis_accesos', {});
+function guardarAcceso(id, datos){ const g = misAccesos(); g[id] = { datos }; LS.set('ca_mis_accesos', g); }
+function recordarAccesos(lista){
+  const g = misAccesos(); let cambio = false;
+  (lista || []).forEach(c => {
+    // Un acceso de invitación con fecha de fin no se renueva solo.
+    if(g[c.id] || (c.tipo === 'colaborador' && c.vence_en)) return;
+    let nombres, apellidos;
+    if(c.tipo === 'colaborador'){ const p = String(myName()).trim().split(/\s+/); nombres = p[0] || ''; apellidos = p.slice(1).join(' '); }
+    else{ const [a, n] = String(c.maestro || '').split(','); apellidos = (a || '').trim(); nombres = (n || '').trim() || apellidos; }
+    if(!nombres || !apellidos) return;
+    g[c.id] = { datos:{ nombres, apellidos, barrio:'', estaca:c.estaca || '', programa:c.programa || 'S' } };
+    cambio = true;
+  });
+  if(cambio) LS.set('ca_mis_accesos', g);
+}
 
 /* ============================================================
    BASE DE PERSONAS (roster)
@@ -999,7 +1016,7 @@ const SB = {
         this.client = window.supabase.createClient(window.CA_CONFIG.supabaseUrl, window.CA_CONFIG.supabaseKey, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:false } });
         const { data } = await this.client.auth.getSession();
         this.user = data && data.session ? data.session.user : null;
-        if(this.user) await this.refresh();
+        await this.volver();
       }catch(e){ console.error(e); }
       this.ready = true;
       route();
@@ -1018,8 +1035,33 @@ const SB = {
     const perfil = await this.fetchAll('perfiles', 'rol,nombre', [['id', this.user.id]]);
     this.admin = !!(perfil[0] && perfil[0].rol === 'admin');
     this.mis = await this.rpc('mis_clases');
+    if(!this.admin) await this.recuperarAccesos();
     this.solicitudes = await this.rpc('mis_solicitudes');
     if(this.admin){ await this.loadCounts(); this.watchGlobal(); }
+  },
+  // Si este dispositivo ya entró a clases, vuelve a tener sesión aunque se haya perdido.
+  async volver(){
+    try{
+      if(!this.user && Object.keys(misAccesos()).length) await this.ensureSession();
+      if(this.user) await this.refresh();
+    }catch(e){ console.error(e); }
+  },
+  // Las clases que este dispositivo ya usaba y ya no aparecen (sesión nueva, datos borrados,
+  // entrar y salir como administrador) se vuelven a pedir con el mismo nombre: entra sin esperar.
+  async recuperarAccesos(){
+    const g = misAccesos(), tengo = new Set(this.mis.map(c => c.id));
+    let volvio = false, cambio = false;
+    for(const id of Object.keys(g)){
+      if(tengo.has(id)) continue;
+      try{
+        const r = await this.rpc('solicitar_acceso', Object.assign({ clase:id }, g[id].datos));
+        if(r === 'acceso' || r === 'acceso_colaborador' || r === 'ya_tuya') volvio = true;
+        else{ delete g[id]; cambio = true; }
+      }catch(e){ console.error(e); if(/no existe|not found|foreign/i.test(String(e && e.message))){ delete g[id]; cambio = true; } }
+    }
+    if(cambio) LS.set('ca_mis_accesos', g);
+    if(volvio) this.mis = await this.rpc('mis_clases');
+    recordarAccesos(this.mis);
   },
   async loadCounts(){ this.counts = await this.rpc('contadores_admin'); paintBadges(); },
   async rpc(name, args){
@@ -1065,8 +1107,9 @@ const SB = {
     const prev = LS.get('ca_sesion_dispositivo', null);
     if(prev){
       LS.del('ca_sesion_dispositivo');
-      try{ const { data, error } = await this.client.auth.setSession(prev); if(!error && data.user){ this.user = data.user; await this.refresh(); } }catch(e){ console.error(e); }
+      try{ const { data, error } = await this.client.auth.setSession(prev); if(!error && data.user) this.user = data.user; }catch(e){ console.error(e); }
     }
+    await this.volver();
   }
 };
 function paintBadges(){
@@ -1473,7 +1516,7 @@ async function abrirMiClase(id){
 function openSolicitud(c){
   const parts = String(myName()).trim().split(/\s+/);
   sheet(`${sheetHead('Solicitar acceso', `Clase de ${esc(prettyName(c.maestro))} · ${esc(c.horario)}`)}
-    <div class="info-box">Esta clase ya fue adoptada. <b>Si eres su maestro</b> y entras desde otro celular o la PC, escribe tu nombre y apellido como figuran en la clase: entrarás al instante. Si no, el administrador revisará tu solicitud.</div>
+    <div class="info-box">Esta clase ya fue adoptada. <b>Si eres su maestro</b> y entras desde otro celular o la PC, escribe tu nombre y apellido: si tu apellido coincide con el de la clase, entrarás al instante y la clase quedará guardada en este dispositivo. Si no, el administrador revisará tu solicitud.</div>
     <form id="sf" autocomplete="off">
       <div class="row2"><div class="field"><label>Nombres <span class="req">*</span></label><input name="nombres" value="${esc(parts[0] || '')}" autocapitalize="words"></div><div class="field"><label>Apellidos <span class="req">*</span></label><input name="apellidos" value="${esc(parts.slice(1).join(' '))}" autocapitalize="words"></div></div>
       <div class="row2"><div class="field"><label>Estaca <span class="req">*</span></label><select name="estaca"><option value="">Seleccionar…</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${s===c.estaca?'selected':''}>${esc(stakeShort(s))}</option>`).join('')}</select></div><div class="field"><label>Barrio <span class="req">*</span></label><input name="barrio" autocapitalize="words"></div></div>
@@ -1493,7 +1536,7 @@ function openSolicitud(c){
           setMyName(`${v.nombres} ${v.apellidos}`);
           await SB.rpc('guardar_mi_nombre', { nombre_nuevo:`${v.nombres} ${v.apellidos}` });
           close();
-          if(r === 'acceso' || r === 'ya_tuya' || r === 'acceso_colaborador'){ toast(r === 'acceso_colaborador' ? '✓ El administrador ya te había dado acceso: entraste como colaborador' : '✓ Eres el maestro de esta clase: ya puedes usarla en este dispositivo', 'ok', { ms:5000 }); await abrirMiClase(c.id);
+          if(r === 'acceso' || r === 'ya_tuya' || r === 'acceso_colaborador'){ guardarAcceso(c.id, v); toast(r === 'acceso_colaborador' ? '✓ El administrador ya te había dado acceso: entraste como colaborador' : '✓ Eres el maestro de esta clase: ya puedes usarla en este dispositivo', 'ok', { ms:5000 }); await abrirMiClase(c.id);
             const local = clasesLocales().find(x => x.esperando === c.id); if(local) await unirClaseLocal(local, c.id);
             return; }
           SB.solicitudes = await SB.rpc('mis_solicitudes');
