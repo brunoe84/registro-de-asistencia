@@ -2870,7 +2870,7 @@ async function renderQr(token){
 // Buscador de la base para el asistente (su nombre o el de un acompañante), con registro manual si no aparece.
 function qrBuscador(box, { onPick, quien='tu' }){
   box.innerHTML = `<div class="search-box"><span class="si">${ICON.search}</span><input id="qbq" type="search" placeholder="Nombre y apellido" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
-    <div id="qbRes" class="results"><div class="empty-hint"><small>Escribe al menos un nombre y un apellido.</small></div></div>
+    <div id="qbRes" class="results"><div class="empty-hint"><small>Escribe tu nombre o apellido; con los dos, mejor.</small></div></div>
     <button class="manual-cta" id="qbMan"><span class="mc-ico">${ICON.userPlus}</span><span><b>No aparece en la lista</b><small>Escribir ${quien === 'tu' ? 'tus' : 'sus'} datos</small></span>${ICON.next}</button>
     <form id="qbForm" class="hide" autocomplete="off" style="margin-top:14px">
       <div class="row2"><div class="field"><label>Nombres <span class="req">*</span></label><input name="nombres" autocapitalize="words"></div><div class="field"><label>Apellidos <span class="req">*</span></label><input name="apellidos" autocapitalize="words"></div></div>
@@ -2878,10 +2878,12 @@ function qrBuscador(box, { onPick, quien='tu' }){
       <div class="btn-row"><button class="btn primary" type="submit">${ICON.check} Continuar</button></div>
     </form>`;
   const q = $('#qbq', box), res = $('#qbRes', box);
-  let n = 0;
-  q.oninput = debounce(async () => {
-    const t = q.value.trim(); const id = ++n;
-    if(norm(t).split(' ').filter(w => w.length >= 2).length < 2){ res.innerHTML = `<div class="empty-hint"><small>Escribe al menos un nombre y un apellido.</small></div>`; return; }
+  let n = 0, ultimo = null;
+  const buscar = debounce(async () => {
+    const t = q.value.trim();
+    if(t === ultimo) return; ultimo = t;
+    const id = ++n;
+    if(!norm(t).split(' ').some(w => w.length >= 3)){ res.innerHTML = `<div class="empty-hint"><small>Escribe tu nombre o apellido (al menos 3 letras).</small></div>`; return; }
     res.innerHTML = loadingHTML('Buscando…');
     try{
       const list = await SB.rpc('buscar_en_qr', { token: QRS.token, texto: t });
@@ -2889,8 +2891,10 @@ function qrBuscador(box, { onPick, quien='tu' }){
       res.innerHTML = list.length ? list.map((p, i) => `<button class="person" data-i="${i}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, t)}</b><small>${esc([p.barrio, stakeShort(p.estaca)].filter(Boolean).join(' · '))}${p.registrado ? ' · ya registrado' : ''}</small></span><span class="mk">${quien === 'tu' ? 'Soy yo' : 'Elegir'}</span></button>`).join('')
         : `<div class="empty-hint"><p>No encontramos “${esc(t)}”</p><small>Revisa cómo lo escribiste o usa “No aparece en la lista”.</small></div>`;
       $$('[data-i]', res).forEach(b => b.onclick = () => { const p = list[+b.dataset.i]; onPick({ persona_id:p.id, nombre:p.nombre, barrio:p.barrio, estaca:p.estaca }); });
-    }catch(e){ console.error(e); if(id === n) res.innerHTML = `<div class="empty-hint"><small>${esc(errMsg(e))}</small></div>`; }
+    }catch(e){ console.error(e); ultimo = null; if(id === n) res.innerHTML = `<div class="info-box">No se pudo buscar: ${esc(errMsg(e))}. Revisa tu internet e inténtalo otra vez.</div>`; }
   }, 350);
+  // Algunos teclados de celular no avisan cada letra: también se busca al soltar la tecla o al tocar "buscar".
+  q.addEventListener('input', buscar); q.addEventListener('keyup', buscar); q.addEventListener('change', buscar); q.addEventListener('search', buscar);
   $('#qbMan', box).onclick = () => { $('#qbForm', box).classList.remove('hide'); $('#qbMan', box).classList.add('hide'); const t = q.value.trim().split(/\s+/); if(t[0]) $('[name=nombres]', box).value = titleCase(t[0]); if(t.length > 1) $('[name=apellidos]', box).value = titleCase(t.slice(1).join(' ')); $('[name=nombres]', box).focus(); };
   $('#qbForm', box).onsubmit = e => {
     e.preventDefault();
