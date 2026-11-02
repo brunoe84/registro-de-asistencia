@@ -121,6 +121,7 @@ declare
   nom text;
   d jsonb;
   previa uuid;
+  acuerdo_ok text;
 begin
   select e.programa into prog from public.enlaces_inscripcion e where e.token is not null and e.token = token;
   if prog is null then
@@ -141,7 +142,9 @@ begin
   if coalesce(datos ->> 'nacimiento', '') = '' or coalesce(datos ->> 'celular', '') = '' then
     raise exception 'Escribe tu fecha de nacimiento y tu celular';
   end if;
-  if coalesce(datos ->> 'acuerdo', '') <> case when prog = 'S' then 'Seminario 2/19' else 'Instituto 2/19' end then
+  -- (En plpgsql un CASE dentro de la condición de un IF se confunde con su THEN.)
+  acuerdo_ok := case when prog = 'S' then 'Seminario 2/19' else 'Instituto 2/19' end;
+  if coalesce(datos ->> 'acuerdo', '') <> acuerdo_ok then
     raise exception 'Para inscribirte debes aceptar el acuerdo de inscripción';
   end if;
   if prog = 'S' and (coalesce(trim(datos ->> 'tutor'), '') = '' or coalesce(trim(datos ->> 'tutor_celular'), '') = '') then
