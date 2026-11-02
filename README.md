@@ -27,6 +27,16 @@ El esquema, los permisos y el tiempo real están en `supabase/migrations/`. Ejec
 
 Las clases se crean desde **Todas las clases → programa → Importar clases**, con los Excel Class Roll. Los archivos en `CLASES/` y `data/` son privados y Git los ignora.
 
+El maestro que entra desde otro celular o la PC pide acceso con su nombre: si coincide al menos un nombre y un apellido con el maestro de la clase, entra al instante. Con otro nombre, la solicitud espera la aprobación del administrador.
+
+Para invitar a un colaborador, el maestro elige en **Compartir** cuánto durará el acceso (1 semana, 1 mes o todo el periodo) y envía el código de invitación. Cada código sirve para una sola persona; al usarse aparece otro. El código fijo de la clase no da acceso.
+
+Las clases que un maestro creó en su dispositivo antes de la base en línea aparecen en el inicio: la app busca su clase en línea (por alumnos, maestro y curso) y, si él confirma, suma sus alumnos y su asistencia sin cambiar lo que ya estaba marcado.
+
+## Base de personas
+
+Al subir el export de Potenciales de Wise se guardan nombre, estaca, barrio y programa (columna *Program Name*). El maestro filtra por programa, estaca y barrio al agregar alumnos.
+
 ## Recordatorios
 
 La función `supabase/functions/recordatorios` avisa al celular de los maestros con más de una semana de atraso. La base de datos la ejecuta a las 7:00, 12:00, 17:00 y 22:00 (hora de Perú). Sus claves privadas están solo en los secretos de Supabase.

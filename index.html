@@ -203,6 +203,9 @@ svg{width:18px;height:18px;flex-shrink:0}
 .search-box.sm input{padding:11px 40px;font-size:15px;border-radius:12px;box-shadow:none}
 .search-box.sm .si{left:13px}
 .scope-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 10px;flex-wrap:wrap}
+.filt-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0}
+.filt-row .inp{padding:9px 10px;font-size:14px}
+@media (max-width:560px){.filt-row{grid-template-columns:1fr 1fr}.filt-row #fW{grid-column:1/-1}}
 .results{display:flex;flex-direction:column;gap:8px}
 .person{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:#fff;border:1.5px solid var(--border);border-radius:15px;padding:11px 12px;transition:border-color .12s,background .12s}
 .person:hover{border-color:#BFD3D8}
@@ -448,7 +451,14 @@ function hash32(s, seed){ let h = seed>>>0; for(let i=0;i<s.length;i++){ h ^= s.
 function pidFor(n, w){ const k = norm(n)+'|'+norm(w); return 'p'+hash32(k,2166136261).toString(36)+hash32(k,0x9747b28c).toString(36).slice(0,3); }
 const ALPH = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 function genCode(prefix){ const a = new Uint8Array(5); crypto.getRandomValues(a); return prefix+'-'+Array.from(a, b=>ALPH[b%ALPH.length]).join(''); }
-function normCode(s){ s = String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,''); const m = s.match(/^(EV|CL)([A-Z0-9]{5})$/); return m ? m[1]+'-'+m[2] : ''; }
+/* Acepta el código solo o dentro de un texto pegado: "ev7k3qx", "Código: *EV-7K3QX*" o el enlace de invitación. */
+function normCode(s){
+  s = String(s||'').toUpperCase();
+  const p = s.match(/[?&][EC]=([^&#\s]+)/);
+  if(p) s = decodeURIComponent(p[1]);
+  const m = s.replace(/[^A-Z0-9]/g,'').match(/^(EV|CL)([A-Z0-9]{5})$/) || s.match(/(?:^|[^A-Z0-9])(EV|CL)[\s\-_.]([A-Z0-9]{5})(?![A-Z0-9])/);
+  return m ? m[1]+'-'+m[2] : '';
+}
 
 const LS = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
@@ -1038,7 +1048,8 @@ const SB = {
   stopWatch(){ this.watchers.forEach(ch => { try{ this.client.removeChannel(ch); }catch(e){} }); this.watchers = []; },
   watchGlobal(){
     if(this.global || !this.client || !this.client.channel) return;
-    this.global = this.client.channel('admin-notificaciones').on('postgres_changes', { event:'INSERT', schema:'public', table:'solicitudes_acceso' }, () => {
+    this.global = this.client.channel('admin-notificaciones').on('postgres_changes', { event:'INSERT', schema:'public', table:'solicitudes_acceso' }, ev => {
+      if(ev && ev.new && ev.new.estado && ev.new.estado !== 'pendiente') return;
       toast('🔔 Nueva solicitud de acceso a una clase', 'warn', { action:'Ver', onAction: () => go('#/solicitudes'), ms:8000 });
       this.loadCounts().then(() => { if(CUR.type === 'home') renderHome(); if(CUR.type === 'solicitudes') renderSolicitudes(); }).catch(()=>{});
     }).subscribe();
@@ -1046,9 +1057,16 @@ const SB = {
   async signOut(){
     this.stopWatch();
     if(this.global){ try{ this.client.removeChannel(this.global); }catch(e){} this.global = null; }
-    await this.client.auth.signOut();
-    this.user = null; this.admin = false; this.mis = []; this.solicitudes = []; this.counts = {solicitudes:0, alertas:0};
+    await this.client.auth.signOut({ scope:'local' });
+    this.user = null; this.admin = false; this.mis = []; this.solicitudes = []; this.barrios = null; this.counts = {solicitudes:0, alertas:0};
     Object.keys(CLASSES).forEach(c => { if(CLASSES[c].remote) delete CLASSES[c]; }); saveClasses();
+    // Vuelve la sesión que tenía este dispositivo antes de entrar como administrador,
+    // para no perder las clases y accesos que ya tenía.
+    const prev = LS.get('ca_sesion_dispositivo', null);
+    if(prev){
+      LS.del('ca_sesion_dispositivo');
+      try{ const { data, error } = await this.client.auth.setSession(prev); if(!error && data.user){ this.user = data.user; await this.refresh(); } }catch(e){ console.error(e); }
+    }
   }
 };
 function paintBadges(){
@@ -1133,13 +1151,29 @@ async function syncRemoteClass(code, {silent=false}={}){
   if(gone){ toast('Ya no tienes acceso a esta clase.', 'warn'); if(CUR.code === code) go('#/'); return; }
   if(CUR.type === 'class' && CUR.code === code) liveClass();
 }
-async function openRemoteClass(code){
+/* unirse: llegó con un código (pegado o por enlace). Si es una invitación, entra como colaborador
+   por el tiempo que eligió el maestro y se abre la clase con su código fijo. */
+async function openRemoteClass(code, unirse){
   await SB.readyP;
   try{
     await SB.ensureSession();
     const cls = CLASSES[code] || Object.assign(newClassObj(code, {}), { dirty:{} });
     cls.remote = true; cls.canEdit = true;
-    if(!(await pullRemoteClass(cls))){ toast('No tienes acceso a esa clase.', 'error'); go('#/'); return; }
+    let ok = await pullRemoteClass(cls);
+    if(!ok && unirse){
+      const r = await SB.rpc('unirme_con_codigo', { codigo_clase:code });
+      const avisos = {
+        no_existe:'No existe ninguna clase ni invitación con ese código. Revisa que esté bien escrito.',
+        usado:'Esa invitación ya fue usada por otra persona. Pide al maestro un código nuevo.',
+        sin_invitacion:'Ese es el código fijo de la clase. Para colaborar, pide al maestro un código de invitación.'
+      };
+      if(avisos[r.estado]){ toast(avisos[r.estado], 'error', { ms:6000 }); go('#/'); return; }
+      if(r.estado === 'acceso') toast(`✓ Entraste como colaborador${r.vence_en ? ' hasta el '+fmtDate(fechaLocal(r.vence_en)) : ''}`, 'ok', { ms:5000 });
+      await SB.refresh().catch(() => {});
+      if(r.codigo && r.codigo !== code) return openRemoteClass(r.codigo);
+      ok = await pullRemoteClass(cls);
+    }
+    if(!ok){ toast('No tienes acceso a esa clase.', 'error'); go('#/'); return; }
     CLASSES[code] = cls; saveClasses();
     if(location.hash === '#/clase/'+code) renderClass(code); else go('#/clase/'+code);
   }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
@@ -1161,6 +1195,7 @@ function retrasoDe(c){
   const dias = Math.floor((parseISO(todayISO()) - parseISO(pend[0])) / 864e5);
   return dias > DIAS_RETRASO ? { dias, desde:pend[0], sesiones:pend.length } : null;
 }
+const fechaLocal = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; };
 const fechaHora = ts => { if(!ts) return ''; const d = new Date(ts); return isNaN(d) ? '' : `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()} ${fmtTime(d)}`; };
 function seguimientoHTML(c){
   const r = retrasoDe(c);
@@ -1244,7 +1279,8 @@ function homeOnlineHTML(){
     </section>
     ${mis.filter(retrasoDe).map(c => { const r = retrasoDe(c); return `<section class="section"><button class="late-box" data-go="#/clase/${c.codigo}"><span class="late-ico">🔔</span><span class="ii"><b>Tienes asistencia atrasada</b><small>${esc(prettyName(c.maestro))} · ${esc(c.horario)}: ${r.sesiones} sesión${r.sesiones===1?'':'es'} sin marcar desde el ${esc(fmtDate(r.desde))}.</small></span><span class="btn sm gold">Marcar ahora</span></button></section>`; }).join('')}
     ${mis.length ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/entrar">Buscar otra</button></div>
-      ${mis.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}${c.tipo === 'colaborador' ? ' · Colaborador' : ''}</small></span><span class="num-badge">${c.alumnos} alum.</span></button>`).join('')}</section>` : ''}
+      ${mis.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}${c.tipo === 'colaborador' ? ' · Colaborador' + (c.vence_en ? ' hasta el '+fmtShort(fechaLocal(c.vence_en)) : '') : ''}</small></span><span class="num-badge">${c.alumnos} alum.</span></button>`).join('')}</section>` : ''}
+    ${localesHTML()}
     ${mis.length || SB.admin ? '<section class="section" id="pushBox"></section>' : ''}
     ${(SB.solicitudes||[]).length ? `<section class="section">${SB.solicitudes.map(s => `<div class="pend-box"><div><b>Solicitud enviada</b><small>${esc(prettyName(s.maestro))} · ${esc(s.horario)}. El administrador la revisará.</small></div></div>`).join('')}</section>` : ''}
     ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2></div>
@@ -1261,6 +1297,106 @@ function bindHomeOnline(){
   paintPush().catch(() => {});
   if(lo) lo.onclick = () => SB.admin ? SB.signOut().then(() => { toast('Sesión cerrada'); renderHome(); }) : askAdmin();
   paintBadges();
+  $$('[data-unir]').forEach(b => b.onclick = () => buscarClaseParaLocal(CLASSES[b.dataset.unir], true));
+  if(!SB.admin && SB.ready && !revisandoLocales && !localesRevisadas){ localesRevisadas = true; revisarClasesLocales(); }
+}
+
+/* ---------- Clases creadas en el dispositivo antes de la base en línea ---------- */
+/* Se busca su clase en línea (por alumnos, maestro y curso) y, si el maestro confirma,
+   se le suman los alumnos y las marcas que tenía guardadas aquí. */
+let localesRevisadas = false, revisandoLocales = false;
+const clasesLocales = () => Object.values(CLASSES).filter(c => c && !c.remote && c.canEdit !== false && classStudents(c).length);
+const marcasLocales = cls => Object.values(cls.att || {}).reduce((n, d) => n + Object.keys(d || {}).length, 0);
+function localesHTML(){
+  const list = clasesLocales();
+  if(!list.length) return '';
+  return `<section class="section"><div class="section-h"><h2>Guardadas en este dispositivo</h2></div>
+    <p class="hint" style="margin:0 2px 8px">Clases que creaste aquí antes de la base en línea. Únelas a tu clase en línea para no perder sus alumnos ni su asistencia.</p>
+    ${list.map(c => `<div class="item"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(c.meta.title || 'Clase')}</b><small>${esc([c.meta.teacher, progLabel(c.meta.program), classStudents(c).length+' alumnos', marcasLocales(c)+' marcas'].filter(Boolean).join(' · '))}</small></span>${
+      c.enLinea ? `<button class="btn sm" data-go="#/clase/${esc(c.enLinea)}">${ICON.check} Unida</button>` : `<button class="btn sm gold" data-unir="${esc(c.code)}">Unir</button>`}</div>`).join('')}</section>`;
+}
+function datosLocal(cls){
+  const m = cls.meta || {};
+  return {
+    maestro:m.teacher || myName() || '', titulo:m.title || '', programa:m.program || '', estaca:m.stake || '',
+    alumnos:classStudents(cls).map(s => {
+      const marcas = {};
+      Object.entries(cls.att || {}).forEach(([d, a]) => { const v = (a || {})[s.id]; if(v && /^\d{4}-\d\d-\d\d$/.test(d)) marcas[d] = v; });
+      return { nombre:s.n, estaca:(s.data||{}).k || '', barrio:(s.data||{}).w || '', marcas };
+    })
+  };
+}
+async function revisarClasesLocales(){
+  revisandoLocales = true;
+  try{
+    for(const cls of clasesLocales().filter(c => !c.enLinea)){
+      // Ya le dieron acceso a la clase que esperaba: se une sin preguntar otra vez.
+      if(cls.esperando && SB.user && (SB.mis||[]).some(x => x.id === cls.esperando)){ await unirClaseLocal(cls, cls.esperando); continue; }
+      if(cls.noUnir || cls.esperando) continue;
+      const seguir = await buscarClaseParaLocal(cls, false);
+      if(!seguir) break;
+    }
+  }catch(e){ console.error(e); }
+  revisandoLocales = false;
+}
+/* Devuelve true si se puede pasar a la siguiente clase local. */
+async function buscarClaseParaLocal(cls, manual){
+  if(!cls) return true;
+  let sug = [];
+  try{
+    await SB.ensureSession();
+    const datos = datosLocal(cls);
+    sug = await SB.rpc('sugerir_clase_local', { datos:{ maestro:datos.maestro, titulo:datos.titulo, programa:datos.programa, estaca:datos.estaca, alumnos:datos.alumnos.map(a => a.nombre) } });
+  }catch(e){ console.error(e); if(manual) toast(errMsg(e), 'error'); return true; }
+  const ids = new Set(sug.map(x => x.id));
+  const mias = (SB.mis||[]).filter(x => !ids.has(x.id)).map(x => ({ id:x.id, maestro:x.maestro, programa:x.programa, estaca:x.estaca, horario:x.horario, curso:x.curso, alumnos:x.alumnos, tengo_acceso:true, mia:true }));
+  const opciones = sug.concat(mias);
+  if(!opciones.length){
+    if(manual) sheet(`${sheetHead('No encontramos tu clase')}<p class="hint" style="margin-top:0">Ninguna clase en línea coincide con <b>${esc(cls.meta.title || 'esta clase')}</b>. Entra a <b>Entrar a mi clase</b>, búscala por tu nombre y vuelve aquí a tocar <b>Unir</b>.</p><div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="toEnt">Entrar a mi clase</button></div>`, { onMount(el, close){ $('#toEnt', el).onclick = () => { close(); go('#/entrar'); }; } });
+    return true;
+  }
+  const n = classStudents(cls).length;
+  return new Promise(res => {
+    let fin = false;
+    const terminar = v => { if(!fin){ fin = true; res(v); } };
+    sheet(`${sheetHead(sug.length ? 'Encontramos una clase para ti' : 'Elige tu clase en línea', esc(cls.meta.title || ''))}
+      <div class="info-box">En este dispositivo tienes la clase <b>${esc(cls.meta.title || 'sin título')}</b>${cls.meta.teacher ? ` de <b>${esc(cls.meta.teacher)}</b>` : ''} con <b>${n}</b> alumnos y <b>${marcasLocales(cls)}</b> marcas. Si es la misma clase, sus alumnos y su asistencia se suman a la clase en línea. Lo que ya está marcado en línea no se cambia.</div>
+      ${opciones.map((o, i) => `<div class="item" style="margin:8px 0 0"><span class="av">${esc(initials(o.maestro))}</span><span class="ii"><b>${esc(prettyName(o.maestro))}</b><small>${esc([progLabel(o.programa), stakeShort(o.estaca), o.horario, o.curso].filter(Boolean).join(' · '))}</small><small>${o.mia ? 'Una de tus clases' : `<b>${o.coincidentes} de ${n}</b> alumnos coinciden`}${o.adoptada && !o.tengo_acceso ? ' · ya adoptada' : ''}</small></span><button class="btn sm ${i===0 && !o.mia ? 'gold' : ''}" data-op="${i}">Es esta</button></div>`).join('')}
+      <div class="sh-foot"><button class="btn ghost" id="noEs">No es ninguna</button><button class="btn" data-close>Ahora no</button></div>`, {
+      wide:true,
+      onClose(){ terminar(false); },
+      onMount(el, close){
+        $('#noEs', el).onclick = () => { cls.noUnir = true; saveClasses(); terminar(true); close(); toast('Puedes unirla después desde “Guardadas en este dispositivo”.'); };
+        $$('[data-op]', el).forEach(b => b.onclick = async () => { close(); terminar(false); await unirClaseLocal(cls, opciones[+b.dataset.op].id, opciones[+b.dataset.op]); });
+      }
+    });
+  });
+}
+async function unirClaseLocal(cls, id, op){
+  try{
+    toast('Uniendo tu asistencia…');
+    await SB.ensureSession();
+    const r = await SB.rpc('unir_clase_local', { clase:id, datos:datosLocal(cls) });
+    if(r.estado === 'sin_acceso'){
+      cls.esperando = id; saveClasses();
+      await confirmBox('Esta clase ya la adoptó otra persona. Pide acceso con tu nombre y apellido: si eres su maestro entrarás al instante y uniremos tu asistencia. Si no, se unirá cuando el administrador te dé acceso.', { title:'Pide acceso primero', ok:'Pedir acceso', cancel:'Cerrar' })
+        && openSolicitud(op || { id, maestro:'', horario:'', estaca:cls.meta.stake, programa:cls.meta.program });
+      return;
+    }
+    if(r.estado !== 'unida'){ toast('Esa clase ya no existe.', 'error'); return; }
+    cls.enLinea = r.codigo; delete cls.esperando; delete cls.noUnir; saveClasses();
+    await SB.refresh();
+    sheet(`${sheetHead('✓ Clase unida')}<dl class="kv"><dt>Alumnos agregados</dt><dd>${r.alumnos}</dd><dt>Marcas agregadas</dt><dd>${r.marcas}</dd>${r.distintas ? `<dt>Marcas que ya estaban en línea con otro valor (se mantuvieron)</dt><dd>${r.distintas}</dd>` : ''}</dl>
+      <p class="hint">La copia de este dispositivo se conserva como respaldo.</p><div class="sh-foot"><button class="btn primary" id="toCl">Abrir la clase</button></div>`, { onMount(el, close){ $('#toCl', el).onclick = () => { close(); go('#/clase/'+r.codigo); }; } });
+    if(CUR.type === 'home') renderHome(true);
+  }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+}
+/* Iniciar sesión como administrador reemplaza la sesión anónima del dispositivo (con sus clases).
+   Se guarda para recuperarla al cerrar la sesión de administrador. */
+async function guardarSesionDispositivo(){
+  const { data } = await SB.client.auth.getSession();
+  const s = data && data.session;
+  if(s && s.user && s.user.is_anonymous) LS.set('ca_sesion_dispositivo', { access_token:s.access_token, refresh_token:s.refresh_token });
 }
 function askAdminOnline(){
   sheet(`${sheetHead('Acceso de administrador')}<form id="alf"><div class="field"><label>Correo</label><input id="aEm" type="email" autocomplete="username"></div><div class="field"><label>Contraseña</label><input id="aPw" type="password" autocomplete="current-password"></div></form><div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">Entrar</button></div>`, {
@@ -1268,6 +1404,7 @@ function askAdminOnline(){
       setTimeout(() => $('#aEm', el).focus(), 250);
       const tryIt = async () => {
         try{
+          await guardarSesionDispositivo();
           const { data, error } = await SB.client.auth.signInWithPassword({ email:$('#aEm', el).value.trim(), password:$('#aPw', el).value });
           if(error) throw error;
           SB.user = data.user;
@@ -1309,7 +1446,7 @@ async function buscarMiClase(txt){
     el.innerHTML = list.map((c, i) => `<div class="person" style="cursor:default"><span class="av">${esc(initials(c.maestro))}</span><span class="pi"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}</small></span>${
       c.tengo_acceso ? `<button class="mk done" data-open="${c.codigo}">${ICON.check} Abrir</button>`
       : c.solicitud_pendiente ? `<span class="badge b-new">Solicitud enviada</span>`
-      : c.adoptada ? `<button class="mk add" data-req="${i}">${ICON.lock} Solicitar acceso</button>`
+      : c.adoptada ? `<button class="mk add" data-req="${i}">${ICON.lock} Pedir acceso</button>`
       : `<button class="mk" data-adopt="${i}">Es mi clase</button>`}</div>`).join('');
     $$('[data-open]', el).forEach(b => b.onclick = () => go('#/clase/'+b.dataset.open));
     $$('[data-adopt]', el).forEach(b => b.onclick = () => adoptarClase(list[+b.dataset.adopt], txt));
@@ -1322,16 +1459,21 @@ async function adoptarClase(c, nombre){
     setMyName(nombre);
     await SB.rpc('guardar_mi_nombre', { nombre_nuevo:nombre });
     const r = await SB.rpc('adoptar_clase', { clase:c.id });
-    if(r === 'ocupada'){ toast('Otra persona acaba de tomar esta clase. Puedes solicitar acceso.', 'warn'); buscarMiClase(nombre); return; }
-    await SB.refresh();
+    if(r === 'ocupada'){ toast('Otra persona acaba de tomar esta clase. Puedes pedir acceso.', 'warn'); buscarMiClase(nombre); return; }
+    await abrirMiClase(c.id);
     toast('✓ Clase agregada a tu inicio', 'ok');
-    go('#/clase/'+c.codigo);
   }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+}
+/* La búsqueda no trae el código de clases ajenas: se toma de mis clases tras obtener acceso. */
+async function abrirMiClase(id){
+  await SB.refresh();
+  const mia = (SB.mis||[]).find(x => x.id === id);
+  go(mia ? '#/clase/'+mia.codigo : '#/');
 }
 function openSolicitud(c){
   const parts = String(myName()).trim().split(/\s+/);
   sheet(`${sheetHead('Solicitar acceso', `Clase de ${esc(prettyName(c.maestro))} · ${esc(c.horario)}`)}
-    <div class="info-box">Esta clase ya tiene un maestro. El administrador recibirá tu solicitud y te dará acceso si corresponde.</div>
+    <div class="info-box">Esta clase ya fue adoptada. <b>Si eres su maestro</b> y entras desde otro celular o la PC, escribe tu nombre y apellido como figuran en la clase: entrarás al instante. Si no, el administrador revisará tu solicitud.</div>
     <form id="sf" autocomplete="off">
       <div class="row2"><div class="field"><label>Nombres <span class="req">*</span></label><input name="nombres" value="${esc(parts[0] || '')}" autocapitalize="words"></div><div class="field"><label>Apellidos <span class="req">*</span></label><input name="apellidos" value="${esc(parts.slice(1).join(' '))}" autocapitalize="words"></div></div>
       <div class="row2"><div class="field"><label>Estaca <span class="req">*</span></label><select name="estaca"><option value="">Seleccionar…</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${s===c.estaca?'selected':''}>${esc(stakeShort(s))}</option>`).join('')}</select></div><div class="field"><label>Barrio <span class="req">*</span></label><input name="barrio" autocapitalize="words"></div></div>
@@ -1347,12 +1489,15 @@ function openSolicitud(c){
         if(miss.length){ miss.forEach(k => $(`[name=${k}]`, el).closest('.field').classList.add('err')); toast('Completa los campos obligatorios (*)', 'error'); return; }
         try{
           await SB.ensureSession();
-          const { error } = await SB.client.from('solicitudes_acceso').insert(Object.assign({ clase_id:c.id, usuario_id:SB.user.id }, v));
-          if(error && error.code !== '23505') throw error;
+          const r = await SB.rpc('solicitar_acceso', Object.assign({ clase:c.id }, v));
           setMyName(`${v.nombres} ${v.apellidos}`);
           await SB.rpc('guardar_mi_nombre', { nombre_nuevo:`${v.nombres} ${v.apellidos}` });
+          close();
+          if(r === 'acceso' || r === 'ya_tuya' || r === 'acceso_colaborador'){ toast(r === 'acceso_colaborador' ? '✓ El administrador ya te había dado acceso: entraste como colaborador' : '✓ Eres el maestro de esta clase: ya puedes usarla en este dispositivo', 'ok', { ms:5000 }); await abrirMiClase(c.id);
+            const local = clasesLocales().find(x => x.esperando === c.id); if(local) await unirClaseLocal(local, c.id);
+            return; }
           SB.solicitudes = await SB.rpc('mis_solicitudes');
-          close(); toast('✓ Solicitud enviada al administrador', 'ok');
+          toast('✓ Solicitud enviada al administrador', 'ok');
           if($('#tq')) buscarMiClase($('#tq').value);
         }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
       };
@@ -1594,7 +1739,7 @@ async function subirBaseEnLinea(rows, archivo){
   if(!SB.on() || !SB.admin) return;
   try{
     toast('Subiendo la base y revisando alertas…');
-    const r = await SB.rpc('cargar_personas', { filas:rows.filter(x => x.n).map(x => ({ nombre:x.n, estaca:x.k || '', barrio:x.w || '' })), archivo });
+    const r = await SB.rpc('cargar_personas', { filas:rows.filter(x => x.n).map(x => ({ nombre:x.n, estaca:x.k || '', barrio:x.w || '', programa:x.g || '' })), archivo });
     await SB.loadCounts();
     sheet(`${sheetHead('Base actualizada')}<dl class="kv"><dt>Personas en el archivo</dt><dd>${r.total}</dd><dt>Personas nuevas</dt><dd>${r.nuevas}</dd><dt>Alertas resueltas</dt><dd>${r.resueltas}</dd><dt>Siguen con alerta</dt><dd>${r.siguen}</dd></dl>
       <div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="toAl">Ver alertas</button></div>`, { onMount(el, close){ $('#toAl', el).onclick = () => { close(); go('#/alertas'); }; } });
@@ -1605,10 +1750,16 @@ async function subirBaseEnLinea(rows, archivo){
 const runRemoteSearch = debounce(async (cls, q) => {
   const el = $('#cres'); if(!el || ST.cq.trim() !== q) return;
   try{
-    const list = await SB.rpc('buscar_personas', { texto:q });
+    const f = filtroAlumnos(cls);
+    const list = await SB.rpc('buscar_personas', { texto:q, f_programa:f.p, f_estaca:f.k, f_barrio:f.w });
     if(ST.cq.trim() !== q) return;
     const inClass = new Set(classStudents(cls).map(s => s.pid).filter(Boolean));
-    el.innerHTML = list.map(p => `<button class="person ${inClass.has(p.id)?'is-marked':''}" data-pid="${p.id}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, q)}</b><small>${esc([p.barrio, stakeShort(p.estaca)].filter(Boolean).join(' · '))}</small></span>${inClass.has(p.id) ? `<span class="mk done">${ICON.check} En la clase</span>` : `<span class="mk add">${ICON.plus} Agregar</span>`}</button>`).join('') || `<div class="empty-hint"><p>Sin coincidencias</p><small>Puedes agregarlo como alumno nuevo.</small></div>`;
+    const dentro = list.filter(p => p.en_filtro), fuera = list.filter(p => !p.en_filtro);
+    const fila = p => `<button class="person ${inClass.has(p.id)?'is-marked':''}" data-pid="${p.id}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, q)}</b><small>${esc([p.barrio, stakeShort(p.estaca), progLabel(p.programa), p.aproximado ? 'nombre parecido' : ''].filter(Boolean).join(' · '))}</small></span>${inClass.has(p.id) ? `<span class="mk done">${ICON.check} En la clase</span>` : `<span class="mk add">${ICON.plus} Agregar</span>`}</button>`;
+    const filtrado = !!(f.p || f.k || f.w);
+    el.innerHTML = (dentro.map(fila).join('') || `<div class="empty-hint"><p>Sin coincidencias${filtrado ? ' con este filtro' : ''}</p><small>${fuera.length ? 'Revisa las personas fuera del filtro o agrégalo' : 'Puedes agregarlo'} como alumno nuevo.</small></div>`)
+      + (fuera.length ? (ST.cfMore || !dentro.length ? `<p class="hint" style="margin:10px 2px 4px">Fuera del filtro (${fuera.length}${fuera.length >= 40 ? '+' : ''})</p>${fuera.map(fila).join('')}` : `<button class="btn sm ghost more-btn" id="cmore">Ver ${fuera.length}${fuera.length >= 40 ? '+' : ''} fuera del filtro</button>`) : '');
+    const more = $('#cmore', el); if(more) more.onclick = () => { ST.cfMore = true; runRemoteSearch(cls, q); };
     $$('.person[data-pid]', el).forEach(b => b.onclick = () => {
       const p = list.find(x => x.id === b.dataset.pid); if(!p) return;
       if(inClass.has(p.id)){ toast('Ya está en la clase'); return; }
@@ -1623,14 +1774,37 @@ const runRemoteSearch = debounce(async (cls, q) => {
 function renderRemoteClassSearch(cls){
   const el = $('#cres'); if(!el) return;
   const q = ST.cq.trim();
-  if(norm(q).length < 3){ el.innerHTML = '<p class="hint" style="margin:0 2px">Escribe el nombre o apellido para buscar en la base de personas.</p>'; return; }
+  ST.cfMore = false;
+  if(norm(q).length < 3){ el.innerHTML = '<p class="hint" style="margin:0 2px">Escribe un nombre y un apellido (no hace falta completo) para buscar en la base de personas.</p>'; return; }
   runRemoteSearch(cls, q);
+}
+/* Filtro al agregar alumnos: por defecto el programa y la estaca de la clase. */
+function filtroAlumnos(cls){
+  if(!ST.cf) ST.cf = { p:cls.meta.program || '', k:PROG_STAKES.includes(cls.meta.stake) ? cls.meta.stake : '', w:'' };
+  return ST.cf;
+}
+async function renderRemoteFilters(cls){
+  const box = $('#cfilt'); if(!box) return;
+  const f = filtroAlumnos(cls);
+  const paint = () => {
+    const barrios = (SB.barrios || []).filter(b => b.estaca === f.k).map(b => b.barrio);
+    if(f.w && !barrios.includes(f.w)) f.w = '';
+    box.innerHTML = `<select class="inp" id="fP" aria-label="Programa"><option value="">Todos los programas</option><option value="S" ${f.p==='S'?'selected':''}>Seminario</option><option value="I" ${f.p==='I'?'selected':''}>Instituto</option></select>
+      <select class="inp" id="fK" aria-label="Estaca"><option value="">Todas las estacas</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${s===f.k?'selected':''}>${esc(stakeShort(s))}</option>`).join('')}</select>
+      <select class="inp" id="fW" aria-label="Barrio" ${f.k ? '' : 'disabled'}><option value="">${f.k ? 'Todos los barrios' : 'Elige una estaca'}</option>${barrios.map(b => `<option value="${esc(b)}" ${b===f.w?'selected':''}>${esc(b)}</option>`).join('')}</select>`;
+    const cambio = () => { f.p = $('#fP', box).value; const k = $('#fK', box).value; f.w = k === f.k ? $('#fW', box).value : ''; f.k = k; paint(); renderClassSearch(cls); };
+    $$('select', box).forEach(s => s.onchange = cambio);
+  };
+  paint();
+  if(!SB.barrios){ try{ SB.barrios = await SB.rpc('barrios_por_estaca'); if($('#cfilt') === box) paint(); }catch(e){ console.error(e); } }
 }
 function renderRemoteShare(cls, body){
   const d = ST.classDate || defaultClassDate(classDates(cls));
   body.innerHTML = `<section class="card"><h2>${ICON.download} Asistencia en tabla</h2>
       <p class="hint" style="margin-top:0">Reporte y Excel con una columna por fecha, totales y porcentaje por alumno.</p>
-      <div class="btn-row"><button class="btn primary" id="xs">${ICON.share} Enviar asistencia</button><button class="btn" id="xp">${ICON.download} Descargar reporte</button><button class="btn" id="xd">${ICON.download} Descargar Excel</button><button class="btn" id="ws">${ICON.chat} Resumen del ${fmtShort(d)}</button></div></section>`;
+      <div class="btn-row"><button class="btn primary" id="xs">${ICON.share} Enviar asistencia</button><button class="btn" id="xp">${ICON.download} Descargar reporte</button><button class="btn" id="xd">${ICON.download} Descargar Excel</button><button class="btn" id="ws">${ICON.chat} Resumen del ${fmtShort(d)}</button></div></section>
+    <section class="card hide" id="invCard"></section>`;
+  paintInvitacion(cls);
   $('#xd').onclick = () => exportClass(cls, false);
   $('#xs').onclick = () => exportClassHtml(cls, true);
   $('#xp').onclick = () => exportClassHtml(cls, false);
@@ -1640,11 +1814,34 @@ function renderRemoteShare(cls, body){
     waOpen(`*${cls.meta.title}* · ${cls.meta.teacher}\n📅 ${fmtDate(d)}\n\n✅ Asistieron: *${pres.length}/${studs.length}*\n${pres.map(s => '• '+prettyName(s.n)).join('\n')}${fal.length ? `\n\n❌ Faltaron (${fal.length}):\n${fal.map(s => '• '+prettyName(s.n)).join('\n')}` : ''}`);
   };
 }
+/* Invitación de un solo uso: el maestro elige cuánto dura el acceso; al usarse se crea otra. */
+async function paintInvitacion(cls, duracion){
+  const box = $('#invCard'); if(!box || !cls.dbId) return;
+  const mia = (SB.mis||[]).find(x => x.codigo === cls.code);
+  if(!SB.admin && !(mia && (mia.tipo === 'titular' || mia.tipo === 'dispositivo'))) return;
+  try{
+    const [inv] = await SB.rpc('invitacion_de_clase', Object.assign({ clase:cls.dbId }, duracion ? { duracion_nueva:duracion } : {}));
+    if(!inv || $('#invCard') !== box) return;
+    const DUR = { semana:'1 semana', mes:'1 mes', periodo:'Todo el periodo' };
+    const hasta = inv.vence_en ? 'hasta el '+fmtDate(fechaLocal(inv.vence_en)) : 'hasta el fin de la clase';
+    box.classList.remove('hide');
+    box.innerHTML = `<h2>${ICON.users} Invitar a un colaborador</h2>
+      <p class="hint" style="margin-top:0">¿Por cuánto tiempo tendrá acceso?</p>
+      <div class="seg" id="invDur" style="margin-bottom:12px">${Object.keys(DUR).map(k => `<button data-d="${k}" class="${k===inv.duracion?'on':''}">${DUR[k]}</button>`).join('')}</div>
+      <div class="code-big">${esc(inv.codigo)}</div>
+      <p class="hint" style="margin-top:0">Este código sirve para <b>una sola persona</b>: podrá ver y marcar la asistencia ${esc(hasta)} si lo usa hoy. Cuando lo use, aquí aparecerá un código nuevo para invitar a otra persona.</p>
+      <div class="btn-row"><button class="btn" id="cpCode">${ICON.copy} Copiar código</button><button class="btn" id="waInv">${ICON.chat} Enviar invitación</button></div>`;
+    $$('#invDur button', box).forEach(b => b.onclick = () => paintInvitacion(cls, b.dataset.d));
+    $('#cpCode', box).onclick = () => copyText(inv.codigo);
+    $('#waInv', box).onclick = () => waOpen(`Hola 👋 Te invito a colaborar en la asistencia de la clase de *${prettyName(cls.meta.teacher)}* (${progLabel(cls.meta.program)}${cls.meta.horario ? ' · '+cls.meta.horario : ''}) por ${DUR[inv.duracion].toLowerCase()}.\nAbre este enlace: ${appLink('c', inv.codigo)}\n(o ingresa el código *${inv.codigo}*)`);
+  }catch(e){ console.error(e); }
+}
 async function paintAccesos(cls){
   const box = $('#accBox'); if(!box || !SB.admin || !cls.dbId) return;
   try{
     const list = await SB.rpc('accesos_de_clase', { clase:cls.dbId });
-    box.innerHTML = `<div class="acc-row"><b>Acceso:</b> ${list.length ? '' : 'Nadie la ha adoptado todavía.'}${list.map((a, i) => `<span class="badge ${a.tipo==='titular'?'b-ok':'b-ro'}">${esc(a.nombre)} · ${a.tipo==='titular'?'Titular':'Colaborador'} <button class="link-btn" data-unacc="${i}" aria-label="Quitar acceso">quitar</button></span>`).join(' ')}</div>`;
+    const tipoTxt = { titular:'Titular', dispositivo:'Titular · otro dispositivo', colaborador:'Colaborador' };
+    box.innerHTML = `<div class="acc-row"><b>Acceso:</b> ${list.length ? '' : 'Nadie la ha adoptado todavía.'}${list.map((a, i) => `<span class="badge ${a.tipo==='colaborador'?'b-ro':'b-ok'}">${esc(a.nombre)} · ${tipoTxt[a.tipo] || a.tipo}${a.vence_en ? (new Date(a.vence_en) > new Date() ? ' hasta '+fmtShort(fechaLocal(a.vence_en)) : ' (vencido)') : ''} <button class="link-btn" data-unacc="${i}" aria-label="Quitar acceso">quitar</button></span>`).join(' ')}</div>`;
     $$('[data-unacc]', box).forEach(b => b.onclick = async () => {
       const a = list[+b.dataset.unacc];
       if(!(await confirmBox(`<b>${esc(a.nombre)}</b> dejará de ver esta clase.${a.tipo === 'titular' ? ' La clase quedará libre para que otra persona la adopte.' : ''}`, { title:'Quitar acceso', ok:'Quitar', danger:true }))) return;
@@ -1772,15 +1969,15 @@ function renderHome(fresco){
     <section class="section">
       <form class="card join-card" id="joinForm" autocomplete="off">
         <h2 style="font-size:15.5px;margin-bottom:4px">¿Te enviaron un código?</h2>
-        <p class="hint" style="margin:0 0 10px">Solo si alguien te invitó a <b>ayudar en su evento</b> (EV-…) o te pidió <b>ver su clase</b> (CL-…). Si vas a tomar asistencia de tu propia clase, no lo necesitas: usa <b>Mi clase</b>.</p>
-        <div class="join"><input id="joinCode" placeholder="Ej. EV-7K3QX" maxlength="9" autocapitalize="characters" spellcheck="false"><button class="btn gold" type="submit">Entrar</button></div>
+        <p class="hint" style="margin:0 0 10px">Solo si alguien te invitó a <b>ayudar en su evento</b> (EV-…) o a <b>colaborar en su clase</b> (CL-…). Puedes pegar el código, el enlace o el mensaje completo. Si vas a tomar asistencia de tu propia clase, no lo necesitas: usa <b>Mi clase</b>.</p>
+        <div class="join"><input id="joinCode" placeholder="Ej. EV-7K3QX" autocapitalize="characters" spellcheck="false"><button class="btn gold" type="submit">Entrar</button></div>
       </form>
     </section>
     <section class="section"><div class="btn-row"><button class="btn" id="impBk">${ICON.upload} Importar reporte, Excel o backup</button><button class="btn" id="expAll">${ICON.download} Backup de todo</button></div></section>
     <p class="foot"><span id="dataInfo">${SB.on() ? 'Check-in Asistencia' : `Base: ${ROSTER.people.length.toLocaleString('es-PE')} personas · act. ${fmtVersion(ROSTER.v)}`}</span><br>${SB.on() ? `<button class="link-btn" id="adminLink">${SB.admin ? 'Cerrar sesión de administrador' : 'Soy administrador'}</button>` : `Sincronización: ${Sync.on() ? 'activa' : 'no configurada'}`} · <span id="verTap">v${APP_VERSION}</span></p>
   </main>`;
   bindTop();
-  $('#joinForm').onsubmit = e => { e.preventDefault(); openByCode($('#joinCode').value); };
+  $('#joinForm').onsubmit = e => { e.preventDefault(); const raw = $('#joinCode').value; const mm = raw.match(/[?&]m=([A-Za-z0-9_-]+)/); openByCode(raw, mm ? unpackMeta(mm[1]) : null); };
   $('#joinEv').onclick = () => { $('#joinCode').focus(); $('#joinCode').scrollIntoView({block:'center'}); };
   $('#impBk').onclick = importBackupPicker;
   $('#expAll').onclick = () => downloadBackup({ kind:'ca-backup', type:'all', ver:1, exportedAt:new Date().toISOString(), events:EVENTS, classes:Object.fromEntries(Object.entries(CLASSES).map(([k, v]) => [k, cleanForBackup(v)])) }, 'Backup Check-in completo');
@@ -1843,7 +2040,7 @@ async function openEvent(code, linkMeta){
 }
 async function openClass(code){
   if(CLASSES[code]){ go('#/clase/'+code); return; }
-  if(SB.on()) return openRemoteClass(code);
+  if(SB.on()) return openRemoteClass(code, true);
   if(!Sync.on()){
     if(await confirmBox(`La clase <b>${code}</b> no está en este celular. Pide al maestro el reporte (o Excel) de su clase y ábrelo aquí: trae un respaldo que la carga completa.`, { title:'Importar clase', ok:'Elegir archivo', cancel:'Cerrar' })) importBackupPicker();
     return;
@@ -2377,7 +2574,7 @@ function renderClass(code){
   const cls = CLASSES[code];
   if(!cls && SB.on()){ app.innerHTML = topbar({ back:'#/', title:'Abriendo clase' }) + `<main class="wrap">${loadingHTML()}</main>`; bindTop(); openRemoteClass(code); return; }
   if(!cls){ go('#/clases'); setTimeout(() => openClass(code), 60); return; }
-  if(CUR.code !== code){ ST.classDate = null; ST.planMonth = null; ST.cq = ''; ST.cscope = null; if(!classStudents(cls).length && cls.canEdit) ST.ctab = 'alumnos'; else if(ST.ctab === 'alumnos' && !cls.canEdit) ST.ctab = 'hoy'; }
+  if(CUR.code !== code){ ST.classDate = null; ST.planMonth = null; ST.cq = ''; ST.cscope = null; ST.cf = null; if(!classStudents(cls).length && cls.canEdit) ST.ctab = 'alumnos'; else if(ST.ctab === 'alumnos' && !cls.canEdit) ST.ctab = 'hoy'; }
   CUR = { type:'class', code };
   const m = cls.meta;
   const daysTxt = (m.days||[]).slice().sort((a,b)=>((a||7)-(b||7))).map(d => DOW[d]).join(', ');
@@ -2494,7 +2691,7 @@ function renderClassTab(){
     body.innerHTML = `${ro ? '' : `<section class="card">
         <h2>${ICON.userPlus} Agregar alumnos</h2>
         <div class="search-box sm"><span class="si">${ICON.search}</span><input id="cq" type="search" placeholder="Buscar en la base por nombre…" autocomplete="off" spellcheck="false" value="${esc(ST.cq)}"></div>
-        ${opts.length > 1 && !cls.remote ? `<div class="scope-row"><div class="seg" id="cscope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.cscope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div></div>` : '<div style="height:10px"></div>'}
+        ${cls.remote ? '<div class="filt-row" id="cfilt"></div>' : opts.length > 1 ? `<div class="scope-row"><div class="seg" id="cscope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.cscope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div></div>` : '<div style="height:10px"></div>'}
         <div id="cres" class="results"></div>
         <button class="manual-cta" id="newStu"><span class="mc-ico">${ICON.userPlus}</span><span><b>Alumno nuevo</b><small>No es miembro o no aparece en la base · solo nombre, estaca y barrio</small></span>${ICON.next}</button>
       </section>`}
@@ -2504,6 +2701,7 @@ function renderClassTab(){
       q.oninput = () => { ST.cq = q.value; renderClassSearch(cls); };
       $$('#cscope button').forEach(b => b.onclick = () => { ST.cscope = b.dataset.s; $$('#cscope button').forEach(x => x.classList.toggle('on', x === b)); renderClassSearch(cls); });
       $('#newStu').onclick = () => openNewStudent(cls);
+      if(cls.remote) renderRemoteFilters(cls);
       renderClassSearch(cls);
     }
     renderStuList();
@@ -3440,7 +3638,10 @@ async function handleImport(file){
       full: col('student name','nombre completo','nombres y apellidos','apellidos y nombres','alumno'),
       nom: col('nombres','nombre','nombres completos'), ape: col('apellidos','apellido'),
       k: col(h => h.startsWith('stake') || h.includes('estaca')), w: col(h => h.startsWith('ward') || h.includes('barrio') || h === 'rama' || h === 'unidad'),
+      g: col('program name', 'program', 'programa'),
     };
+    /* "Ica Peru Stake SEM (12011)" → S · "Ica Peru Stake IN (61151)" → I */
+    const progDe = v => { const u = String(v||'').toUpperCase(); return /\bSEM\b|SEMINAR/.test(u) ? 'S' : /\bINS?T?\b|INSTITU/.test(u) ? 'I' : ''; };
     const rows = [];
     for(let i=hi+1;i<raw.length;i++){
       const r = raw[i]; if(!r) continue;
@@ -3450,7 +3651,7 @@ async function handleImport(file){
       else if(C.ape >= 0 && C.nom >= 0){ const a = get('ape'), b = get('nom'); n = a && b ? `${a}, ${b}` : (a || b); }
       else n = get('nom');
       n = n.replace(/\s+/g,' ').trim(); if(!n) continue;
-      rows.push({ n, k: get('k'), w: get('w') });
+      rows.push({ n, k: get('k'), w: get('w'), g: progDe(get('g')) });
     }
     if(!rows.length) throw new Error('El archivo no tiene filas con nombres.');
     const byId = new Map(ROSTER.people.map(p => [p.id, p]));
@@ -3458,7 +3659,7 @@ async function handleImport(file){
     let nNew = 0, nUpd = 0;
     rows.forEach(r => { const ex = byId.get(pidFor(r.n, r.w)) || byName.get(norm(r.n)); if(ex) nUpd++; else nNew++; });
     IMPORT = { rows, name: file.name };
-    const found = Object.entries({ 'Nombre': C.full >= 0 || C.nom >= 0, 'Estaca': C.k >= 0, 'Barrio': C.w >= 0 }).map(([k, ok]) => `<span class="badge ${ok?'b-ok':'b-ro'}">${ok?'✓':'—'} ${k}</span>`).join(' ');
+    const found = Object.entries({ 'Nombre': C.full >= 0 || C.nom >= 0, 'Estaca': C.k >= 0, 'Barrio': C.w >= 0, 'Programa': rows.some(r => r.g) }).map(([k, ok]) => `<span class="badge ${ok?'b-ok':'b-ro'}">${ok?'✓':'—'} ${k}</span>`).join(' ');
     prev.innerHTML = `<div style="margin-top:14px"><div class="info-box"><b>${esc(file.name)}</b>: ${rows.length.toLocaleString('es-PE')} personas · <b>${nNew}</b> nuevas · <b>${nUpd}</b> ya existen</div>
       <div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">${found}</div>
       <div class="radio-list">
