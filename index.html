@@ -6,10 +6,11 @@
 <meta name="theme-color" content="#132C3E">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="icon" type="image/png" href="/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Check-in Asistencia · Seminarios e Institutos</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Ultra&family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
   --navy:#132C3E;--navy-2:#1D435C;--teal:#1F7A83;--teal-2:#176269;--teal-50:#E6F2F2;
@@ -34,7 +35,7 @@ svg{width:18px;height:18px;flex-shrink:0}
 .top{position:sticky;top:0;z-index:50;background:linear-gradient(120deg,var(--navy),var(--navy-2));color:#fff;box-shadow:0 2px 14px rgba(19,44,62,.18);padding-top:env(safe-area-inset-top)}
 .top-in{max-width:1100px;margin:0 auto;height:var(--top);display:flex;align-items:center;gap:12px;padding:0 16px}
 .brand{display:flex;align-items:center;gap:11px;user-select:none;-webkit-user-select:none;cursor:default}
-.mark{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--gold),#F0C36B);display:grid;place-items:center;color:var(--navy);font:800 15px 'Manrope';flex-shrink:0}
+.mark{width:46px;height:40px;border-radius:11px;background:#F5A623;display:grid;place-items:center;color:#111;font:400 15px/1 'Ultra',Georgia,serif;letter-spacing:-.01em;flex-shrink:0}
 .bt b{display:block;font:800 16.5px 'Manrope'}
 .bt small,.top-title small{display:block;font-size:11.5px;color:#B9CCD8;font-weight:500}
 .top-title{flex:1;min-width:0}
@@ -2061,7 +2062,7 @@ function route(){
 function topbar({back, title, sub}={}){
   return `<header class="top"><div class="top-in">
     ${back ? `<button class="icon-btn" data-go="${back}" aria-label="Volver">${ICON.back}</button><div class="top-title"><b>${esc(title)}</b>${sub?`<small>${esc(sub)}</small>`:''}</div>`
-           : `<div class="brand" id="brand"><span class="mark">CA</span><span class="bt"><b>Check-in Asistencia</b><small>Seminarios e Institutos</small></span></div><span class="spacer"></span>`}
+           : `<div class="brand" id="brand"><span class="mark">S&amp;I</span><span class="bt"><b>Check-in Asistencia</b><small>Seminarios e Institutos</small></span></div><span class="spacer"></span>`}
     <button class="sync-pill" id="syncPill" title="Estado de sincronización"><span class="dot"></span><span class="lbl"></span></button>
   </div></header>`;
 }
@@ -2887,7 +2888,7 @@ const misAcomp = () => LS.get('ca_acomp', []);
 const claveP = p => p.persona_id || norm(p.nombre || ((p.apellidos || '') + ', ' + (p.nombres || '')));
 const quienPara = x => x.persona_id ? { persona_id:x.persona_id } : { nombres:x.nombres, apellidos:x.apellidos, estaca:x.estaca || '', barrio:x.barrio || '' };
 function qrShell(inner){
-  return `<header class="top"><div class="top-in"><div class="brand"><span class="mark">CA</span><span class="bt"><b>Registro de asistencia</b><small>Seminarios e Institutos</small></span></div></div></header><main class="wrap" id="qrMain">${inner}</main>`;
+  return `<header class="top"><div class="top-in"><div class="brand"><span class="mark">S&amp;I</span><span class="bt"><b>Registro de asistencia</b><small>Seminarios e Institutos</small></span></div></div></header><main class="wrap" id="qrMain">${inner}</main>`;
 }
 function qrHead(){
   const e = QRS.ev;
@@ -3975,7 +3976,7 @@ const REPORT_CSS = `
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .in{max-width:1100px;margin:0 auto;padding:0 14px}
 .hd{background:linear-gradient(120deg,#132C3E,#1D435C);color:#fff;padding:16px 0;border-bottom:3px solid var(--gold)}
-.hd .in{display:flex;gap:12px;align-items:center}.mk{width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#D79A28,#F0C36B);color:#132C3E;font-weight:800;display:grid;place-items:center;flex-shrink:0}
+.hd .in{display:flex;gap:12px;align-items:center}.mk{width:46px;height:40px;border-radius:11px;background:#F5A623;color:#111;font:900 14px/1 Georgia,serif;display:grid;place-items:center;flex-shrink:0}
 h1{margin:0;font-size:19px;line-height:1.25}.hd p{margin:3px 0 0;color:#C8D8E2;font-size:12.5px}
 main{padding-top:14px!important;padding-bottom:40px!important}
 .stats{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}.st{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:8px 12px;font-size:12px;color:var(--mu);font-weight:600}.st b{display:block;font-size:20px;color:var(--navy)}
@@ -4017,7 +4018,7 @@ function reportShell(title, sub, body, backup){
   const bk = JSON.stringify(backup).replace(/</g, '\\u003c');
   return '<!DOCTYPE html>\n<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
     + `<title>${esc(title)}</title><style>${REPORT_CSS}${REPORT_CSS2}</style></head><body>`
-    + `<header class="hd"><div class="in"><div class="mk">CA</div><div><h1>${esc(title)}</h1><p>${esc(sub)}</p></div></div></header>`
+    + `<header class="hd"><div class="in"><div class="mk">S&amp;I</div><div><h1>${esc(title)}</h1><p>${esc(sub)}</p></div></div></header>`
     + `<main class="in">${body}<p class="note">Reporte generado con Check-in Asistencia · ${esc(new Date().toLocaleString('es-PE'))}<br>Para unirlo con otros aportes, restaurarlo o <b>continuar la clase en otro dispositivo</b> (con el PIN del maestro), ábrelo en la aplicación con <b>Importar</b>.</p><button class="pr" onclick="print()">Imprimir o guardar como PDF</button></main>`
     + `<script type="application/json" id="ca-backup">${bk}<\/script><script>${REPORT_JS}${REPORT_JS2}<\/script></body></html>`;
 }
