@@ -267,6 +267,9 @@ svg{width:18px;height:18px;flex-shrink:0}
 .gr-card li:hover{background:var(--line)}
 .gr-card li small{display:block;color:var(--muted);font-weight:500;font-size:11.5px}
 .gr-card li.lider{background:var(--gold-50);color:#6E4A08}
+.ins-card .ins-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.ins-card .ins-h b{font-size:16px}
+.ins-card .kv{margin:10px 0 12px}
 .check-row{display:flex;gap:9px;align-items:flex-start;font-size:13.5px;margin:4px 0 12px}
 .check-row input{width:18px;height:18px;margin-top:1px;flex-shrink:0}
 .qr-ev small{color:var(--muted);font-size:12.5px}
@@ -1463,6 +1466,7 @@ function homeOnlineHTML(){
     ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2></div>
       <button class="item" data-go="#/todas"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Todas las clases</b><small>Por programa, estaca y maestro · asistencia en vivo</small></span>${ICON.next}</button>
       <button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b><small>Personas que piden entrar a una clase ya adoptada</small></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button>
+      <button class="item" data-go="#/inscripciones"><span class="ico g">${ICON.userPlus}</span><span class="ii"><b>Inscripciones para Wise</b><small>Alumnos que se registraron con el QR sin estar en la lista: sus datos para inscribirlos</small></span>${ICON.next}</button>
       <button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b><small>Alumnos sin coincidencia con la base de personas</small></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button>
       <button class="item" data-go="#/admin"><span class="ico t">${ICON.db}</span><span class="ii"><b>Base de personas y periodos</b><small>Subir la base actualizada, feriados y periodos</small></span>${ICON.next}</button>
     </section>` : ''}`;
@@ -1871,6 +1875,32 @@ async function renderSolicitudes(){
 
 /* ---------- Alertas de base ---------- */
 let PERSONAS_CACHE = null;
+/* Inscripciones para Wise2: datos que dejan en el QR de clase quienes no estaban en la lista.
+   Solo el administrador los ve; los marca como inscritos cuando los pasa a Wise2. */
+async function renderInscripciones(atendidas){
+  CUR = { type:'inscripciones', code:null };
+  app.innerHTML = topbar({ back:'#/', title:'Inscripciones para Wise', sub:'Administración' }) + `<main class="wrap"><div id="insBody">${loadingHTML()}</div></main>`;
+  bindTop();
+  const body = $('#insBody');
+  try{
+    const lista = await SB.rpc('inscripciones_wise', { atendidas: !!atendidas });
+    const EST = { pendiente:'Asistencia por aprobar', aprobada:'Asistencia aprobada', rechazada:'El maestro dijo que no vino' };
+    body.innerHTML = `<section class="card"><p class="hint" style="margin:0">Alumnos que se registraron con el QR de su clase sin estar en la lista. Inscríbelos en Wise2 con estos datos y márcalos como inscritos. <b>Solo tú ves estos datos.</b></p></section>
+      <div class="seg" style="margin:14px 0" id="insTabs"><button data-t="0" class="${atendidas ? '' : 'on'}">Por inscribir</button><button data-t="1" class="${atendidas ? 'on' : ''}">Ya inscritos</button></div>
+      ${lista.map((x, i) => `<section class="card ins-card">
+        <div class="ins-h"><b>${esc(prettyName(x.nombre))}</b><span class="badge ${x.aprobada === 'aprobada' ? 'b-ok' : 'b-ro'}">${esc(EST[x.aprobada] || x.aprobada)}</span></div>
+        <p class="meta" style="margin-top:2px">${esc([progLabel(x.programa), prettyName(x.maestro), x.horario, stakeShort(x.estaca)].filter(Boolean).join(' · '))}</p>
+        <dl class="kv">${[['Cédula de la Iglesia', x.datos.cedula], ['Usuario de la Iglesia', x.datos.usuario], ['Fecha de nacimiento', x.datos.nacimiento ? fmtDMY(x.datos.nacimiento) : ''], ['Celular', x.datos.celular], ['En la base', x.en_base ? 'Sí' + (x.barrio ? ' · ' + x.barrio : '') : 'No (escribió sus datos)'], ['Se registró', new Date(x.creado_en).toLocaleString('es-PE')]].filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+        <div class="btn-row"><button class="btn sm" data-cp="${i}">${ICON.copy} Copiar datos</button><button class="btn sm ${atendidas ? '' : 'primary'}" data-at="${i}">${atendidas ? 'Volver a “por inscribir”' : ICON.check + ' Ya lo inscribí en Wise'}</button></div>
+      </section>`).join('') || `<div class="empty">${atendidas ? 'Todavía no marcaste a nadie como inscrito.' : 'No hay nadie por inscribir.'}</div>`}`;
+    $$('#insTabs button', body).forEach(b => b.onclick = () => renderInscripciones(b.dataset.t === '1'));
+    $$('[data-cp]', body).forEach(b => b.onclick = () => { const x = lista[+b.dataset.cp], d = x.datos; copyText([prettyName(x.nombre), d.cedula && 'Cédula: ' + d.cedula, d.usuario && 'Usuario: ' + d.usuario, d.nacimiento && 'Nacimiento: ' + fmtDMY(d.nacimiento), d.celular && 'Celular: ' + d.celular, 'Clase: ' + prettyName(x.maestro) + ' · ' + x.horario].filter(Boolean).join('\n'), 'Datos copiados'); });
+    $$('[data-at]', body).forEach(b => b.onclick = async () => {
+      try{ await SB.rpc('atender_inscripcion', { inscripcion: lista[+b.dataset.at].id, atendida: !atendidas }); renderInscripciones(atendidas); }
+      catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+    });
+  }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
+}
 async function renderAlertas(tab='pendiente'){
   CUR = { type:'alertas', code:null };
   app.innerHTML = topbar({ back:'#/', title:'Alertas de base', sub:'Administración' }) + `<main class="wrap"><div id="alBody">${loadingHTML()}</div></main>`;
@@ -2046,8 +2076,9 @@ function route(){
   if(parts[0] === 'qr' && parts[1]) return renderQr(parts[1]);
   if(parts[0] === 'qrc' && parts[1]) return renderQrClase(parts[1]);
   if(parts[0] === 'entrar') return renderEntrar();
-  if(['todas','solicitudes','alertas','seguimiento'].includes(parts[0])){
+  if(['todas','solicitudes','alertas','seguimiento','inscripciones'].includes(parts[0])){
     if(!SB.admin){ go('#/'); return; }
+    if(parts[0] === 'inscripciones') return renderInscripciones();
     if(parts[0] === 'solicitudes') return renderSolicitudes();
     if(parts[0] === 'alertas') return renderAlertas();
     if(parts[0] === 'seguimiento') return renderSeguimiento();
@@ -3053,15 +3084,39 @@ async function renderQrClase(token){
 function qrcConfirmar(sug){
   $('#qrMain').innerHTML = QRC.head + `<section class="card"><h2>¿Eres ${esc(prettyName(sug.nombre))}?</h2>
     <div class="btn-row"><button class="btn primary lg" id="siYo">${ICON.check} Sí, enviar mi asistencia</button><button class="btn" id="noYo">No, soy otra persona</button></div></section>`;
-  $('#siYo').onclick = () => qrcMarcar({ alumno: sug.id });
+  $('#siYo').onclick = () => sug.id ? qrcMarcar({ alumno: sug.id }) : qrcDatos({ persona: sug.persona_id, nombre: sug.nombre });
   $('#noYo').onclick = () => qrcBuscar();
 }
+// Quien no está en la lista de la clase deja sus datos para que el maestro lo inscriba.
+const INSC = [['cedula', 'Número de cédula de la Iglesia', 'text', 'numeric', false, 'Si lo sabes'], ['usuario', 'Usuario de tu cuenta de la Iglesia', 'text', 'text', false, 'Si lo sabes'], ['nacimiento', 'Fecha de nacimiento', 'date', 'numeric', true, ''], ['celular', 'Celular', 'tel', 'tel', true, 'Ej. 987 654 321']];
+function qrcDatos(d){
+  const prev = LS.get('ca_yo_datos', {});
+  const nom = d.nombre || `${d.apellidos}, ${d.nombres}`;
+  $('#qrMain').innerHTML = QRC.head + `<section class="card"><h2>Tus datos para inscribirte</h2>
+    <p class="hint" style="margin-top:0"><b>${esc(prettyName(nom))}</b>, aún no estás en la lista de esta clase. Tu maestro confirmará tu asistencia y con estos datos te inscribiremos en Seminarios e Institutos. Solo el administrador los verá.</p>
+    <form id="qdForm" autocomplete="on">${INSC.map(([k, lab, type, im, req, ph]) => `<div class="field"><label>${lab} ${req ? '<span class="req">*</span>' : '<span class="opt">(opcional)</span>'}</label><input name="${k}" type="${type}" inputmode="${im}" ${type === 'date' ? `max="${todayISO()}"` : ''} placeholder="${esc(ph)}" value="${esc(prev[k] || '')}" ${k === 'usuario' ? 'autocapitalize="off" spellcheck="false"' : ''}></div>`).join('')}
+      <div class="btn-row"><button class="btn primary lg block" type="submit">${ICON.check} Enviar mi asistencia</button></div>
+    </form>
+    <p class="who"><button id="qdAtras">Volver a buscar mi nombre</button></p></section>`;
+  $('#qdAtras').onclick = () => qrcBuscar();
+  $('#qdForm').onsubmit = e => {
+    e.preventDefault();
+    const datos = {}; $$('#qdForm [name]').forEach(i => { if(i.value.trim()) datos[i.name] = i.value.trim(); });
+    $$('#qdForm .field').forEach(f => f.classList.remove('err'));
+    const miss = INSC.filter(x => x[4] && !datos[x[0]]).map(x => x[0]);
+    if(datos.celular && datos.celular.replace(/\D/g, '').length < 7) miss.push('celular');
+    if(miss.length){ miss.forEach(k => $(`#qdForm [name=${k}]`).closest('.field').classList.add('err')); toast('Completa tu fecha de nacimiento y tu celular', 'error'); return; }
+    LS.set('ca_yo_datos', datos);
+    qrcMarcar(Object.assign({}, d, { datos }));
+  };
+}
+const fmtInscripcion = x => !x ? '' : [x.cedula ? 'Cédula ' + x.cedula : '', x.usuario ? 'Usuario ' + x.usuario : '', x.nacimiento ? 'Nac. ' + fmtDMY(x.nacimiento) : '', x.celular ? 'Cel. ' + x.celular : ''].filter(Boolean).join(' · ');
 function qrcBuscar(){
   const main = $('#qrMain');
-  main.innerHTML = QRC.head + `<section class="card"><h2>¿Quién eres?</h2><p class="hint" style="margin-top:0">Busca tu nombre en la lista de la clase. Solo lo harás la primera vez en este celular.</p>
+  main.innerHTML = QRC.head + `<section class="card"><h2>¿Quién eres?</h2><p class="hint" style="margin-top:0">Escribe tu nombre: te buscamos en la lista de la clase y, si no estás, en la base de Seminarios e Institutos. Solo lo harás la primera vez en este celular.</p>
     <div class="search-box"><span class="si">${ICON.search}</span><input id="qcq" type="search" placeholder="Tu nombre o apellido" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
     <div id="qcRes" class="results"><div class="empty-hint"><small>Escribe tu nombre o apellido (al menos 3 letras).</small></div></div>
-    <button class="manual-cta" id="qcMan"><span class="mc-ico">${ICON.userPlus}</span><span><b>No estoy en la lista</b><small>Escribe tus datos; tu maestro te agregará</small></span>${ICON.next}</button>
+    <button class="manual-cta" id="qcMan"><span class="mc-ico">${ICON.userPlus}</span><span><b>No me encuentro</b><small>Escribe tus datos; tu maestro te agregará</small></span>${ICON.next}</button>
     <form id="qcForm" class="hide" autocomplete="off" style="margin-top:14px">
       <div class="row2"><div class="field"><label>Nombres <span class="req">*</span></label><input name="nombres" autocapitalize="words"></div><div class="field"><label>Apellidos <span class="req">*</span></label><input name="apellidos" autocapitalize="words"></div></div>
       <div class="btn-row"><button class="btn primary" type="submit">${ICON.check} Enviar mi asistencia</button></div>
@@ -3076,9 +3131,9 @@ function qrcBuscar(){
     try{
       const list = await SB.rpc('buscar_alumno_qr', { token: QRC.token, texto: t });
       if(id !== n) return;
-      res.innerHTML = list.length ? list.map((p, i) => `<button class="person" data-i="${i}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, t)}</b><small>${p.ya_enviada ? 'Ya envió su asistencia hoy' : 'Alumno de la clase'}</small></span><span class="mk">Soy yo</span></button>`).join('')
-        : `<div class="empty-hint"><p>No encontramos “${esc(t)}” en la lista</p><small>Revisa cómo lo escribiste o usa “No estoy en la lista”.</small></div>`;
-      $$('[data-i]', res).forEach(b => b.onclick = () => qrcMarcar({ alumno: list[+b.dataset.i].id }));
+      res.innerHTML = list.length ? list.map((p, i) => `<button class="person" data-i="${i}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, t)}</b><small>${p.ya_enviada ? 'Ya envió su asistencia hoy' : p.en_clase === false ? esc([p.barrio, 'no está en la lista: tu maestro te agregará'].filter(Boolean).join(' · ')) : 'Alumno de la clase'}</small></span><span class="mk">Soy yo</span></button>`).join('')
+        : `<div class="empty-hint"><p>No encontramos “${esc(t)}”</p><small>Revisa cómo lo escribiste o usa “No me encuentro”.</small></div>`;
+      $$('[data-i]', res).forEach(b => b.onclick = () => { const p = list[+b.dataset.i]; if(p.en_clase === false) qrcDatos({ persona: p.id, nombre: p.nombre }); else qrcMarcar({ alumno: p.id }); });
     }catch(e){ console.error(e); ultimo = null; if(id === n) res.innerHTML = `<div class="info-box">No se pudo buscar: ${esc(errMsg(e))}.</div>`; }
   }, 350);
   ['input', 'keyup', 'change', 'search'].forEach(ev => q.addEventListener(ev, buscar));
@@ -3089,21 +3144,21 @@ function qrcBuscar(){
     $$('#qcForm .field').forEach(f => f.classList.remove('err'));
     const miss = ['nombres', 'apellidos'].filter(k => !v[k]);
     if(miss.length){ miss.forEach(k => $(`#qcForm [name=${k}]`).closest('.field').classList.add('err')); toast('Escribe nombres y apellidos', 'error'); return; }
-    qrcMarcar(v);
+    qrcDatos(v);
   };
   setTimeout(() => q.focus(), 200);
 }
 async function qrcMarcar(d){
   $$('#qrMain button').forEach(b => b.disabled = true);
   try{
-    const r = await SB.rpc('marcar_por_qr_clase', { token: QRC.token, alumno: d.alumno || null, nombres: d.nombres || null, apellidos: d.apellidos || null, dispositivo: DEV });
+    const r = await SB.rpc('marcar_por_qr_clase', { token: QRC.token, alumno: d.alumno || null, persona: d.persona || null, nombres: d.nombres || null, apellidos: d.apellidos || null, dispositivo: DEV, datos: d.datos || {} });
     if(r.alumno_id){ const g = misClasesQr(); g[QRC.token] = { id: r.alumno_id, nombre: r.nombre }; LS.set('ca_qr_clase', g); }
     if(!miYo()) guardarYo({ nombre: r.nombre, persona_id: r.persona_id || undefined, nombres: d.nombres, apellidos: d.apellidos });
     if(navigator.vibrate) navigator.vibrate(40);
     const nom = prettyName(r.nombre);
     const [tit, txt] = r.estado === 'ya_presente' ? ['Ya estás presente', `${esc(nom)}, tu maestro ya marcó tu asistencia de hoy.`]
       : r.estado === 'ya_enviada' ? ['Ya la habías enviado', `${esc(nom)}, tu asistencia de hoy ya está enviada. Tu maestro la confirmará.`]
-      : ['¡Asistencia enviada!', `Gracias, ${esc(nom)}. Tu maestro la confirmará en un momento.`];
+      : ['¡Asistencia enviada!', r.nuevo ? `Gracias, ${esc(nom)}. Tu maestro te agregará a la clase y confirmará tu asistencia.` : `Gracias, ${esc(nom)}. Tu maestro la confirmará en un momento.`];
     $('#qrMain').innerHTML = QRC.head + `<section class="card qr-done">${OK_ANIM}<h2>${tit}</h2><p>${txt}</p></section>`;
   }catch(e){ console.error(e); $$('#qrMain button').forEach(b => b.disabled = false); toast(errMsg(e), 'error'); }
 }
@@ -3324,7 +3379,7 @@ function openQrAprob(cls, list){
   const paint = () => {
     if(!el) return;
     if(!list.length){ $('[data-close]', el).click(); toast('No quedan asistencias por aprobar', 'ok'); return; }
-    $('#apList', el).innerHTML = list.map(q => `<div class="ap-row" data-id="${q.id}"><span class="av">${esc(initials(q.nombre))}</span><span class="pi"><b>${esc(prettyName(q.nombre))}</b><small>${q.fecha === hoy ? 'Hoy' : esc(fmtDate(q.fecha))} · ${fmtTime(Date.parse(q.creado_en))}${q.alumno_id ? '' : ' · no estaba en la lista: se agregará'}</small></span><button class="btn sm danger" data-no>No vino</button><button class="btn sm primary" data-si>${ICON.check} Vino</button></div>`).join('');
+    $('#apList', el).innerHTML = list.map(q => `<div class="ap-row" data-id="${q.id}"><span class="av">${esc(initials(q.nombre))}</span><span class="pi"><b>${esc(prettyName(q.nombre))}</b><small>${q.fecha === hoy ? 'Hoy' : esc(fmtDate(q.fecha))} · ${fmtTime(Date.parse(q.creado_en))}${q.alumno_id ? '' : ` · no estaba en la lista: se agregará${q.persona_id ? ' (está en la base)' : ''}`}</small>${fmtInscripcion(q.datos) ? `<small>${esc(fmtInscripcion(q.datos))}</small>` : ''}</span><button class="btn sm danger" data-no>No vino</button><button class="btn sm primary" data-si>${ICON.check} Vino</button></div>`).join('');
     $$('.ap-row', el).forEach(row => {
       $('[data-si]', row).onclick = () => resolver([row.dataset.id], true);
       $('[data-no]', row).onclick = () => resolver([row.dataset.id], false);

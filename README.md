@@ -17,6 +17,8 @@ Asistencia de Seminarios e Institutos para las estacas Cañete, Chincha, Ica, Na
 
 De cada persona solo se guarda nombre, estaca y barrio. El programa (Seminario o Instituto) pertenece a la clase.
 
+Excepción: quien se registra con el QR de una clase sin estar en su lista deja su cédula de la Iglesia, usuario de la Iglesia, fecha de nacimiento y celular para inscribirlo en Wise2. Esos datos están en la tabla `inscripciones` y **solo el administrador** los puede ver.
+
 Este repositorio es público. No subas aquí nombres ni exportes de alumnos: van solo en Supabase, protegidos por RLS. En `index.html` solo va la clave pública de Supabase (`anon` o `publishable`). La clave `service_role` o `secret` nunca debe llegar al código ni al navegador.
 
 ## Base de datos
