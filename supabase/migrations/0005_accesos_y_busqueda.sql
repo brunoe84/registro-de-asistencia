@@ -184,31 +184,6 @@ as $$
   order by p.estaca, p.barrio;
 $$;
 
--- ---------- Buscar clases ----------
--- El código solo se muestra a quien ya tiene acceso: con el código se entra a la clase.
-create or replace function public.buscar_clases(texto text)
-returns table (id uuid, codigo text, titulo text, maestro text, programa text, estaca text, horario text, curso text, adoptada boolean, tengo_acceso boolean, solicitud_pendiente boolean)
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select r.id, case when r.tengo_acceso or public.es_admin() then r.codigo end, r.titulo, r.maestro_nombre, r.programa, r.estaca, r.horario, r.curso,
-    r.adoptada, r.tengo_acceso, r.solicitud_pendiente
-  from (
-    select c.*,
-      public.puntaje_nombre(public.norm_nombre(c.maestro_nombre), texto) as puntos,
-      exists (select 1 from public.clase_accesos a where a.clase_id = c.id and a.tipo = 'titular') as adoptada,
-      public.tiene_acceso(c.id) as tengo_acceso,
-      exists (select 1 from public.solicitudes_acceso s where s.clase_id = c.id and s.usuario_id = auth.uid() and s.estado = 'pendiente') as solicitud_pendiente
-    from public.clases c
-    where length(public.norm_nombre(texto)) >= 3
-  ) r
-  where r.puntos is not null
-  order by r.puntos desc, r.maestro_nombre, r.horario
-  limit 20;
-$$;
-
 -- ---------- Accesos ----------
 -- "dispositivo": el mismo maestro titular entrando desde otro celular o la PC.
 -- vence_en: los colaboradores invitados con código tienen acceso por un tiempo.
@@ -237,6 +212,31 @@ security definer
 set search_path = ''
 as $$
   select public.es_admin() or public.tiene_acceso(clase);
+$$;
+
+-- ---------- Buscar clases ----------
+-- El código solo se muestra a quien ya tiene acceso: con el código se entra a la clase.
+create or replace function public.buscar_clases(texto text)
+returns table (id uuid, codigo text, titulo text, maestro text, programa text, estaca text, horario text, curso text, adoptada boolean, tengo_acceso boolean, solicitud_pendiente boolean)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select r.id, case when r.tengo_acceso or public.es_admin() then r.codigo end, r.titulo, r.maestro_nombre, r.programa, r.estaca, r.horario, r.curso,
+    r.adoptada, r.tengo_acceso, r.solicitud_pendiente
+  from (
+    select c.*,
+      public.puntaje_nombre(public.norm_nombre(c.maestro_nombre), texto) as puntos,
+      exists (select 1 from public.clase_accesos a where a.clase_id = c.id and a.tipo = 'titular') as adoptada,
+      public.tiene_acceso(c.id) as tengo_acceso,
+      exists (select 1 from public.solicitudes_acceso s where s.clase_id = c.id and s.usuario_id = auth.uid() and s.estado = 'pendiente') as solicitud_pendiente
+    from public.clases c
+    where length(public.norm_nombre(texto)) >= 3
+  ) r
+  where r.puntos is not null
+  order by r.puntos desc, r.maestro_nombre, r.horario
+  limit 20;
 $$;
 
 -- Da acceso reemplazando un acceso vencido. Devuelve false si no se pudo (p. ej. la clase ya tiene titular).
