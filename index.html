@@ -1474,7 +1474,7 @@ function homeOnlineHTML(){
     ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2></div>
       <button class="item" data-go="#/todas"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Todas las clases</b><small>Por programa, estaca y maestro · asistencia en vivo</small></span>${ICON.next}</button>
       <button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b><small>Personas que piden entrar a una clase ya adoptada</small></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button>
-      <button class="item" data-go="#/inscripciones"><span class="ico g">${ICON.userPlus}</span><span class="ii"><b>Inscripciones para Wise</b><small>Alumnos que se registraron con el QR sin estar en la lista: sus datos para inscribirlos</small></span>${ICON.next}</button>
+      <button class="item" data-go="#/inscripciones"><span class="ico g">${ICON.userPlus}</span><span class="ii"><b>Inscritos para Wise</b><small>Por Seminario e Instituto · enlace y QR de inscripción para compartir</small></span>${ICON.next}</button>
       <button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b><small>Alumnos sin coincidencia con la base de personas</small></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button>
       <button class="item" data-go="#/admin"><span class="ico t">${ICON.db}</span><span class="ii"><b>Base de personas y periodos</b><small>Subir la base actualizada, feriados y periodos</small></span>${ICON.next}</button>
     </section>` : ''}`;
@@ -1883,31 +1883,66 @@ async function renderSolicitudes(){
 
 /* ---------- Alertas de base ---------- */
 let PERSONAS_CACHE = null;
-/* Inscripciones para Wise2: datos que dejan en el QR de clase quienes no estaban en la lista.
-   Solo el administrador los ve; los marca como inscritos cuando los pasa a Wise2. */
+/* Inscritos para Wise2, por programa. Vienen del QR de una clase (no estaban en la lista) o del
+   enlace de inscripción del programa. Solo el administrador ve estos datos y los marca como
+   inscritos cuando los pasa a Wise2. */
 async function renderInscripciones(atendidas){
   CUR = { type:'inscripciones', code:null };
-  app.innerHTML = topbar({ back:'#/', title:'Inscripciones para Wise', sub:'Administración' }) + `<main class="wrap"><div id="insBody">${loadingHTML()}</div></main>`;
+  const prog = ST.insProg === 'I' ? 'I' : 'S';
+  const nomProg = prog === 'S' ? 'Seminario' : 'Instituto';
+  app.innerHTML = topbar({ back:'#/', title:'Inscritos para Wise', sub:'Administración' }) + `<main class="wrap">
+    <div class="seg big" id="insProg" style="margin-bottom:14px">${[['S', 'Seminarios'], ['I', 'Institutos']].map(([k, l]) => `<button data-p="${k}" class="${prog === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <section class="card" id="insEnlace">${loadingHTML('Preparando el enlace…', true)}</section>
+    <div id="insBody">${loadingHTML()}</div></main>`;
   bindTop();
+  $$('#insProg button').forEach(b => b.onclick = () => { ST.insProg = b.dataset.p; renderInscripciones(atendidas); });
+  paintEnlaceInscripcion(prog);
   const body = $('#insBody');
   try{
-    const lista = await SB.rpc('inscripciones_wise', { atendidas: !!atendidas });
+    const lista = await SB.rpc('inscripciones_wise', { atendidas: !!atendidas, prog });
     const EST = { pendiente:'Asistencia por aprobar', aprobada:'Asistencia aprobada', rechazada:'El maestro dijo que no vino' };
-    body.innerHTML = `<section class="card"><p class="hint" style="margin:0">Alumnos que se registraron con el QR de su clase sin estar en la lista. Inscríbelos en Wise2 con estos datos y márcalos como inscritos. <b>Solo tú ves estos datos.</b></p></section>
-      <div class="seg" style="margin:14px 0" id="insTabs"><button data-t="0" class="${atendidas ? '' : 'on'}">Por inscribir</button><button data-t="1" class="${atendidas ? 'on' : ''}">Ya inscritos</button></div>
+    body.innerHTML = `<div class="seg" style="margin:14px 0" id="insTabs"><button data-t="0" class="${atendidas ? '' : 'on'}">Por inscribir</button><button data-t="1" class="${atendidas ? 'on' : ''}">Ya inscritos</button></div>
+      <p class="hint" style="margin:0 0 12px">${lista.length} ${atendidas ? 'ya inscrito' : 'por inscribir'}${lista.length === 1 ? '' : 's'} en ${nomProg}. <b>Solo tú ves estos datos.</b></p>
       ${lista.map((x, i) => `<section class="card ins-card">
-        <div class="ins-h"><b>${esc(prettyName(x.nombre))}</b><span class="badge ${x.aprobada === 'aprobada' ? 'b-ok' : 'b-ro'}">${esc(EST[x.aprobada] || x.aprobada)}</span></div>
-        <p class="meta" style="margin-top:2px">${esc([progLabel(x.programa), prettyName(x.maestro), x.horario, stakeShort(x.estaca)].filter(Boolean).join(' · '))}</p>
-        <dl class="kv">${[['Estaca', x.datos.estaca ? stakeShort(x.datos.estaca) : ''], ['Barrio', x.datos.barrio || x.barrio], ['Miembro de la Iglesia', x.datos.miembro === 'si' ? 'Sí' : x.datos.miembro === 'no' ? 'No' : ''], ['Cédula de miembro', x.datos.cedula], ['Usuario de la Iglesia', x.datos.usuario], ['Fecha de nacimiento', x.datos.nacimiento ? fmtDMY(x.datos.nacimiento) : ''], ['Celular', x.datos.celular], ['Padre o madre', x.datos.tutor], ['Número del padre o madre', x.datos.tutor_celular], ['Correo del padre o madre', x.datos.tutor_correo], ['Dirección de casa', x.datos.direccion],['Acuerdo aceptado', x.datos.acuerdo ? x.datos.acuerdo + (x.datos.acepto_en ? ' · ' + new Date(x.datos.acepto_en).toLocaleString('es-PE') : '') : 'No registrado'], ['En la base', x.en_base ? 'Sí' + (x.barrio ? ' · ' + x.barrio : '') : 'No (escribió sus datos)'], ['Se registró', new Date(x.creado_en).toLocaleString('es-PE')]].filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+        <div class="ins-h"><b>${esc(prettyName(x.nombre))}</b>${x.origen === 'enlace' ? '<span class="badge b-ok">Enlace de inscripción</span>' : `<span class="badge ${x.aprobada === 'aprobada' ? 'b-ok' : 'b-ro'}">${esc(EST[x.aprobada] || x.aprobada)}</span>`}</div>
+        <p class="meta" style="margin-top:2px">${esc(x.origen === 'enlace' ? 'Se inscribió con el enlace de ' + nomProg : ['QR de la clase de ' + prettyName(x.maestro), x.horario].filter(Boolean).join(' · '))}</p>
+        <dl class="kv">${[['Estaca', stakeShort(x.datos.estaca || x.estaca)], ['Barrio', x.datos.barrio || x.barrio], ['Miembro de la Iglesia', x.datos.miembro === 'si' ? 'Sí' : x.datos.miembro === 'no' ? 'No' : ''], ['Cédula de miembro', x.datos.cedula], ['Usuario de la Iglesia', x.datos.usuario], ['Fecha de nacimiento', x.datos.nacimiento ? fmtDMY(x.datos.nacimiento) : ''], ['Celular', x.datos.celular], ['Padre o madre', x.datos.tutor], ['Número del padre o madre', x.datos.tutor_celular], ['Correo del padre o madre', x.datos.tutor_correo], ['Dirección de casa', x.datos.direccion], ['Acuerdo aceptado', x.datos.acuerdo ? x.datos.acuerdo + (x.datos.acepto_en ? ' · ' + new Date(x.datos.acepto_en).toLocaleString('es-PE') : '') : 'No registrado'], ['En la base', x.en_base ? 'Sí' : 'No (escribió sus datos)'], ['Se registró', new Date(x.creado_en).toLocaleString('es-PE')]].filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
         <div class="btn-row"><button class="btn sm" data-cp="${i}">${ICON.copy} Copiar datos</button><button class="btn sm ${atendidas ? '' : 'primary'}" data-at="${i}">${atendidas ? 'Volver a “por inscribir”' : ICON.check + ' Ya lo inscribí en Wise'}</button></div>
-      </section>`).join('') || `<div class="empty">${atendidas ? 'Todavía no marcaste a nadie como inscrito.' : 'No hay nadie por inscribir.'}</div>`}`;
+      </section>`).join('') || `<div class="empty">${atendidas ? 'Todavía no marcaste a nadie como inscrito.' : 'No hay nadie por inscribir en ' + nomProg + '.'}</div>`}`;
     $$('#insTabs button', body).forEach(b => b.onclick = () => renderInscripciones(b.dataset.t === '1'));
-    $$('[data-cp]', body).forEach(b => b.onclick = () => { const x = lista[+b.dataset.cp], d = x.datos; copyText([prettyName(x.nombre), d.estaca && 'Estaca: ' + stakeShort(d.estaca), (d.barrio || x.barrio) && 'Barrio: ' + (d.barrio || x.barrio), d.miembro && 'Miembro: ' + (d.miembro === 'si' ? 'Sí' : 'No'), d.cedula && 'Cédula: ' + d.cedula, d.usuario && 'Usuario: ' + d.usuario, d.nacimiento && 'Nacimiento: ' + fmtDMY(d.nacimiento), d.celular && 'Celular: ' + d.celular, d.tutor && 'Padre o madre: ' + d.tutor, d.tutor_celular && 'Número del padre o madre: ' + d.tutor_celular, d.tutor_correo && 'Correo del padre o madre: ' + d.tutor_correo, d.direccion && 'Dirección: ' + d.direccion, d.acuerdo && 'Aceptó el acuerdo de inscripción en ' + d.acuerdo, 'Clase: ' + prettyName(x.maestro) + ' · ' + x.horario].filter(Boolean).join('\n'), 'Datos copiados'); });
+    $$('[data-cp]', body).forEach(b => b.onclick = () => { const x = lista[+b.dataset.cp], d = x.datos; copyText([prettyName(x.nombre), 'Programa: ' + nomProg, (d.estaca || x.estaca) && 'Estaca: ' + stakeShort(d.estaca || x.estaca), (d.barrio || x.barrio) && 'Barrio: ' + (d.barrio || x.barrio), d.miembro && 'Miembro: ' + (d.miembro === 'si' ? 'Sí' : 'No'), d.cedula && 'Cédula: ' + d.cedula, d.usuario && 'Usuario: ' + d.usuario, d.nacimiento && 'Nacimiento: ' + fmtDMY(d.nacimiento), d.celular && 'Celular: ' + d.celular, d.tutor && 'Padre o madre: ' + d.tutor, d.tutor_celular && 'Número del padre o madre: ' + d.tutor_celular, d.tutor_correo && 'Correo del padre o madre: ' + d.tutor_correo, d.direccion && 'Dirección: ' + d.direccion, d.acuerdo && 'Aceptó el acuerdo de inscripción en ' + d.acuerdo, x.origen === 'enlace' ? 'Origen: enlace de inscripción' : 'Clase: ' + prettyName(x.maestro) + ' · ' + x.horario].filter(Boolean).join('\n'), 'Datos copiados'); });
     $$('[data-at]', body).forEach(b => b.onclick = async () => {
       try{ await SB.rpc('atender_inscripcion', { inscripcion: lista[+b.dataset.at].id, atendida: !atendidas }); renderInscripciones(atendidas); }
       catch(e){ console.error(e); toast(errMsg(e), 'error'); }
     });
   }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
+}
+// Enlace y QR de inscripción del programa, para compartir con los jóvenes.
+async function paintEnlaceInscripcion(prog, nuevo){
+  const box = $('#insEnlace'); if(!box) return;
+  const nomProg = prog === 'S' ? 'Seminario' : 'Instituto';
+  let token;
+  try{
+    if(nuevo) await SB.rpc('enlace_inscripcion', { prog, activo:false });
+    token = await SB.rpc('enlace_inscripcion', { prog, activo:true });
+  }catch(e){ console.error(e); box.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; return; }
+  if($('#insEnlace') !== box) return;
+  const link = appLink('i', token);
+  box.innerHTML = `<h2>${ICON.link} Enlace de inscripción en ${nomProg}</h2>
+    <p class="hint" style="margin-top:0">Compártelo con los jóvenes: se buscan en la base (o escriben sus datos si no aparecen), completan lo que falta y aceptan el acuerdo de inscripción. Aparecen abajo para que los inscribas en Wise2.</p>
+    <div class="qr-wrap"></div>
+    <div class="btn-row"><button class="btn primary" id="enCp">${ICON.copy} Copiar enlace</button><button class="btn" id="enWa">${ICON.chat} WhatsApp</button><button class="btn" id="enDl">${ICON.download} Descargar QR</button><button class="btn" id="enBig">Mostrar en pantalla</button></div>
+    <div class="btn-row" style="margin-top:10px"><button class="btn danger" id="enNew">Cambiar enlace</button></div>`;
+  try{ const cv = await qrCanvas(link, { size:360 }); cv.className = 'qr-img'; $('.qr-wrap', box).appendChild(cv); }catch(e){ $('.qr-wrap', box).innerHTML = ''; }
+  const poster = () => qrCanvas(link, { title: 'Inscripción en ' + nomProg, sub: 'Seminarios e Institutos de Religión', size:900 });
+  $('#enCp', box).onclick = () => copyText(link, 'Enlace copiado');
+  $('#enWa', box).onclick = () => waOpen(`Inscríbete en *${nomProg}* aquí 👇\n${link}\nBusca tu nombre, completa tus datos y acepta el acuerdo de inscripción.`);
+  $('#enDl', box).onclick = async () => { const cv = await poster(); cv.toBlob(b => downloadBlob(b, 'QR inscripcion ' + nomProg + '.png'), 'image/png'); };
+  $('#enBig', box).onclick = async () => { const cv = await poster(); sheet(`${sheetHead('Inscripción en ' + nomProg)}<div class="qr-full" id="qrFull"></div><div class="sh-foot"><button class="btn primary" data-close>Cerrar</button></div>`, { wide:true, onMount(el){ $('#qrFull', el).appendChild(cv); } }); };
+  $('#enNew', box).onclick = async () => {
+    if(!(await confirmBox('El enlace y el QR actuales dejarán de funcionar y se creará uno nuevo. Úsalo si el enlace llegó a quien no debía.', { title:'Cambiar enlace', ok:'Cambiar', danger:true }))) return;
+    paintEnlaceInscripcion(prog, true);
+  };
 }
 async function renderAlertas(tab='pendiente'){
   CUR = { type:'alertas', code:null };
@@ -2083,6 +2118,7 @@ function route(){
   if(SB.on() && !SB.ready){ app.innerHTML = topbar() + `<main class="wrap">${loadingHTML()}</main>`; return; }
   if(parts[0] === 'qr' && parts[1]) return renderQr(parts[1]);
   if(parts[0] === 'qrc' && parts[1]) return renderQrClase(parts[1]);
+  if(parts[0] === 'insc' && parts[1]) return renderInscripcionPublica(parts[1]);
   if(parts[0] === 'entrar') return renderEntrar();
   if(['todas','solicitudes','alertas','seguimiento','inscripciones'].includes(parts[0])){
     if(!SB.admin){ go('#/'); return; }
@@ -3135,16 +3171,18 @@ function acuerdoHTML(prog, prev = {}){
 }
 // Un solo formulario: nombres (si no está en la base), estaca, barrio, si es miembro (y entonces
 // cédula y usuario de la Iglesia), fecha de nacimiento y celular.
-// d: { persona, nombre, barrio } si se eligió de la base; { manual:true, nombres, apellidos } si no.
-function qrcDatos(d){
+// d: { persona, nombre, estaca, barrio } si se eligió de la base; { manual:true, nombres, apellidos } si no.
+// ctx: programa, encabezado, texto de introducción, botón y qué hacer al enviar (QR de clase por defecto).
+function qrcDatos(d, ctx){
+  ctx = Object.assign({ prog: QRC.c && QRC.c.programa, head: QRC.head, intro: 'no estás en la lista de esta clase. Tu maestro confirmará tu asistencia y con estos datos te inscribiremos. Solo el administrador los verá.', boton: 'Enviar mi asistencia', enviar: x => qrcMarcar(x), volver: () => qrcBuscar() }, ctx);
   const prev = LS.get('ca_yo_datos', {});
   const base = !!d.persona;
   const campo = (name, lab, req, attrs = '', val = prev[name] || '') => `<div class="field"><label>${lab} ${req ? '<span class="req">*</span>' : '<span class="opt">(opcional)</span>'}</label><input name="${name}" value="${esc(val)}" ${attrs}></div>`;
-  $('#qrMain').innerHTML = QRC.head + `<section class="card"><h2>Tus datos para inscribirte</h2>
-    <p class="hint" style="margin-top:0">${base ? `<b>${esc(prettyName(d.nombre))}</b>, aún` : 'Aún'} no estás en la lista de esta clase. Tu maestro confirmará tu asistencia y con estos datos te inscribiremos. Solo el administrador los verá.</p>
+  $('#qrMain').innerHTML = ctx.head + `<section class="card"><h2>Tus datos para inscribirte</h2>
+    <p class="hint" style="margin-top:0">${base ? `<b>${esc(prettyName(d.nombre))}</b>, ` : ''}${esc(base ? ctx.intro : ctx.intro.charAt(0).toUpperCase() + ctx.intro.slice(1))}</p>
     <form id="qdForm" autocomplete="on">
       ${base ? '' : `<div class="row2">${campo('nombres', 'Nombres', true, 'autocapitalize="words"', d.nombres || '')}${campo('apellidos', 'Apellidos', true, 'autocapitalize="words"', d.apellidos || '')}</div>`}
-      <div class="row2"><div class="field"><label>Estaca <span class="req">*</span></label><select name="estaca"><option value="">Seleccionar…</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${s === (prev.estaca || QRC.c.estaca) ? 'selected' : ''}>${esc(stakeShort(s))}</option>`).join('')}<option value="Otra" ${prev.estaca === 'Otra' ? 'selected' : ''}>Otra</option></select></div>
+      <div class="row2"><div class="field"><label>Estaca <span class="req">*</span></label><select name="estaca"><option value="">Seleccionar…</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${s === ((base && d.estaca) || prev.estaca) ? 'selected' : ''}>${esc(stakeShort(s))}</option>`).join('')}<option value="Otra" ${prev.estaca === 'Otra' ? 'selected' : ''}>Otra</option></select></div>
         ${campo('barrio', 'Barrio o rama', true, 'autocapitalize="words"', (base && d.barrio) || prev.barrio || '')}</div>
       <div class="field" id="qdMiembro"><label>¿Eres miembro de la Iglesia? <span class="req">*</span></label><div class="seg big" data-v="${esc(prev.miembro || '')}"><button type="button" data-o="si" class="${prev.miembro === 'si' ? 'on' : ''}">Sí</button><button type="button" data-o="no" class="${prev.miembro === 'no' ? 'on' : ''}">No</button></div></div>
       <div id="qdIglesia" class="${prev.miembro === 'si' ? '' : 'hide'}">
@@ -3152,13 +3190,13 @@ function qrcDatos(d){
         ${campo('usuario', 'Nombre de usuario de tu cuenta de la Iglesia', false, 'autocapitalize="off" spellcheck="false" placeholder="Si lo sabes"')}
       </div>
       <div class="row2">${campo('nacimiento', 'Fecha de nacimiento', true, `type="date" max="${todayISO()}"`)}${campo('celular', 'Celular', true, 'type="tel" inputmode="tel" placeholder="Ej. 987 654 321"')}</div>
-      ${acuerdoHTML(QRC.c.programa, prev)}
-      <div class="btn-row"><button class="btn primary lg block" type="submit">${ICON.check} Enviar mi asistencia</button></div>
+      ${acuerdoHTML(ctx.prog, prev)}
+      <div class="btn-row"><button class="btn primary lg block" type="submit">${ICON.check} ${esc(ctx.boton)}</button></div>
     </form>
     <p class="who"><button id="qdAtras">Volver a buscar mi nombre</button></p></section>`;
   const seg = $('#qdMiembro [data-v]');
   $$('[data-o]', seg).forEach(b => b.onclick = () => { $$('[data-o]', seg).forEach(x => x.classList.toggle('on', x === b)); seg.dataset.v = b.dataset.o; $('#qdIglesia').classList.toggle('hide', b.dataset.o !== 'si'); });
-  $('#qdAtras').onclick = () => qrcBuscar();
+  $('#qdAtras').onclick = () => ctx.volver();
   if(!base) setTimeout(() => $('#qdForm [name=nombres]').focus(), 200);
   $('#qdForm').onsubmit = e => {
     e.preventDefault();
@@ -3166,7 +3204,7 @@ function qrcDatos(d){
     v.miembro = seg.dataset.v;
     if(v.miembro !== 'si'){ delete v.cedula; delete v.usuario; }
     $$('#qdForm .field').forEach(f => f.classList.remove('err'));
-    const prog = QRC.c.programa === 'S' ? 'S' : 'I';
+    const prog = ctx.prog === 'S' ? 'S' : 'I';
     const miss = [...(base ? [] : ['nombres', 'apellidos']), 'estaca', 'barrio', 'miembro', 'nacimiento', 'celular', ...(prog === 'S' ? ['tutor', 'tutor_celular', 'direccion'] : [])].filter(k => !v[k]);
     if(v.celular && v.celular.replace(/\D/g, '').length < 7) miss.push('celular');
     if(v.tutor_celular && v.tutor_celular.replace(/\D/g, '').length < 7) miss.push('tutor_celular');
@@ -3178,7 +3216,7 @@ function qrcDatos(d){
     const { nombres, apellidos, ...datos } = v;
     const { acuerdo, ...recordar } = datos;
     LS.set('ca_yo_datos', recordar);
-    qrcMarcar(base ? { persona: d.persona, datos } : { nombres: titleCase(nombres), apellidos: titleCase(apellidos), datos });
+    ctx.enviar(base ? { persona: d.persona, datos } : { nombres: titleCase(nombres), apellidos: titleCase(apellidos), datos });
   };
 }
 const fmtInscripcion = x => !x ? '' : [x.miembro === 'no' ? 'No es miembro' : '', x.cedula ? 'Cédula ' + x.cedula : '', x.usuario ? 'Usuario ' + x.usuario : '', x.nacimiento ? 'Nac. ' + fmtDMY(x.nacimiento) : '', x.celular ? 'Cel. ' + x.celular : ''].filter(Boolean).join(' · ');
@@ -3219,6 +3257,64 @@ async function qrcMarcar(d){
       : r.estado === 'ya_enviada' ? ['Ya la habías enviado', `${esc(nom)}, tu asistencia de hoy ya está enviada. Tu maestro la confirmará.`]
       : ['¡Asistencia enviada!', r.nuevo ? `Gracias, ${esc(nom)}. Tu maestro te agregará a la clase y confirmará tu asistencia.` : `Gracias, ${esc(nom)}. Tu maestro la confirmará en un momento.`];
     $('#qrMain').innerHTML = QRC.head + `<section class="card qr-done">${OK_ANIM}<h2>${tit}</h2><p>${txt}</p></section>`;
+  }catch(e){ console.error(e); $$('#qrMain button').forEach(b => b.disabled = false); toast(errMsg(e), 'error'); }
+}
+
+/* ============================================================
+   ENLACE DE INSCRIPCIÓN (Seminario o Instituto, sin clase)
+   El joven se busca en la base, completa sus datos y acepta el acuerdo.
+   ============================================================ */
+const INSC_P = { token:'', prog:'S', head:'' };
+const nomProgDe = p => p === 'S' ? 'Seminario' : 'Instituto';
+async function renderInscripcionPublica(token){
+  CUR = { type:'qr', code:null };
+  INSC_P.token = token;
+  pedirAlmacenPersistente();
+  app.innerHTML = qrShell(loadingHTML('Abriendo la inscripción…'));
+  let r;
+  try{ r = await SB.rpc('inscripcion_por_enlace', { token }); }
+  catch(e){ console.error(e); $('#qrMain').innerHTML = `<div class="empty">No se pudo abrir la inscripción. Revisa tu internet.<br><br><button class="btn primary" id="qrRe">Intentar otra vez</button></div>`; $('#qrRe').onclick = () => renderInscripcionPublica(token); return; }
+  if(!r || r.estado !== 'abierto'){ $('#qrMain').innerHTML = `<div class="empty">Este enlace de inscripción ya no está activo. Pide el enlace actualizado.</div>`; return; }
+  INSC_P.prog = r.programa;
+  INSC_P.head = `<section class="card qr-ev"><small>Seminarios e Institutos de Religión</small><h1>Inscripción en ${nomProgDe(r.programa)}</h1><p class="meta">Busca tu nombre, completa tus datos y acepta el acuerdo de inscripción.</p></section>`;
+  inscBuscar();
+}
+function inscBuscar(){
+  const main = $('#qrMain');
+  main.innerHTML = INSC_P.head + `<section class="card"><h2>¿Quién eres?</h2><p class="hint" style="margin-top:0">Escribe tu nombre: si ya estás en nuestra base, elígete y solo completa lo que falta.</p>
+    <div class="search-box"><span class="si">${ICON.search}</span><input id="isq" type="search" placeholder="Tu nombre o apellido" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
+    <div id="isRes" class="results"><div class="empty-hint"><small>Escribe tu nombre o apellido (al menos 3 letras).</small></div></div>
+    <button class="manual-cta" id="isMan"><span class="mc-ico">${ICON.userPlus}</span><span><b>No me encuentro</b><small>Escribe todos tus datos</small></span>${ICON.next}</button></section>`;
+  const q = $('#isq'), res = $('#isRes');
+  let n = 0, ultimo = null;
+  const buscar = debounce(async () => {
+    const t = q.value.trim(); if(t === ultimo) return; ultimo = t;
+    const id = ++n;
+    if(!norm(t).split(' ').some(w => w.length >= 3)){ res.innerHTML = `<div class="empty-hint"><small>Escribe tu nombre o apellido (al menos 3 letras).</small></div>`; return; }
+    res.innerHTML = loadingHTML('Buscando…', true);
+    try{
+      const list = await SB.rpc('buscar_para_inscripcion', { token: INSC_P.token, texto: t });
+      if(id !== n) return;
+      res.innerHTML = list.length ? list.map((p, i) => `<button class="person" data-i="${i}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, t)}</b><small>${esc([p.barrio, stakeShort(p.estaca)].filter(Boolean).join(' · '))}${p.ya_inscrito ? ' · ya enviaste tu inscripción' : ''}</small></span><span class="mk">Soy yo</span></button>`).join('')
+        : `<div class="empty-hint"><p>No encontramos “${esc(t)}”</p><small>Revisa cómo lo escribiste o usa “No me encuentro”.</small></div>`;
+      $$('[data-i]', res).forEach(b => b.onclick = () => { const p = list[+b.dataset.i]; inscDatos({ persona: p.id, nombre: p.nombre, estaca: p.estaca, barrio: p.barrio }); });
+    }catch(e){ console.error(e); ultimo = null; if(id === n) res.innerHTML = `<div class="info-box">No se pudo buscar: ${esc(errMsg(e))}.</div>`; }
+  }, 350);
+  ['input', 'keyup', 'change', 'search'].forEach(ev => q.addEventListener(ev, buscar));
+  $('#isMan').onclick = () => { const t = q.value.trim().split(/\s+/).filter(Boolean); inscDatos({ manual:true, nombres: titleCase(t[0] || ''), apellidos: titleCase(t.slice(1).join(' ')) }); };
+  setTimeout(() => q.focus(), 200);
+}
+function inscDatos(d){
+  qrcDatos(d, { prog: INSC_P.prog, head: INSC_P.head, intro: `completa tus datos para inscribirte en ${nomProgDe(INSC_P.prog)}. Solo el administrador los verá.`, boton: 'Enviar mi inscripción', enviar: inscEnviar, volver: inscBuscar });
+}
+async function inscEnviar(x){
+  $$('#qrMain button').forEach(b => b.disabled = true);
+  try{
+    const r = await SB.rpc('inscribirme', { token: INSC_P.token, persona: x.persona || null, nombres: x.nombres || null, apellidos: x.apellidos || null, datos: x.datos || {} });
+    if(!miYo()) guardarYo({ nombre: r.nombre, persona_id: x.persona || undefined, nombres: x.nombres, apellidos: x.apellidos });
+    if(navigator.vibrate) navigator.vibrate(40);
+    const nom = prettyName(r.nombre);
+    $('#qrMain').innerHTML = INSC_P.head + `<section class="card qr-done">${OK_ANIM}<h2>${r.estado === 'actualizado' ? '¡Datos actualizados!' : '¡Inscripción enviada!'}</h2><p>Gracias, ${esc(nom)}. Con estos datos te inscribiremos en ${nomProgDe(INSC_P.prog)}.</p></section>`;
   }catch(e){ console.error(e); $$('#qrMain button').forEach(b => b.disabled = false); toast(errMsg(e), 'error'); }
 }
 
@@ -4669,6 +4765,9 @@ if(qrTok){ history.replaceState(null, '', location.pathname + '#/qr/' + qrTok); 
 // QR de clase: ?qc=TOKEN abre la página donde el alumno envía su asistencia.
 const qrcTok = (params.get('qc') || '').replace(/[^A-Za-z0-9_-]/g, '');
 if(qrcTok){ history.replaceState(null, '', location.pathname + '#/qrc/' + qrcTok); }
+// Enlace de inscripción: ?i=TOKEN abre la inscripción en Seminario o Instituto.
+const inscTok = (params.get('i') || '').replace(/[^A-Za-z0-9_-]/g, '');
+if(inscTok){ history.replaceState(null, '', location.pathname + '#/insc/' + inscTok); }
 SB.init();
 route();
 if(deep) openByCode(deep, deepMeta);
