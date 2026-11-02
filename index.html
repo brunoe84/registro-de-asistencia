@@ -1890,11 +1890,11 @@ async function renderInscripciones(atendidas){
       ${lista.map((x, i) => `<section class="card ins-card">
         <div class="ins-h"><b>${esc(prettyName(x.nombre))}</b><span class="badge ${x.aprobada === 'aprobada' ? 'b-ok' : 'b-ro'}">${esc(EST[x.aprobada] || x.aprobada)}</span></div>
         <p class="meta" style="margin-top:2px">${esc([progLabel(x.programa), prettyName(x.maestro), x.horario, stakeShort(x.estaca)].filter(Boolean).join(' · '))}</p>
-        <dl class="kv">${[['Cédula de la Iglesia', x.datos.cedula], ['Usuario de la Iglesia', x.datos.usuario], ['Fecha de nacimiento', x.datos.nacimiento ? fmtDMY(x.datos.nacimiento) : ''], ['Celular', x.datos.celular], ['En la base', x.en_base ? 'Sí' + (x.barrio ? ' · ' + x.barrio : '') : 'No (escribió sus datos)'], ['Se registró', new Date(x.creado_en).toLocaleString('es-PE')]].filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+        <dl class="kv">${[['Estaca', x.datos.estaca ? stakeShort(x.datos.estaca) : ''], ['Barrio', x.datos.barrio || x.barrio], ['Miembro de la Iglesia', x.datos.miembro === 'si' ? 'Sí' : x.datos.miembro === 'no' ? 'No' : ''], ['Cédula de miembro', x.datos.cedula], ['Usuario de la Iglesia', x.datos.usuario], ['Fecha de nacimiento', x.datos.nacimiento ? fmtDMY(x.datos.nacimiento) : ''], ['Celular', x.datos.celular], ['En la base', x.en_base ? 'Sí' + (x.barrio ? ' · ' + x.barrio : '') : 'No (escribió sus datos)'], ['Se registró', new Date(x.creado_en).toLocaleString('es-PE')]].filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
         <div class="btn-row"><button class="btn sm" data-cp="${i}">${ICON.copy} Copiar datos</button><button class="btn sm ${atendidas ? '' : 'primary'}" data-at="${i}">${atendidas ? 'Volver a “por inscribir”' : ICON.check + ' Ya lo inscribí en Wise'}</button></div>
       </section>`).join('') || `<div class="empty">${atendidas ? 'Todavía no marcaste a nadie como inscrito.' : 'No hay nadie por inscribir.'}</div>`}`;
     $$('#insTabs button', body).forEach(b => b.onclick = () => renderInscripciones(b.dataset.t === '1'));
-    $$('[data-cp]', body).forEach(b => b.onclick = () => { const x = lista[+b.dataset.cp], d = x.datos; copyText([prettyName(x.nombre), d.cedula && 'Cédula: ' + d.cedula, d.usuario && 'Usuario: ' + d.usuario, d.nacimiento && 'Nacimiento: ' + fmtDMY(d.nacimiento), d.celular && 'Celular: ' + d.celular, 'Clase: ' + prettyName(x.maestro) + ' · ' + x.horario].filter(Boolean).join('\n'), 'Datos copiados'); });
+    $$('[data-cp]', body).forEach(b => b.onclick = () => { const x = lista[+b.dataset.cp], d = x.datos; copyText([prettyName(x.nombre), d.estaca && 'Estaca: ' + stakeShort(d.estaca), (d.barrio || x.barrio) && 'Barrio: ' + (d.barrio || x.barrio), d.miembro && 'Miembro: ' + (d.miembro === 'si' ? 'Sí' : 'No'), d.cedula && 'Cédula: ' + d.cedula, d.usuario && 'Usuario: ' + d.usuario, d.nacimiento && 'Nacimiento: ' + fmtDMY(d.nacimiento), d.celular && 'Celular: ' + d.celular, 'Clase: ' + prettyName(x.maestro) + ' · ' + x.horario].filter(Boolean).join('\n'), 'Datos copiados'); });
     $$('[data-at]', body).forEach(b => b.onclick = async () => {
       try{ await SB.rpc('atender_inscripcion', { inscripcion: lista[+b.dataset.at].id, atendida: !atendidas }); renderInscripciones(atendidas); }
       catch(e){ console.error(e); toast(errMsg(e), 'error'); }
@@ -3088,39 +3088,53 @@ function qrcConfirmar(sug){
   $('#noYo').onclick = () => qrcBuscar();
 }
 // Quien no está en la lista de la clase deja sus datos para que el maestro lo inscriba.
-const INSC = [['cedula', 'Número de cédula de la Iglesia', 'text', 'numeric', false, 'Si lo sabes'], ['usuario', 'Usuario de tu cuenta de la Iglesia', 'text', 'text', false, 'Si lo sabes'], ['nacimiento', 'Fecha de nacimiento', 'date', 'numeric', true, ''], ['celular', 'Celular', 'tel', 'tel', true, 'Ej. 987 654 321']];
+// Un solo formulario: nombres (si no está en la base), estaca, barrio, si es miembro (y entonces
+// cédula y usuario de la Iglesia), fecha de nacimiento y celular.
+// d: { persona, nombre, barrio } si se eligió de la base; { manual:true, nombres, apellidos } si no.
 function qrcDatos(d){
   const prev = LS.get('ca_yo_datos', {});
-  const nom = d.nombre || `${d.apellidos}, ${d.nombres}`;
+  const base = !!d.persona;
+  const campo = (name, lab, req, attrs = '', val = prev[name] || '') => `<div class="field"><label>${lab} ${req ? '<span class="req">*</span>' : '<span class="opt">(opcional)</span>'}</label><input name="${name}" value="${esc(val)}" ${attrs}></div>`;
   $('#qrMain').innerHTML = QRC.head + `<section class="card"><h2>Tus datos para inscribirte</h2>
-    <p class="hint" style="margin-top:0"><b>${esc(prettyName(nom))}</b>, aún no estás en la lista de esta clase. Tu maestro confirmará tu asistencia y con estos datos te inscribiremos en Seminarios e Institutos. Solo el administrador los verá.</p>
-    <form id="qdForm" autocomplete="on">${INSC.map(([k, lab, type, im, req, ph]) => `<div class="field"><label>${lab} ${req ? '<span class="req">*</span>' : '<span class="opt">(opcional)</span>'}</label><input name="${k}" type="${type}" inputmode="${im}" ${type === 'date' ? `max="${todayISO()}"` : ''} placeholder="${esc(ph)}" value="${esc(prev[k] || '')}" ${k === 'usuario' ? 'autocapitalize="off" spellcheck="false"' : ''}></div>`).join('')}
+    <p class="hint" style="margin-top:0">${base ? `<b>${esc(prettyName(d.nombre))}</b>, aún` : 'Aún'} no estás en la lista de esta clase. Tu maestro confirmará tu asistencia y con estos datos te inscribiremos. Solo el administrador los verá.</p>
+    <form id="qdForm" autocomplete="on">
+      ${base ? '' : `<div class="row2">${campo('nombres', 'Nombres', true, 'autocapitalize="words"', d.nombres || '')}${campo('apellidos', 'Apellidos', true, 'autocapitalize="words"', d.apellidos || '')}</div>`}
+      <div class="row2"><div class="field"><label>Estaca <span class="req">*</span></label><select name="estaca"><option value="">Seleccionar…</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${s === (prev.estaca || QRC.c.estaca) ? 'selected' : ''}>${esc(stakeShort(s))}</option>`).join('')}<option value="Otra" ${prev.estaca === 'Otra' ? 'selected' : ''}>Otra</option></select></div>
+        ${campo('barrio', 'Barrio o rama', true, 'autocapitalize="words"', (base && d.barrio) || prev.barrio || '')}</div>
+      <div class="field" id="qdMiembro"><label>¿Eres miembro de la Iglesia? <span class="req">*</span></label><div class="seg big" data-v="${esc(prev.miembro || '')}"><button type="button" data-o="si" class="${prev.miembro === 'si' ? 'on' : ''}">Sí</button><button type="button" data-o="no" class="${prev.miembro === 'no' ? 'on' : ''}">No</button></div></div>
+      <div id="qdIglesia" class="${prev.miembro === 'si' ? '' : 'hide'}">
+        ${campo('cedula', 'Número de cédula de miembro', false, 'inputmode="numeric" placeholder="Si lo sabes"')}
+        ${campo('usuario', 'Nombre de usuario de tu cuenta de la Iglesia', false, 'autocapitalize="off" spellcheck="false" placeholder="Si lo sabes"')}
+      </div>
+      <div class="row2">${campo('nacimiento', 'Fecha de nacimiento', true, `type="date" max="${todayISO()}"`)}${campo('celular', 'Celular', true, 'type="tel" inputmode="tel" placeholder="Ej. 987 654 321"')}</div>
       <div class="btn-row"><button class="btn primary lg block" type="submit">${ICON.check} Enviar mi asistencia</button></div>
     </form>
     <p class="who"><button id="qdAtras">Volver a buscar mi nombre</button></p></section>`;
+  const seg = $('#qdMiembro [data-v]');
+  $$('[data-o]', seg).forEach(b => b.onclick = () => { $$('[data-o]', seg).forEach(x => x.classList.toggle('on', x === b)); seg.dataset.v = b.dataset.o; $('#qdIglesia').classList.toggle('hide', b.dataset.o !== 'si'); });
   $('#qdAtras').onclick = () => qrcBuscar();
+  if(!base) setTimeout(() => $('#qdForm [name=nombres]').focus(), 200);
   $('#qdForm').onsubmit = e => {
     e.preventDefault();
-    const datos = {}; $$('#qdForm [name]').forEach(i => { if(i.value.trim()) datos[i.name] = i.value.trim(); });
+    const v = {}; $$('#qdForm [name]').forEach(i => { if(i.value.trim()) v[i.name] = i.value.trim(); });
+    v.miembro = seg.dataset.v;
+    if(v.miembro !== 'si'){ delete v.cedula; delete v.usuario; }
     $$('#qdForm .field').forEach(f => f.classList.remove('err'));
-    const miss = INSC.filter(x => x[4] && !datos[x[0]]).map(x => x[0]);
-    if(datos.celular && datos.celular.replace(/\D/g, '').length < 7) miss.push('celular');
-    if(miss.length){ miss.forEach(k => $(`#qdForm [name=${k}]`).closest('.field').classList.add('err')); toast('Completa tu fecha de nacimiento y tu celular', 'error'); return; }
+    const miss = [...(base ? [] : ['nombres', 'apellidos']), 'estaca', 'barrio', 'miembro', 'nacimiento', 'celular'].filter(k => !v[k]);
+    if(v.celular && v.celular.replace(/\D/g, '').length < 7) miss.push('celular');
+    if(miss.length){ miss.forEach(k => { const f = k === 'miembro' ? $('#qdMiembro') : $(`#qdForm [name=${k}]`).closest('.field'); f.classList.add('err'); }); toast('Completa los campos obligatorios (*)', 'error'); return; }
+    const { nombres, apellidos, ...datos } = v;
     LS.set('ca_yo_datos', datos);
-    qrcMarcar(Object.assign({}, d, { datos }));
+    qrcMarcar(base ? { persona: d.persona, datos } : { nombres: titleCase(nombres), apellidos: titleCase(apellidos), datos });
   };
 }
-const fmtInscripcion = x => !x ? '' : [x.cedula ? 'Cédula ' + x.cedula : '', x.usuario ? 'Usuario ' + x.usuario : '', x.nacimiento ? 'Nac. ' + fmtDMY(x.nacimiento) : '', x.celular ? 'Cel. ' + x.celular : ''].filter(Boolean).join(' · ');
+const fmtInscripcion = x => !x ? '' : [x.miembro === 'no' ? 'No es miembro' : '', x.cedula ? 'Cédula ' + x.cedula : '', x.usuario ? 'Usuario ' + x.usuario : '', x.nacimiento ? 'Nac. ' + fmtDMY(x.nacimiento) : '', x.celular ? 'Cel. ' + x.celular : ''].filter(Boolean).join(' · ');
 function qrcBuscar(){
   const main = $('#qrMain');
   main.innerHTML = QRC.head + `<section class="card"><h2>¿Quién eres?</h2><p class="hint" style="margin-top:0">Escribe tu nombre: te buscamos en la lista de la clase y, si no estás, en la base de Seminarios e Institutos. Solo lo harás la primera vez en este celular.</p>
     <div class="search-box"><span class="si">${ICON.search}</span><input id="qcq" type="search" placeholder="Tu nombre o apellido" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
     <div id="qcRes" class="results"><div class="empty-hint"><small>Escribe tu nombre o apellido (al menos 3 letras).</small></div></div>
-    <button class="manual-cta" id="qcMan"><span class="mc-ico">${ICON.userPlus}</span><span><b>No me encuentro</b><small>Escribe tus datos; tu maestro te agregará</small></span>${ICON.next}</button>
-    <form id="qcForm" class="hide" autocomplete="off" style="margin-top:14px">
-      <div class="row2"><div class="field"><label>Nombres <span class="req">*</span></label><input name="nombres" autocapitalize="words"></div><div class="field"><label>Apellidos <span class="req">*</span></label><input name="apellidos" autocapitalize="words"></div></div>
-      <div class="btn-row"><button class="btn primary" type="submit">${ICON.check} Enviar mi asistencia</button></div>
-    </form></section>`;
+    <button class="manual-cta" id="qcMan"><span class="mc-ico">${ICON.userPlus}</span><span><b>No me encuentro</b><small>Escribe tus datos; tu maestro te agregará</small></span>${ICON.next}</button></section>`;
   const q = $('#qcq'), res = $('#qcRes');
   let n = 0, ultimo = null;
   const buscar = debounce(async () => {
@@ -3133,19 +3147,11 @@ function qrcBuscar(){
       if(id !== n) return;
       res.innerHTML = list.length ? list.map((p, i) => `<button class="person" data-i="${i}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, t)}</b><small>${p.ya_enviada ? 'Ya envió su asistencia hoy' : p.en_clase === false ? esc([p.barrio, 'no está en la lista: tu maestro te agregará'].filter(Boolean).join(' · ')) : 'Alumno de la clase'}</small></span><span class="mk">Soy yo</span></button>`).join('')
         : `<div class="empty-hint"><p>No encontramos “${esc(t)}”</p><small>Revisa cómo lo escribiste o usa “No me encuentro”.</small></div>`;
-      $$('[data-i]', res).forEach(b => b.onclick = () => { const p = list[+b.dataset.i]; if(p.en_clase === false) qrcDatos({ persona: p.id, nombre: p.nombre }); else qrcMarcar({ alumno: p.id }); });
+      $$('[data-i]', res).forEach(b => b.onclick = () => { const p = list[+b.dataset.i]; if(p.en_clase === false) qrcDatos({ persona: p.id, nombre: p.nombre, barrio: p.barrio }); else qrcMarcar({ alumno: p.id }); });
     }catch(e){ console.error(e); ultimo = null; if(id === n) res.innerHTML = `<div class="info-box">No se pudo buscar: ${esc(errMsg(e))}.</div>`; }
   }, 350);
   ['input', 'keyup', 'change', 'search'].forEach(ev => q.addEventListener(ev, buscar));
-  $('#qcMan').onclick = () => { $('#qcForm').classList.remove('hide'); $('#qcMan').classList.add('hide'); const t = q.value.trim().split(/\s+/); if(t[0]) $('#qcForm [name=nombres]').value = titleCase(t[0]); if(t.length > 1) $('#qcForm [name=apellidos]').value = titleCase(t.slice(1).join(' ')); $('#qcForm [name=nombres]').focus(); };
-  $('#qcForm').onsubmit = e => {
-    e.preventDefault();
-    const v = {}; $$('#qcForm [name]').forEach(i => v[i.name] = titleCase(i.value.trim()));
-    $$('#qcForm .field').forEach(f => f.classList.remove('err'));
-    const miss = ['nombres', 'apellidos'].filter(k => !v[k]);
-    if(miss.length){ miss.forEach(k => $(`#qcForm [name=${k}]`).closest('.field').classList.add('err')); toast('Escribe nombres y apellidos', 'error'); return; }
-    qrcDatos(v);
-  };
+  $('#qcMan').onclick = () => { const t = q.value.trim().split(/\s+/).filter(Boolean); qrcDatos({ manual:true, nombres: titleCase(t[0] || ''), apellidos: titleCase(t.slice(1).join(' ')) }); };
   setTimeout(() => q.focus(), 200);
 }
 async function qrcMarcar(d){
