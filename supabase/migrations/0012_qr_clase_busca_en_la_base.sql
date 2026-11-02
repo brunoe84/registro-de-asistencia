@@ -4,6 +4,21 @@
 
 alter table public.asistencia_qr add column persona_id uuid references public.personas (id) on delete set null;
 
+-- Quien no está en la lista deja sus datos para inscribirlo: cédula de la Iglesia, usuario de su
+-- cuenta de la Iglesia, fecha de nacimiento y celular. Solo los ve quien tiene acceso a la clase.
+alter table public.asistencia_qr add column datos jsonb not null default '{}';
+alter table public.clase_alumnos add column inscripcion jsonb;
+
+create or replace function public.datos_inscripcion(d jsonb)
+returns jsonb
+language sql
+immutable
+as $$
+  select coalesce(jsonb_object_agg(k, left(trim(d ->> k), 60)), '{}'::jsonb)
+  from unnest(array['cedula', 'usuario', 'nacimiento', 'celular']) k
+  where coalesce(trim(d ->> k), '') <> '';
+$$;
+
 -- Primero los alumnos de la clase; después personas de la base que no están en ella
 -- (las de la estaca de la clase primero).
 drop function public.buscar_alumno_qr(text, text);
@@ -83,7 +98,7 @@ $$;
 
 -- Envío: alumno (de la lista), persona (de la base) o nombres y apellidos escritos.
 drop function public.marcar_por_qr_clase(text, uuid, text, text, text);
-create function public.marcar_por_qr_clase(token text, alumno uuid default null, nombres text default null, apellidos text default null, dispositivo text default '', persona uuid default null)
+create function public.marcar_por_qr_clase(token text, alumno uuid default null, nombres text default null, apellidos text default null, dispositivo text default '', persona uuid default null, datos jsonb default '{}')
 returns jsonb
 language plpgsql
 security definer
@@ -132,8 +147,12 @@ begin
       return jsonb_build_object('estado', 'ya_presente', 'nombre', nom, 'alumno_id', a.id, 'persona_id', a.persona_id);
     end if;
   end if;
-  insert into public.asistencia_qr (clase_id, alumno_id, persona_id, nombre, fecha, dispositivo)
-  values (c.id, a.id, case when a.id is null then p.id end, nom, hoy, coalesce(dispositivo, ''))
+  if a.id is null and (coalesce(datos ->> 'nacimiento', '') = '' or coalesce(datos ->> 'celular', '') = '') then
+    raise exception 'Escribe tu fecha de nacimiento y tu celular';
+  end if;
+  insert into public.asistencia_qr (clase_id, alumno_id, persona_id, nombre, fecha, dispositivo, datos)
+  values (c.id, a.id, case when a.id is null then p.id end, nom, hoy, coalesce(dispositivo, ''),
+    case when a.id is null then public.datos_inscripcion(datos) else '{}'::jsonb end)
   on conflict do nothing;
   get diagnostics filas = row_count;
   return jsonb_build_object('estado', case when filas = 1 then 'enviada' else 'ya_enviada' end,
@@ -184,7 +203,9 @@ begin
         where x.clase_id = q.clase_id and ((p.id is not null and x.persona_id = p.id) or x.clave = public.norm_nombre(q.nombre))
         limit 1;
       end if;
-      update public.clase_alumnos x set retirado_en = null where x.id = al;
+      update public.clase_alumnos x set retirado_en = null,
+        inscripcion = case when q.datos = '{}'::jsonb then x.inscripcion else coalesce(x.inscripcion, '{}'::jsonb) || q.datos end
+      where x.id = al;
     end if;
     insert into public.asistencia (clase_id, alumno_id, fecha, estado, marcado_por)
     values (q.clase_id, al, q.fecha, 'P', auth.uid())
@@ -196,9 +217,33 @@ begin
 end;
 $$;
 
+-- El maestro ve también si viene de la base y los datos de inscripción.
+drop function public.qr_pendientes_clase(uuid);
+create function public.qr_pendientes_clase(clase uuid)
+returns table (id uuid, alumno_id uuid, persona_id uuid, nombre text, fecha date, creado_en timestamptz, datos jsonb)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_variable
+begin
+  if not public.puede_usar_clase(clase) then
+    raise exception 'No tienes acceso a esta clase';
+  end if;
+  return query
+  select q.id, q.alumno_id, q.persona_id, q.nombre, q.fecha, q.creado_en, q.datos
+  from public.asistencia_qr q
+  where q.clase_id = clase and q.estado = 'pendiente'
+  order by q.fecha desc, q.creado_en;
+end;
+$$;
+
 revoke execute on function public.buscar_alumno_qr(text, text) from public;
-revoke execute on function public.marcar_por_qr_clase(text, uuid, text, text, text, uuid) from public;
+revoke execute on function public.marcar_por_qr_clase(text, uuid, text, text, text, uuid, jsonb) from public;
+revoke execute on function public.qr_pendientes_clase(uuid) from public, anon;
 grant execute on function public.buscar_alumno_qr(text, text) to anon, authenticated;
-grant execute on function public.marcar_por_qr_clase(text, uuid, text, text, text, uuid) to anon, authenticated;
+grant execute on function public.marcar_por_qr_clase(text, uuid, text, text, text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.qr_pendientes_clase(uuid) to authenticated;
 
 notify pgrst, 'reload schema';
