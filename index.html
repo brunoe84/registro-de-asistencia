@@ -1285,6 +1285,7 @@ async function pullRemoteClass(cls){
   if(!rows.length) return false;
   const dirty = cls.dirty || {};
   cls.dbId = rows[0].id;
+  cls.qr = rows[0].qr || null;
   if(!dirty.meta) cls.meta = metaFromRow(rows[0]);
   const alumnos = await SB.fetchAll('clase_alumnos', '*', [['clase_id', cls.dbId]]);
   const marcas = await SB.fetchAll('asistencia', 'alumno_id,fecha,estado', [['clase_id', cls.dbId]]);
@@ -1970,11 +1971,12 @@ async function renderRemoteFilters(cls){
 }
 function renderRemoteShare(cls, body){
   const d = ST.classDate || defaultClassDate(classDates(cls));
-  body.innerHTML = `<section class="card"><h2>${ICON.download} Asistencia en tabla</h2>
+  body.innerHTML = `<section class="card" id="qrClCard"></section><section class="card"><h2>${ICON.download} Asistencia en tabla</h2>
       <p class="hint" style="margin-top:0">Reporte y Excel con una columna por fecha, totales y porcentaje por alumno.</p>
       <div class="btn-row"><button class="btn primary" id="xs">${ICON.share} Enviar asistencia</button><button class="btn" id="xp">${ICON.download} Descargar reporte</button><button class="btn" id="xd">${ICON.download} Descargar Excel</button><button class="btn" id="ws">${ICON.chat} Resumen del ${fmtShort(d)}</button></div></section>
     <section class="card hide" id="invCard"></section>`;
   paintInvitacion(cls);
+  paintQrClaseCard(cls);
   $('#xd').onclick = () => exportClass(cls, false);
   $('#xs').onclick = () => exportClassHtml(cls, true);
   $('#xp').onclick = () => exportClassHtml(cls, false);
@@ -2036,6 +2038,7 @@ function route(){
   SB.stopWatch();
   if(SB.on() && !SB.ready){ app.innerHTML = topbar() + `<main class="wrap">${loadingHTML()}</main>`; return; }
   if(parts[0] === 'qr' && parts[1]) return renderQr(parts[1]);
+  if(parts[0] === 'qrc' && parts[1]) return renderQrClase(parts[1]);
   if(parts[0] === 'entrar') return renderEntrar();
   if(['todas','solicitudes','alertas','seguimiento'].includes(parts[0])){
     if(!SB.admin){ go('#/'); return; }
@@ -2869,7 +2872,17 @@ function renderGrupos(){
    ============================================================ */
 // En el celular del asistente se recuerda quién es y quiénes lo han acompañado.
 const QRS = { token:'', ev:null, yo:null, lista:[], sel:new Set() };
-const miYo = () => LS.get('ca_yo', null);
+// Respaldo en cookie: algunos iPhone no conservan el localStorage entre una visita y otra.
+function yoDeCookie(){ try{ const m = document.cookie.match(/(?:^|;\s*)ca_yo=([^;]+)/); return m ? JSON.parse(decodeURIComponent(m[1])) : null; }catch(e){ return null; } }
+const miYo = () => LS.get('ca_yo', null) || yoDeCookie();
+function guardarYo(yo){
+  LS.set('ca_yo', yo);
+  try{
+    const min = {}; ['nombre', 'persona_id', 'nombres', 'apellidos', 'estaca', 'barrio'].forEach(k => { if(yo[k]) min[k] = yo[k]; });
+    document.cookie = 'ca_yo=' + encodeURIComponent(JSON.stringify(min)) + ';max-age=31536000;path=/;SameSite=Lax' + (location.protocol === 'https:' ? ';Secure' : '');
+  }catch(e){}
+}
+function pedirAlmacenPersistente(){ try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); }catch(e){} }
 const misAcomp = () => LS.get('ca_acomp', []);
 const claveP = p => p.persona_id || norm(p.nombre || ((p.apellidos || '') + ', ' + (p.nombres || '')));
 const quienPara = x => x.persona_id ? { persona_id:x.persona_id } : { nombres:x.nombres, apellidos:x.apellidos, estaca:x.estaca || '', barrio:x.barrio || '' };
@@ -2883,6 +2896,7 @@ function qrHead(){
 async function renderQr(token){
   CUR = { type:'qr', code:null };
   QRS.token = token;
+  pedirAlmacenPersistente();
   app.innerHTML = qrShell(loadingHTML('Abriendo el evento…'));
   let r;
   try{ r = await SB.rpc('evento_por_qr', { token }); }
@@ -2984,7 +2998,7 @@ async function qrEnviar(){
   try{
     const r = await SB.rpc('registrar_por_qr', { token: QRS.token, yo: quienPara(QRS.yo), acompanantes: elegidos.map(quienPara), dispositivo: DEV });
     const yo = Object.assign({}, QRS.yo, { nombre: r.nombre }); if(r.persona_id) yo.persona_id = r.persona_id;
-    LS.set('ca_yo', yo);
+    guardarYo(yo);
     const vistos = new Set([claveP(yo)]);
     LS.set('ca_acomp', [...elegidos, ...misAcomp()].filter(a => { const k = claveP(a); if(vistos.has(k)) return false; vistos.add(k); return true; }).slice(0, 30));
     const hechos = LS.get('ca_qr_hechos', {}); hechos[QRS.token] = r;
@@ -3004,6 +3018,86 @@ function qrResultado(r){
     ${ac.length ? `<section class="card"><h2>Tus acompañantes</h2><div class="ac-list">${ac.map(a => `<div class="ac-item on"><span><b>${esc(prettyName(a.nombre))}</b><small>${a.estado === 'ya_estaba' ? 'Ya estaba registrado' : 'Anotado · un colaborador confirmará su asistencia'}</small></span></div>`).join('')}</div></section>` : ''}
     <div class="btn-row"><button class="btn" id="masAc">${ICON.userPlus} Agregar más acompañantes</button></div>`;
   $('#masAc').onclick = () => { QRS.yo = miYo(); if(QRS.yo) qrPasoAcomp(); else qrPasoQuien(true); };
+}
+
+/* ============================================================
+   PÁGINA DEL QR DE CLASE (el alumno envía su asistencia; el maestro la aprueba)
+   ============================================================ */
+const QRC = { token:'', c:null, head:'' };
+const misClasesQr = () => LS.get('ca_qr_clase', {});
+async function renderQrClase(token){
+  CUR = { type:'qr', code:null };
+  QRC.token = token;
+  pedirAlmacenPersistente();
+  app.innerHTML = qrShell(loadingHTML('Abriendo la clase…'));
+  const yo = miYo(), rec = misClasesQr()[token];
+  let r;
+  try{ r = await SB.rpc('clase_por_qr', { token, persona: (yo && yo.persona_id) || null, nombre: (rec && rec.nombre) || (yo && yo.nombre) || null }); }
+  catch(e){ console.error(e); $('#qrMain').innerHTML = `<div class="empty">No se pudo abrir la clase. Revisa tu internet.<br><br><button class="btn primary" id="qrRe">Intentar otra vez</button></div>`; $('#qrRe').onclick = () => renderQrClase(token); return; }
+  const main = $('#qrMain');
+  if(!r || r.estado === 'no_existe'){ main.innerHTML = `<div class="empty">Este QR ya no está activo. Pide a tu maestro el QR de la clase.</div>`; return; }
+  QRC.c = r;
+  QRC.head = `<section class="card qr-ev"><small>Asistencia de clase · ${esc(progLabel(r.programa))}</small><h1>${esc(r.titulo)}</h1><p class="meta">${esc(['Maestro: ' + prettyName(r.maestro), r.fecha ? fmtDate(r.fecha) : ''].filter(Boolean).join(' · '))}</p></section>`;
+  if(r.estado === 'sin_clase'){ main.innerHTML = QRC.head + `<div class="empty">Hoy no hay clase${r.proxima ? `. La próxima es el <b>${esc(fmtDate(r.proxima))}</b>` : ''}. Este QR solo funciona los días de clase.</div>`; return; }
+  const sug = r.sugerido || rec;
+  if(sug && sug.id) qrcConfirmar(sug); else qrcBuscar();
+}
+function qrcConfirmar(sug){
+  $('#qrMain').innerHTML = QRC.head + `<section class="card"><h2>¿Eres ${esc(prettyName(sug.nombre))}?</h2>
+    <div class="btn-row"><button class="btn primary lg" id="siYo">${ICON.check} Sí, enviar mi asistencia</button><button class="btn" id="noYo">No, soy otra persona</button></div></section>`;
+  $('#siYo').onclick = () => qrcMarcar({ alumno: sug.id });
+  $('#noYo').onclick = () => qrcBuscar();
+}
+function qrcBuscar(){
+  const main = $('#qrMain');
+  main.innerHTML = QRC.head + `<section class="card"><h2>¿Quién eres?</h2><p class="hint" style="margin-top:0">Busca tu nombre en la lista de la clase. Solo lo harás la primera vez en este celular.</p>
+    <div class="search-box"><span class="si">${ICON.search}</span><input id="qcq" type="search" placeholder="Tu nombre o apellido" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
+    <div id="qcRes" class="results"><div class="empty-hint"><small>Escribe tu nombre o apellido (al menos 3 letras).</small></div></div>
+    <button class="manual-cta" id="qcMan"><span class="mc-ico">${ICON.userPlus}</span><span><b>No estoy en la lista</b><small>Escribe tus datos; tu maestro te agregará</small></span>${ICON.next}</button>
+    <form id="qcForm" class="hide" autocomplete="off" style="margin-top:14px">
+      <div class="row2"><div class="field"><label>Nombres <span class="req">*</span></label><input name="nombres" autocapitalize="words"></div><div class="field"><label>Apellidos <span class="req">*</span></label><input name="apellidos" autocapitalize="words"></div></div>
+      <div class="btn-row"><button class="btn primary" type="submit">${ICON.check} Enviar mi asistencia</button></div>
+    </form></section>`;
+  const q = $('#qcq'), res = $('#qcRes');
+  let n = 0, ultimo = null;
+  const buscar = debounce(async () => {
+    const t = q.value.trim(); if(t === ultimo) return; ultimo = t;
+    const id = ++n;
+    if(!norm(t).split(' ').some(w => w.length >= 3)){ res.innerHTML = `<div class="empty-hint"><small>Escribe tu nombre o apellido (al menos 3 letras).</small></div>`; return; }
+    res.innerHTML = loadingHTML('Buscando…', true);
+    try{
+      const list = await SB.rpc('buscar_alumno_qr', { token: QRC.token, texto: t });
+      if(id !== n) return;
+      res.innerHTML = list.length ? list.map((p, i) => `<button class="person" data-i="${i}"><span class="av">${esc(initials(p.nombre))}</span><span class="pi"><b>${highlight(p.nombre, t)}</b><small>${p.ya_enviada ? 'Ya envió su asistencia hoy' : 'Alumno de la clase'}</small></span><span class="mk">Soy yo</span></button>`).join('')
+        : `<div class="empty-hint"><p>No encontramos “${esc(t)}” en la lista</p><small>Revisa cómo lo escribiste o usa “No estoy en la lista”.</small></div>`;
+      $$('[data-i]', res).forEach(b => b.onclick = () => qrcMarcar({ alumno: list[+b.dataset.i].id }));
+    }catch(e){ console.error(e); ultimo = null; if(id === n) res.innerHTML = `<div class="info-box">No se pudo buscar: ${esc(errMsg(e))}.</div>`; }
+  }, 350);
+  ['input', 'keyup', 'change', 'search'].forEach(ev => q.addEventListener(ev, buscar));
+  $('#qcMan').onclick = () => { $('#qcForm').classList.remove('hide'); $('#qcMan').classList.add('hide'); const t = q.value.trim().split(/\s+/); if(t[0]) $('#qcForm [name=nombres]').value = titleCase(t[0]); if(t.length > 1) $('#qcForm [name=apellidos]').value = titleCase(t.slice(1).join(' ')); $('#qcForm [name=nombres]').focus(); };
+  $('#qcForm').onsubmit = e => {
+    e.preventDefault();
+    const v = {}; $$('#qcForm [name]').forEach(i => v[i.name] = titleCase(i.value.trim()));
+    $$('#qcForm .field').forEach(f => f.classList.remove('err'));
+    const miss = ['nombres', 'apellidos'].filter(k => !v[k]);
+    if(miss.length){ miss.forEach(k => $(`#qcForm [name=${k}]`).closest('.field').classList.add('err')); toast('Escribe nombres y apellidos', 'error'); return; }
+    qrcMarcar(v);
+  };
+  setTimeout(() => q.focus(), 200);
+}
+async function qrcMarcar(d){
+  $$('#qrMain button').forEach(b => b.disabled = true);
+  try{
+    const r = await SB.rpc('marcar_por_qr_clase', { token: QRC.token, alumno: d.alumno || null, nombres: d.nombres || null, apellidos: d.apellidos || null, dispositivo: DEV });
+    if(r.alumno_id){ const g = misClasesQr(); g[QRC.token] = { id: r.alumno_id, nombre: r.nombre }; LS.set('ca_qr_clase', g); }
+    if(!miYo()) guardarYo({ nombre: r.nombre, persona_id: r.persona_id || undefined, nombres: d.nombres, apellidos: d.apellidos });
+    if(navigator.vibrate) navigator.vibrate(40);
+    const nom = prettyName(r.nombre);
+    const [tit, txt] = r.estado === 'ya_presente' ? ['Ya estás presente', `${esc(nom)}, tu maestro ya marcó tu asistencia de hoy.`]
+      : r.estado === 'ya_enviada' ? ['Ya la habías enviado', `${esc(nom)}, tu asistencia de hoy ya está enviada. Tu maestro la confirmará.`]
+      : ['¡Asistencia enviada!', `Gracias, ${esc(nom)}. Tu maestro la confirmará en un momento.`];
+    $('#qrMain').innerHTML = QRC.head + `<section class="card qr-done"><div class="big">✅</div><h2>${tit}</h2><p>${txt}</p></section>`;
+  }catch(e){ console.error(e); $$('#qrMain button').forEach(b => b.disabled = false); toast(errMsg(e), 'error'); }
 }
 
 /* ============================================================
@@ -3176,6 +3270,7 @@ function renderClass(code){
       <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button>${cls.remote ? '<span class="hint">Los cambios se guardan en línea.</span>' : cls.canEdit ? '<span class="hint">Código para encontrar la clase y descargar la asistencia.</span>' : `<button class="btn sm" id="unlock">${ICON.lock} Soy el maestro · ingresar PIN</button>`}</div>
       ${cls.remote && SB.admin ? '<div id="accBox"></div>' : ''}
     </section>
+    ${cls.remote ? '<div id="aprobBox"></div>' : ''}
     <nav class="tabs" id="tabs">${tabBtn('hoy','Asistencia',ICON.check,'',ST.ctab)}${tabBtn('planilla','Planilla',ICON.grid,'',ST.ctab)}${tabBtn('alumnos','Alumnos',ICON.users,'',ST.ctab)}${tabBtn('compartir','Compartir',ICON.share,'',ST.ctab)}</nav>
     <div id="tabBody"></div>
   </main>${classOnline(cls) ? saveBar(cls.canEdit ? 'Guardar asistencia' : 'Actualizar') : saveBar('Enviar asistencia', true)}`;
@@ -3187,7 +3282,85 @@ function renderClass(code){
   renderClassTab();
   liveClass(true);
   if(classOnline(cls)) syncClass(code, {silent:true});
-  if(cls.remote){ paintAccesos(cls); if(cls.dbId) SB.watch('asistencia', 'clase_id=eq.'+cls.dbId, () => syncRemoteClass(code, {silent:true})); }
+  if(cls.remote){
+    paintAccesos(cls); paintQrAprob(cls);
+    if(cls.dbId){
+      SB.watch('asistencia', 'clase_id=eq.'+cls.dbId, () => syncRemoteClass(code, {silent:true}));
+      SB.watch('asistencia_qr', 'clase_id=eq.'+cls.dbId, () => paintQrAprob(cls, true));
+    }
+  }
+}
+/* ---------- Asistencia por QR de la clase: el maestro la aprueba ---------- */
+async function paintQrAprob(cls, avisar){
+  const box = $('#aprobBox'); if(!box || !cls.dbId || !SB.on()) return;
+  let list = [];
+  try{ list = await SB.rpc('qr_pendientes_clase', { clase: cls.dbId }) || []; }catch(e){ console.error(e); return; }
+  if($('#aprobBox') !== box) return;
+  const antes = cls.qrPend || 0; cls.qrPend = list.length;
+  if(avisar && list.length > antes) toast(`🔔 ${list.length - antes} alumno${list.length - antes > 1 ? 's enviaron' : ' envió'} su asistencia por QR`, 'warn', { ms:5000 });
+  const n = list.length;
+  box.innerHTML = n ? `<button class="aprob-cta" id="qrApBtn"><span class="ap-ico">${ICON.check}</span><span><b>${n} asistencia${n>1?'s':''} por QR por aprobar</b><small>Los alumnos la enviaron con el QR. Confirma quiénes vinieron.</small></span><span class="ap-n">${n}</span></button>` : '';
+  const b = $('#qrApBtn'); if(b) b.onclick = () => openQrAprob(cls, list);
+}
+function openQrAprob(cls, list){
+  const hoy = todayISO();
+  const resolver = async (ids, si) => {
+    try{ for(const id of ids) await SB.rpc('resolver_qr_clase', { solicitud:id, aprobar:si }); }
+    catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+    list = list.filter(x => !ids.includes(x.id));
+    paint();
+    paintQrAprob(cls);
+    syncRemoteClass(cls.code, { silent:true });
+  };
+  let el;
+  const paint = () => {
+    if(!el) return;
+    if(!list.length){ $('[data-close]', el).click(); toast('No quedan asistencias por aprobar', 'ok'); return; }
+    $('#apList', el).innerHTML = list.map(q => `<div class="ap-row" data-id="${q.id}"><span class="av">${esc(initials(q.nombre))}</span><span class="pi"><b>${esc(prettyName(q.nombre))}</b><small>${q.fecha === hoy ? 'Hoy' : esc(fmtDate(q.fecha))} · ${fmtTime(Date.parse(q.creado_en))}${q.alumno_id ? '' : ' · no estaba en la lista: se agregará'}</small></span><button class="btn sm danger" data-no>No vino</button><button class="btn sm primary" data-si>${ICON.check} Vino</button></div>`).join('');
+    $$('.ap-row', el).forEach(row => {
+      $('[data-si]', row).onclick = () => resolver([row.dataset.id], true);
+      $('[data-no]', row).onclick = () => resolver([row.dataset.id], false);
+    });
+  };
+  sheet(`${sheetHead('Asistencia por QR', 'Aprueba solo a quienes estuvieron en clase')}
+    <div id="apList" class="ap-list"></div>
+    <div class="sh-foot"><button class="btn" id="apTodos">${ICON.check} Aprobar a todos</button><button class="btn primary" data-close>Listo</button></div>`, {
+    onMount(m){ el = m; paint(); $('#apTodos', el).onclick = () => resolver(list.map(x => x.id), true); }
+  });
+}
+async function paintQrClaseCard(cls){
+  const box = $('#qrClCard'); if(!box || !cls.dbId) return;
+  if(!cls.qr){
+    box.innerHTML = `<h2>${ICON.users} QR de asistencia para alumnos</h2>
+      <p class="hint" style="margin-top:0">El alumno escanea el QR, elige su nombre y envía su asistencia. <b>No cuenta hasta que tú la apruebas</b>, así nadie la marca desde su casa. El QR es siempre el mismo y solo funciona los días que toca clase${cls.meta.program === 'I' ? ' (en Instituto, el día de la semana de la clase)' : ''}.</p>
+      <div class="btn-row"><button class="btn primary" id="qrOn">Crear QR de la clase</button></div>`;
+    $('#qrOn', box).onclick = async () => {
+      try{ await SB.ensureSession(); cls.qr = await SB.rpc('qr_clase', { clase: cls.dbId, activo: true }); saveClasses(); paintQrClaseCard(cls); }
+      catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+    };
+    return;
+  }
+  const link = appLink('qc', cls.qr);
+  const titulo = prettyName(cls.meta.teacher) + (cls.meta.horario ? ' · ' + cls.meta.horario : '');
+  box.innerHTML = `<h2>${ICON.users} QR de asistencia para alumnos</h2>
+    <div class="qr-wrap"></div>
+    <p class="hint" style="margin-top:0">Funciona solo los días de clase. Lo que envíen los alumnos te aparece arriba para aprobar.</p>
+    <div class="btn-row"><button class="btn primary" id="qrBig">Mostrar en pantalla</button><button class="btn" id="qrDl">${ICON.download} Descargar</button><button class="btn" id="qrCp">${ICON.link} Copiar enlace</button></div>
+    <div class="btn-row" style="margin-top:10px"><button class="btn danger" id="qrOff">Apagar QR</button></div>`;
+  try{ const cv = await qrCanvas(link, { size:420 }); cv.className = 'qr-img'; $('.qr-wrap', box).appendChild(cv); }
+  catch(e){ $('.qr-wrap', box).innerHTML = `<p class="hint">No se pudo dibujar el QR (revisa tu internet). El enlace sí funciona.</p>`; }
+  const poster = () => qrCanvas(link, { title: cls.meta.title, sub: titulo, size:900 });
+  $('#qrBig', box).onclick = async () => {
+    const cv = await poster();
+    sheet(`${sheetHead('QR de asistencia', esc(cls.meta.title))}<div class="qr-full" id="qrFull"></div><div class="sh-foot"><button class="btn primary" data-close>Cerrar</button></div>`, { wide:true, onMount(el){ $('#qrFull', el).appendChild(cv); } });
+  };
+  $('#qrDl', box).onclick = async () => { const cv = await poster(); cv.toBlob(b => downloadBlob(b, 'QR clase ' + slug(cls.meta.title) + '.png'), 'image/png'); };
+  $('#qrCp', box).onclick = () => copyText(link, 'Enlace copiado');
+  $('#qrOff', box).onclick = async () => {
+    if(!(await confirmBox('Los alumnos ya no podrán enviar su asistencia con este QR. Si lo vuelves a crear, saldrá uno distinto.', { title:'Apagar QR', ok:'Apagar', danger:true }))) return;
+    try{ await SB.rpc('qr_clase', { clase: cls.dbId, activo: false }); cls.qr = null; saveClasses(); paintQrClaseCard(cls); }
+    catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+  };
 }
 function liveClass(skipTab){
   const cls = CLASSES[CUR.code]; if(!cls) return;
@@ -4355,6 +4528,8 @@ document.addEventListener('visibilitychange', () => { if(!document.hidden){ if(C
 setInterval(() => {
   if(document.hidden) return;
   if(CUR.type === 'event' && eventoEnNube(EVENTS[CUR.code])){ syncEvent(CUR.code, {silent:true}); return; }
+  // Respaldo del tiempo real: asistencias que los alumnos enviaron con el QR de la clase.
+  if(CUR.type === 'class' && CLASSES[CUR.code] && CLASSES[CUR.code].remote) paintQrAprob(CLASSES[CUR.code], true);
   if(!Sync.on()) return;
   if(CUR.type === 'event') syncEvent(CUR.code, {silent:true});
   else if(CUR.type === 'class') syncClass(CUR.code, {silent:true});
@@ -4369,6 +4544,9 @@ if(deep){ history.replaceState(null, '', location.pathname + location.hash); }
 // QR de asistencia: ?q=TOKEN abre la página donde el asistente se registra solo.
 const qrTok = (params.get('q') || '').replace(/[^A-Za-z0-9_-]/g, '');
 if(qrTok){ history.replaceState(null, '', location.pathname + '#/qr/' + qrTok); }
+// QR de clase: ?qc=TOKEN abre la página donde el alumno envía su asistencia.
+const qrcTok = (params.get('qc') || '').replace(/[^A-Za-z0-9_-]/g, '');
+if(qrcTok){ history.replaceState(null, '', location.pathname + '#/qrc/' + qrcTok); }
 SB.init();
 route();
 if(deep) openByCode(deep, deepMeta);
