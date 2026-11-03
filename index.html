@@ -193,6 +193,8 @@ svg{width:18px;height:18px;flex-shrink:0}
 .b-oro{background:var(--gold-50);color:#8A5D0D;border:1px solid #E3BE73}
 .att-item.ficha-pend{border-left:4px solid #E8692A;background:#FFF6F0}
 .att-item.ficha-ok{border-left:4px solid var(--gold);background:#FFFCF3}
+.unir-oblig{border:1.5px solid #F3B48C;background:#FFF6F0;border-radius:16px;padding:14px;margin-bottom:16px}
+.unir-oblig h2{color:#B4470E}
 .ins-card.naranja{border-left:5px solid #E8692A;background:#FFF6F0}
 .ins-card.dorado{border-left:5px solid var(--gold);background:#FFFCF3}
 .ins-sum{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
@@ -1532,7 +1534,8 @@ async function desactivarPush(){
 /* ---------- Inicio con clases en línea ---------- */
 function homeOnlineHTML(){
   const mis = SB.mis || [];
-  return `<section class="hero enter-hero">
+  const unirArriba = !SB.admin && sinUnir().length;
+  return `${unirArriba ? localesHTML() : ''}<section class="hero enter-hero">
       <h1>Toma la asistencia de tu clase</h1>
       <p>La primera vez escribe tu nombre y elige tu clase. Después la encontrarás aquí mismo.</p>
       <button class="btn gold lg enter-btn" id="enterBtn">${ICON.book} Entrar a mi clase</button>
@@ -1540,7 +1543,7 @@ function homeOnlineHTML(){
     ${mis.filter(retrasoDe).map(c => { const r = retrasoDe(c); return `<section class="section"><button class="late-box" data-go="#/clase/${c.codigo}"><span class="late-ico">🔔</span><span class="ii"><b>Tienes asistencia atrasada</b><small>${esc(prettyName(c.maestro))} · ${esc(c.horario)}: ${r.sesiones} sesión${r.sesiones===1?'':'es'} sin marcar desde el ${esc(fmtDate(r.desde))}.</small></span><span class="btn sm gold">Marcar ahora</span></button></section>`; }).join('')}
     ${mis.length ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/entrar">Buscar otra</button></div>
       ${mis.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}${c.tipo === 'colaborador' ? ' · Colaborador' + (c.vence_en ? ' hasta el '+fmtShort(fechaLocal(c.vence_en)) : '') : ''}</small></span><span class="num-badge">${c.alumnos} alum.</span></button>`).join('')}</section>` : ''}
-    ${localesHTML()}
+    ${unirArriba ? '' : localesHTML()}
     ${mis.length || SB.admin ? '<section class="section" id="pushBox"></section>' : ''}
     ${(SB.solicitudes||[]).length ? `<section class="section">${SB.solicitudes.map(s => `<div class="pend-box"><div><b>Solicitud enviada</b><small>${esc(prettyName(s.maestro))} · ${esc(s.horario)}. El administrador la revisará.</small></div></div>`).join('')}</section>` : ''}
     ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2></div>
@@ -1559,22 +1562,27 @@ function bindHomeOnline(){
   if(lo) lo.onclick = () => SB.admin ? SB.signOut().then(() => { toast('Sesión cerrada'); renderHome(); }) : askAdmin();
   paintBadges();
   $$('[data-unir]').forEach(b => b.onclick = () => buscarClaseParaLocal(CLASSES[b.dataset.unir], true));
-  if(!SB.admin && SB.ready && !revisandoLocales && !localesRevisadas){ localesRevisadas = true; revisarClasesLocales(); }
+  // Unir es obligatorio: se vuelve a preguntar cada vez que se entra al inicio (sin encimar avisos).
+  if(!SB.admin && SB.ready && !revisandoLocales && sinUnir().length && Date.now() - localesRevisadas > 20000 && !layer.children.length){ localesRevisadas = Date.now(); revisarClasesLocales(); }
 }
 
 /* ---------- Clases creadas en el dispositivo antes de la base en línea ---------- */
 /* Se busca su clase en línea (por alumnos, maestro y curso) y, si el maestro confirma,
    se le suman los alumnos y las marcas que tenía guardadas aquí. */
-let localesRevisadas = false, revisandoLocales = false;
+let localesRevisadas = 0, revisandoLocales = false;
 const clasesLocales = () => Object.values(CLASSES).filter(c => c && !c.remote && c.canEdit !== false && classStudents(c).length);
 const marcasLocales = cls => Object.values(cls.att || {}).reduce((n, d) => n + Object.keys(d || {}).length, 0);
+// Unir es OBLIGATORIO: las clases que solo existen en el celular ya no se usan; sus alumnos y su
+// asistencia deben pasar a la clase en línea.
+const sinUnir = () => clasesLocales().filter(c => !c.enLinea);
 function localesHTML(){
   const list = clasesLocales();
   if(!list.length) return '';
-  return `<section class="section"><div class="section-h"><h2>Guardadas en este dispositivo</h2></div>
-    <p class="hint" style="margin:0 2px 8px">Clases que creaste aquí antes de la base en línea. Únelas a tu clase en línea para no perder sus alumnos ni su asistencia.</p>
-    ${list.map(c => `<div class="item"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(c.meta.title || 'Clase')}</b><small>${esc([c.meta.teacher, progLabel(c.meta.program), classStudents(c).length+' alumnos', marcasLocales(c)+' marcas'].filter(Boolean).join(' · '))}</small></span>${
-      c.enLinea ? `<button class="btn sm" data-go="#/clase/${esc(c.enLinea)}">${ICON.check} Unida</button>` : `<button class="btn sm gold" data-unir="${esc(c.code)}">Unir</button>`}</div>`).join('')}</section>`;
+  const faltan = list.filter(c => !c.enLinea).length;
+  return `<section class="section${faltan ? ' unir-oblig' : ''}"><div class="section-h"><h2>${faltan ? '⚠ Une tu clase guardada en este celular' : 'Guardadas en este dispositivo'}</h2></div>
+    <p class="hint" style="margin:0 2px 8px">${faltan ? '<b>Es obligatorio.</b> Estas clases se crearon antes de la base en línea y ya no se pueden usar para tomar asistencia. Únelas a tu clase en línea: sus alumnos y su asistencia se suman a ella y no se pierde nada.' : 'Clases que creaste aquí antes de la base en línea. Ya están unidas a tu clase en línea; esta copia queda como respaldo.'}</p>
+    ${list.map(c => `<div class="item"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(c.meta.title || 'Clase')}</b><small>${esc([c.meta.teacher, progLabel(c.meta.program), classStudents(c).length+' alumnos', marcasLocales(c)+' marcas'].filter(Boolean).join(' · '))}${c.esperando && !c.enLinea ? ' · esperando acceso a la clase en línea' : ''}</small></span>${
+      c.enLinea ? `<button class="btn sm" data-go="#/clase/${esc(c.enLinea)}">${ICON.check} Unida</button>` : `<button class="btn sm gold" data-unir="${esc(c.code)}">Unir ahora</button>`}</div>`).join('')}</section>`;
 }
 function datosLocal(cls){
   const m = cls.meta || {};
@@ -1590,10 +1598,11 @@ function datosLocal(cls){
 async function revisarClasesLocales(){
   revisandoLocales = true;
   try{
-    for(const cls of clasesLocales().filter(c => !c.enLinea)){
+    for(const cls of sinUnir()){
       // Ya le dieron acceso a la clase que esperaba: se une sin preguntar otra vez.
       if(cls.esperando && SB.user && (SB.mis||[]).some(x => x.id === cls.esperando)){ await unirClaseLocal(cls, cls.esperando); continue; }
-      if(cls.noUnir || cls.esperando) continue;
+      // (Antes se podía decir "No es ninguna"; ahora unir es obligatorio y se vuelve a preguntar.)
+      if(cls.esperando) continue;
       const seguir = await buscarClaseParaLocal(cls, false);
       if(!seguir) break;
     }
@@ -1613,25 +1622,41 @@ async function buscarClaseParaLocal(cls, manual){
   const mias = (SB.mis||[]).filter(x => !ids.has(x.id)).map(x => ({ id:x.id, maestro:x.maestro, programa:x.programa, estaca:x.estaca, horario:x.horario, curso:x.curso, alumnos:x.alumnos, tengo_acceso:true, mia:true }));
   const opciones = sug.concat(mias);
   if(!opciones.length){
-    if(manual) sheet(`${sheetHead('No encontramos tu clase')}<p class="hint" style="margin-top:0">Ninguna clase en línea coincide con <b>${esc(cls.meta.title || 'esta clase')}</b>. Entra a <b>Entrar a mi clase</b>, búscala por tu nombre y vuelve aquí a tocar <b>Unir</b>.</p><div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="toEnt">Entrar a mi clase</button></div>`, { onMount(el, close){ $('#toEnt', el).onclick = () => { close(); go('#/entrar'); }; } });
-    return true;
+    // Unir es obligatorio: también se avisa en la revisión automática (y no se apilan más avisos).
+    sheet(`${sheetHead('Une tu clase guardada', esc(cls.meta.title || ''))}<p class="hint" style="margin-top:0">Todavía no encontramos en línea una clase que coincida con <b>${esc(cls.meta.title || 'esta clase')}</b>. Toca <b>Entrar a mi clase</b>, búscala por tu nombre y adóptala; luego vuelve al inicio y toca <b>Unir ahora</b>. Es obligatorio para no perder la asistencia guardada en este celular.</p><div class="sh-foot"><button class="btn" data-close>Después</button><button class="btn primary" id="toEnt">Entrar a mi clase</button></div>`, { onMount(el, close){ $('#toEnt', el).onclick = () => { close(); go('#/entrar'); }; } });
+    return false;
   }
   const n = classStudents(cls).length;
   return new Promise(res => {
     let fin = false;
     const terminar = v => { if(!fin){ fin = true; res(v); } };
     sheet(`${sheetHead(sug.length ? 'Encontramos una clase para ti' : 'Elige tu clase en línea', esc(cls.meta.title || ''))}
+      <div class="warn-box"><b>Unir es obligatorio:</b> la clase guardada en este celular ya no se puede usar para tomar asistencia.</div>
       <div class="info-box">En este dispositivo tienes la clase <b>${esc(cls.meta.title || 'sin título')}</b>${cls.meta.teacher ? ` de <b>${esc(cls.meta.teacher)}</b>` : ''} con <b>${n}</b> alumnos y <b>${marcasLocales(cls)}</b> marcas. Si es la misma clase, sus alumnos y su asistencia se suman a la clase en línea. Lo que ya está marcado en línea no se cambia.</div>
       ${opciones.map((o, i) => `<div class="item" style="margin:8px 0 0"><span class="av">${esc(initials(o.maestro))}</span><span class="ii"><b>${esc(prettyName(o.maestro))}</b><small>${esc([progLabel(o.programa), stakeShort(o.estaca), o.horario, o.curso].filter(Boolean).join(' · '))}</small><small>${o.mia ? 'Una de tus clases' : `<b>${o.coincidentes} de ${n}</b> alumnos coinciden`}${o.adoptada && !o.tengo_acceso ? ' · ya adoptada' : ''}</small></span><button class="btn sm ${i===0 && !o.mia ? 'gold' : ''}" data-op="${i}">Es esta</button></div>`).join('')}
-      <div class="sh-foot"><button class="btn ghost" id="noEs">No es ninguna</button><button class="btn" data-close>Ahora no</button></div>`, {
+      <div class="sh-foot"><button class="btn ghost" id="noEs">Mi clase no está aquí</button><button class="btn" data-close>Después</button></div>`, {
       wide:true,
       onClose(){ terminar(false); },
       onMount(el, close){
-        $('#noEs', el).onclick = () => { cls.noUnir = true; saveClasses(); terminar(true); close(); toast('Puedes unirla después desde “Guardadas en este dispositivo”.'); };
+        $('#noEs', el).onclick = () => { close(); terminar(false); go('#/entrar'); toast('Busca tu clase por tu nombre y adóptala. Luego vuelve al inicio y toca “Unir ahora”.', '', { ms:5000 }); };
         $$('[data-op]', el).forEach(b => b.onclick = async () => { close(); terminar(false); await unirClaseLocal(cls, opciones[+b.dataset.op].id, opciones[+b.dataset.op]); });
       }
     });
   });
+}
+function renderClaseLocalBloqueada(cls){
+  if(cls.enLinea){ go('#/clase/' + cls.enLinea); return; }
+  CUR = { type:'class-local', code:cls.code };
+  const n = classStudents(cls).length;
+  app.innerHTML = topbar({ back:'#/', title: cls.meta.title || 'Clase', sub:'Guardada en este celular' }) + `<main class="wrap">
+    <section class="card unir-oblig">
+      <h2>⚠ Une esta clase a tu clase en línea</h2>
+      <p>La clase <b>${esc(cls.meta.title || 'sin título')}</b>${cls.meta.teacher ? ` de <b>${esc(cls.meta.teacher)}</b>` : ''} solo existe en este celular (${n} alumnos · ${marcasLocales(cls)} marcas). Ya no se puede usar para tomar asistencia.</p>
+      <p class="hint">${n ? 'Al unirla, sus alumnos y su asistencia se suman a tu clase en línea. Lo que ya está marcado en línea no se cambia y esta copia queda como respaldo.' : 'No tiene alumnos: entra a tu clase en línea para tomar la asistencia.'}${cls.esperando ? ' <b>Pediste acceso a tu clase en línea:</b> se unirá sola cuando te lo den.' : ''}</p>
+      <div class="btn-row">${n ? `<button class="btn gold lg" id="loUnir">Unir ahora</button>` : ''}<button class="btn ${n ? '' : 'primary lg'}" data-go="#/entrar">${ICON.book} Entrar a mi clase en línea</button></div>
+    </section></main>`;
+  bindTop();
+  const b = $('#loUnir'); if(b) b.onclick = () => buscarClaseParaLocal(cls, true);
 }
 async function unirClaseLocal(cls, id, op){
   try{
@@ -3527,6 +3552,7 @@ function renderClasses(){
 }
 function renderClassForm(code){
   const cls = code ? CLASSES[code] : null;
+  if(cls && SB.on() && !cls.remote && !SB.admin && cls.canEdit !== false) return renderClaseLocalBloqueada(cls);
   if(code && (!cls || !cls.canEdit)){ go(code ? '#/clase/'+code : '#/clases'); return; }
   CUR = { type:'class-form', code };
   const m = cls ? cls.meta : { title:'', teacher:'', program:'S', stake:'', ward:'', days:[1,2,3,4,5], start:todayISO() };
@@ -3604,6 +3630,8 @@ function renderClass(code){
   const cls = CLASSES[code];
   if(!cls && SB.on()){ app.innerHTML = topbar({ back:'#/', title:'Abriendo clase' }) + `<main class="wrap">${loadingHTML()}</main>`; bindTop(); openRemoteClass(code); return; }
   if(!cls){ go('#/clases'); setTimeout(() => openClass(code), 60); return; }
+  // Con la base en línea, la clase que solo existe en el celular ya no se usa: se une (obligatorio).
+  if(SB.on() && !cls.remote && !SB.admin && cls.canEdit !== false) return renderClaseLocalBloqueada(cls);
   if(CUR.code !== code){ ST.classDate = null; ST.planMonth = null; ST.cq = ''; ST.cscope = null; ST.cf = null; if(!classStudents(cls).length && cls.canEdit) ST.ctab = 'alumnos'; else if(ST.ctab === 'alumnos' && !cls.canEdit) ST.ctab = 'hoy'; }
   CUR = { type:'class', code };
   const m = cls.meta;
