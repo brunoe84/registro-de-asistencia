@@ -99,7 +99,8 @@ svg{width:18px;height:18px;flex-shrink:0}
 .icon-btn.sm{width:32px;height:32px;border-radius:9px}
 .icon-btn.sm svg{width:16px;height:16px}
 .icon-btn.danger{color:var(--red);background:var(--red-50)}
-
+.icon-btn.wa{color:#1E8449;background:var(--green-50)}
+.btn.wa-btn{color:#1E8449;border-color:#BFE3CB;background:var(--green-50)}
 /* ---------- Forms ---------- */
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;min-width:0}
 .field>label{font-size:12.5px;font-weight:700;color:var(--navy);letter-spacing:.01em}
@@ -188,7 +189,16 @@ svg{width:18px;height:18px;flex-shrink:0}
 .b-new{background:var(--gold-50);color:#8A5D0D}
 .b-ro{background:#EEF2F4;color:var(--muted)}
 .b-ok{background:var(--green-50);color:var(--green)}
-
+.b-naranja{background:#FDE4D3;color:#B4470E;border:1px solid #F3B48C}
+.b-oro{background:var(--gold-50);color:#8A5D0D;border:1px solid #E3BE73}
+.att-item.ficha-pend{border-left:4px solid #E8692A;background:#FFF6F0}
+.att-item.ficha-ok{border-left:4px solid var(--gold);background:#FFFCF3}
+.ins-card.naranja{border-left:5px solid #E8692A;background:#FFF6F0}
+.ins-card.dorado{border-left:5px solid var(--gold);background:#FFFCF3}
+.ins-sum{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.ins-sum button{border:1.5px solid var(--border);background:#fff;border-radius:999px;padding:7px 12px;font:inherit;font-size:13px;font-weight:600;color:var(--text);cursor:pointer}
+.ins-sum button.on{border-color:var(--navy);background:var(--navy);color:#fff}
+.ins-sum .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
 /* ---------- Tabs ---------- */
 .tabs{display:flex;gap:4px;background:#fff;border:1px solid var(--border);border-radius:14px;padding:4px;margin:14px 0;box-shadow:var(--shadow);position:sticky;top:calc(var(--top) + env(safe-area-inset-top) + 8px);z-index:20}
 .tabs button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;background:transparent;border-radius:10px;padding:10px 6px;font-weight:700;font-size:13.5px;color:var(--muted)}
@@ -1331,6 +1341,12 @@ async function pushRemoteClass(cls){
       const { error } = await SB.client.from('clase_alumnos').upsert({ id:s.id, clase_id:id, nombre:s.n, estaca:(s.data||{}).k || '', barrio:(s.data||{}).w || '', persona_id:s.pid || null, retirado_en: s.del ? new Date(s.delAt || Date.now()).toISOString() : null }, { onConflict:'id' });
       if(error && error.code === '23505'){ delete cls.students[s.id]; toast(`${prettyName(s.n)} ya estaba en la clase`, 'warn'); }
       else if(error) throw error;
+      // Alumno nuevo con WhatsApp: se crea su ficha con el enlace que ya se le envió.
+      else if(s.fichaCel && !s.del){
+        const r = await SB.rpc('preinscribir_alumno', { alumno:s.id, celular:s.fichaCel, token:s.fichaTok || null });
+        (cls.fichas = cls.fichas || {})[s.id] = { token:r.token, whatsapp:s.fichaCel, completa:!!r.completa, inscrito:false, enviado_en:new Date().toISOString(), envios:1 };
+        delete s.fichaCel; delete s.fichaTok;
+      }
     }
     if(cls.dirty[p] === st) delete cls.dirty[p];
   }
@@ -1362,6 +1378,9 @@ async function pullRemoteClass(cls){
   const ids = new Set(alumnos.map(a => a.id));
   Object.keys(cls.students).forEach(id => { if(!ids.has(id) && !dirty['students/'+id]) delete cls.students[id]; });
   alumnos.forEach(a => { if(!dirty['students/'+a.id]) cls.students[a.id] = studentFromRow(a); });
+  // Estado de las fichas de inscripción de los alumnos nuevos (naranja: pendiente; dorado: completa).
+  try{ const f = await SB.rpc('fichas_de_clase', { clase: cls.dbId }); cls.fichas = {}; (f || []).forEach(x => cls.fichas[x.alumno_id] = x); }
+  catch(e){ console.warn('fichas_de_clase', e); }
   const ratt = {}; marcas.forEach(m => { (ratt[m.fecha] = ratt[m.fecha] || {})[m.alumno_id] = m.estado; });
   const dates = new Set([...Object.keys(ratt), ...Object.keys(cls.att||{})]);
   dates.forEach(d => {
@@ -1952,17 +1971,34 @@ async function renderInscripciones(atendidas){
   paintEnlaceInscripcion(prog);
   const body = $('#insBody');
   try{
-    const lista = await SB.rpc('inscripciones_wise', { atendidas: !!atendidas, prog });
+    const todos = await SB.rpc('inscripciones_wise', { atendidas: !!atendidas, prog });
     const EST = { pendiente:'Asistencia por aprobar', aprobada:'Asistencia aprobada', rechazada:'El maestro dijo que no vino' };
+    // Alumnos nuevos del maestro: naranja si no completaron la ficha, dorado si ya la completaron.
+    const color = x => x.origen !== 'maestro' ? '' : x.completada_en ? 'dorado' : 'naranja';
+    const nN = todos.filter(x => color(x) === 'naranja').length, nD = todos.filter(x => color(x) === 'dorado').length;
+    const filtro = ['naranja', 'dorado', 'otros'].includes(ST.insFiltro) ? ST.insFiltro : 'todos';
+    const lista = filtro === 'todos' ? todos : todos.filter(x => filtro === 'otros' ? x.origen !== 'maestro' : color(x) === filtro);
+    const sinCompletar = x => x.origen === 'maestro' && !x.completada_en;
     body.innerHTML = `<div class="seg" style="margin:14px 0" id="insTabs"><button data-t="0" class="${atendidas ? '' : 'on'}">Por inscribir</button><button data-t="1" class="${atendidas ? 'on' : ''}">Ya inscritos</button></div>
-      <p class="hint" style="margin:0 0 12px">${lista.length} ${atendidas ? 'ya inscrito' : 'por inscribir'}${lista.length === 1 ? '' : 's'} en ${nomProg}. <b>Solo tú ves estos datos.</b></p>
-      ${lista.map((x, i) => `<section class="card ins-card">
-        <div class="ins-h"><b>${esc(prettyName(x.nombre))}</b>${x.origen === 'enlace' ? '<span class="badge b-ok">Enlace de inscripción</span>' : `<span class="badge ${x.aprobada === 'aprobada' ? 'b-ok' : 'b-ro'}">${esc(EST[x.aprobada] || x.aprobada)}</span>`}</div>
-        <p class="meta" style="margin-top:2px">${esc(x.origen === 'enlace' ? 'Se inscribió con el enlace de ' + nomProg : ['QR de la clase de ' + prettyName(x.maestro), x.horario].filter(Boolean).join(' · '))}</p>
-        <dl class="kv">${[['Estaca', stakeShort(x.datos.estaca || x.estaca)], ['Barrio', x.datos.barrio || x.barrio], ['Miembro de la Iglesia', x.datos.miembro === 'si' ? 'Sí' : x.datos.miembro === 'no' ? 'No' : ''], ['Cédula de miembro', x.datos.cedula], ['Usuario de la Iglesia', x.datos.usuario], ['Fecha de nacimiento', x.datos.nacimiento ? fmtDMY(x.datos.nacimiento) : ''], ['Celular', x.datos.celular], ['Padre o madre', x.datos.tutor], ['Número del padre o madre', x.datos.tutor_celular], ['Correo del padre o madre', x.datos.tutor_correo], ['Dirección de casa', x.datos.direccion], ['Acuerdo aceptado', x.datos.acuerdo ? x.datos.acuerdo + (x.datos.acepto_en ? ' · ' + new Date(x.datos.acepto_en).toLocaleString('es-PE') : '') : 'No registrado'], ['En la base', x.en_base ? 'Sí' : 'No (escribió sus datos)'], ['Se registró', new Date(x.creado_en).toLocaleString('es-PE')]].filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
-        <div class="btn-row"><button class="btn sm" data-cp="${i}">${ICON.copy} Copiar datos</button><button class="btn sm ${atendidas ? '' : 'primary'}" data-at="${i}">${atendidas ? 'Volver a “por inscribir”' : ICON.check + ' Ya lo inscribí en Wise'}</button></div>
-      </section>`).join('') || `<div class="empty">${atendidas ? 'Todavía no marcaste a nadie como inscrito.' : 'No hay nadie por inscribir en ' + nomProg + '.'}</div>`}`;
+      <div class="ins-sum" id="insFil">${[['todos', 'Todos', todos.length, ''], ['naranja', 'Ficha pendiente', nN, '#E8692A'], ['dorado', 'Ficha completa', nD, 'var(--gold)'], ['otros', 'QR y enlace general', todos.length - nN - nD, '']].filter(f => f[0] === 'todos' || f[2] || f[0] === filtro).map(([k, l, n, c]) => `<button data-f="${k}" class="${filtro === k ? 'on' : ''}">${c ? `<span class="dot" style="background:${c}"></span>` : ''}${l} · ${n}</button>`).join('')}</div>
+      <p class="hint" style="margin:0 0 12px">${lista.length} ${atendidas ? (lista.length === 1 ? 'ya inscrito' : 'ya inscritos') : 'por inscribir'} en ${nomProg}. <b>Solo tú ves estos datos.</b>${!atendidas && nN ? ' Los <b style="color:#B4470E">naranjas</b> los agregó un maestro y aún no completan su ficha: puedes reenviarles el enlace.' : ''}</p>
+      ${lista.map((x, i) => `<section class="card ins-card ${color(x)}">
+        <div class="ins-h"><b>${esc(prettyName(x.nombre))}</b>${x.origen === 'maestro' ? (x.completada_en ? '<span class="badge b-oro">Ficha completa</span>' : '<span class="badge b-naranja">Ficha pendiente</span>') : x.origen === 'enlace' ? '<span class="badge b-ok">Enlace de inscripción</span>' : `<span class="badge ${x.aprobada === 'aprobada' ? 'b-ok' : 'b-ro'}">${esc(EST[x.aprobada] || x.aprobada)}</span>`}</div>
+        <p class="meta" style="margin-top:2px">${esc(x.origen === 'maestro' ? ['Alumno nuevo de la clase de ' + prettyName(x.maestro), x.horario, x.retirado ? 'ya no está en la clase' : ''].filter(Boolean).join(' · ') : x.origen === 'enlace' ? 'Se inscribió con el enlace de ' + nomProg : ['QR de la clase de ' + prettyName(x.maestro), x.horario].filter(Boolean).join(' · '))}</p>
+        ${sinCompletar(x) ? `<p class="meta" style="margin-top:4px;color:#B4470E"><b>${x.enviado_en ? 'Enlace enviado ' + esc(haceCuanto(x.enviado_en)) + (x.envios > 1 ? ' · ' + x.envios + ' envíos' : '') : 'Enlace aún no enviado'}</b> · agregado ${esc(haceCuanto(x.creado_en))}</p>` : ''}
+        <dl class="kv">${[['Estaca', stakeShort(x.datos.estaca || x.estaca)], ['Barrio', x.datos.barrio || x.barrio], ['Miembro de la Iglesia', x.datos.miembro === 'si' ? 'Sí' : x.datos.miembro === 'no' ? 'No' : ''], ['Cédula de miembro', x.datos.cedula], ['Usuario de la Iglesia', x.datos.usuario], ['Fecha de nacimiento', x.datos.nacimiento ? fmtDMY(x.datos.nacimiento) : ''], ['Celular', x.datos.celular], ['WhatsApp que dio el maestro', x.whatsapp && x.whatsapp !== x.datos.celular ? x.whatsapp : ''], ['Padre o madre', x.datos.tutor], ['Número del padre o madre', x.datos.tutor_celular], ['Correo del padre o madre', x.datos.tutor_correo], ['Dirección de casa', x.datos.direccion], ['Acuerdo aceptado', x.datos.acuerdo ? x.datos.acuerdo + (x.datos.acepto_en ? ' · ' + new Date(x.datos.acepto_en).toLocaleString('es-PE') : '') : sinCompletar(x) ? '' : 'No registrado'], ['En la base', x.origen === 'maestro' ? (x.en_base ? 'Sí' : 'No') : x.en_base ? 'Sí' : 'No (escribió sus datos)'], [x.origen === 'maestro' ? 'Agregado por el maestro' : 'Se registró', new Date(x.creado_en).toLocaleString('es-PE')], ['Completó su ficha', x.origen === 'maestro' && x.completada_en ? new Date(x.completada_en).toLocaleString('es-PE') : '']].filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+        <div class="btn-row">${sinCompletar(x) && !atendidas ? `<button class="btn sm wa-btn" data-fw="${i}">${ICON.chat} ${x.envios ? 'Reenviar' : 'Enviar'} enlace</button><button class="btn sm" data-fc="${i}">${ICON.copy} Copiar enlace</button>` : `<button class="btn sm" data-cp="${i}">${ICON.copy} Copiar datos</button>`}<button class="btn sm ${atendidas || sinCompletar(x) ? '' : 'primary'}" data-at="${i}">${atendidas ? 'Volver a “por inscribir”' : ICON.check + ' Ya lo inscribí en Wise'}</button></div>
+      </section>`).join('') || `<div class="empty">${atendidas ? 'Todavía no marcaste a nadie como inscrito.' : filtro !== 'todos' ? 'No hay nadie con este filtro.' : 'No hay nadie por inscribir en ' + nomProg + '.'}</div>`}`;
     $$('#insTabs button', body).forEach(b => b.onclick = () => renderInscripciones(b.dataset.t === '1'));
+    $$('#insFil button', body).forEach(b => b.onclick = () => { ST.insFiltro = b.dataset.f; renderInscripciones(atendidas); });
+    // El administrador también puede enviar el enlace de la ficha, por ejemplo si pasan varios días.
+    $$('[data-fw]', body).forEach(b => b.onclick = async () => {
+      const x = lista[+b.dataset.fw], cel = x.whatsapp || x.datos.celular;
+      waOpen(fichaMsg(x.nombre, x.programa || prog, x.token, x.maestro), cel);
+      try{ await SB.rpc('ficha_enviada', { ficha: x.token }); x.enviado_en = new Date().toISOString(); x.envios = (x.envios || 0) + 1; b.innerHTML = ICON.check + ' Enviado'; }
+      catch(e){ console.error(e); }
+    });
+    $$('[data-fc]', body).forEach(b => b.onclick = () => copyText(appLink('f', lista[+b.dataset.fc].token), 'Enlace copiado'));
     $$('[data-cp]', body).forEach(b => b.onclick = () => { const x = lista[+b.dataset.cp], d = x.datos; copyText([prettyName(x.nombre), 'Programa: ' + nomProg, (d.estaca || x.estaca) && 'Estaca: ' + stakeShort(d.estaca || x.estaca), (d.barrio || x.barrio) && 'Barrio: ' + (d.barrio || x.barrio), d.miembro && 'Miembro: ' + (d.miembro === 'si' ? 'Sí' : 'No'), d.cedula && 'Cédula: ' + d.cedula, d.usuario && 'Usuario: ' + d.usuario, d.nacimiento && 'Nacimiento: ' + fmtDMY(d.nacimiento), d.celular && 'Celular: ' + d.celular, d.tutor && 'Padre o madre: ' + d.tutor, d.tutor_celular && 'Número del padre o madre: ' + d.tutor_celular, d.tutor_correo && 'Correo del padre o madre: ' + d.tutor_correo, d.direccion && 'Dirección: ' + d.direccion, d.acuerdo && 'Aceptó el acuerdo de inscripción en ' + d.acuerdo, x.origen === 'enlace' ? 'Origen: enlace de inscripción' : 'Clase: ' + prettyName(x.maestro) + ' · ' + x.horario].filter(Boolean).join('\n'), 'Datos copiados'); });
     $$('[data-at]', body).forEach(b => b.onclick = async () => {
       try{ await SB.rpc('atender_inscripcion', { inscripcion: lista[+b.dataset.at].id, atendida: !atendidas }); renderInscripciones(atendidas); }
@@ -2172,6 +2208,7 @@ function route(){
   if(parts[0] === 'qr' && parts[1]) return renderQr(parts[1]);
   if(parts[0] === 'qrc' && parts[1]) return renderQrClase(parts[1]);
   if(parts[0] === 'insc' && parts[1]) return renderInscripcionPublica(parts[1]);
+  if(parts[0] === 'ficha' && parts[1]) return renderFichaPublica(parts[1]);
   if(parts[0] === 'entrar') return renderEntrar();
   if(['todas','solicitudes','alertas','seguimiento','inscripciones'].includes(parts[0])){
     if(!SB.admin){ go('#/'); return; }
@@ -3229,7 +3266,7 @@ function acuerdoHTML(prog, prev = {}){
 function qrcDatos(d, ctx){
   ctx = Object.assign({ prog: QRC.c && QRC.c.programa, head: QRC.head, intro: 'no estás en la lista de esta clase. Tu maestro confirmará tu asistencia y con estos datos te inscribiremos. Solo el administrador los verá.', boton: 'Enviar mi asistencia', enviar: x => qrcMarcar(x), volver: () => qrcBuscar() }, ctx);
   const prev = LS.get('ca_yo_datos', {});
-  const base = !!d.persona;
+  const base = !!(d.persona || d.ficha);
   const campo = (name, lab, req, attrs = '', val = prev[name] || '') => `<div class="field"><label>${lab} ${req ? '<span class="req">*</span>' : '<span class="opt">(opcional)</span>'}</label><input name="${name}" value="${esc(val)}" ${attrs}></div>`;
   $('#qrMain').innerHTML = ctx.head + `<section class="card"><h2>Tus datos para inscribirte</h2>
     <p class="hint" style="margin-top:0">${base ? `<b>${esc(prettyName(d.nombre))}</b>, ` : ''}${esc(base ? ctx.intro : ctx.intro.charAt(0).toUpperCase() + ctx.intro.slice(1))}</p>
@@ -3242,14 +3279,14 @@ function qrcDatos(d, ctx){
         ${campo('cedula', 'Número de cédula de miembro', false, 'inputmode="numeric" placeholder="Si lo sabes"')}
         ${campo('usuario', 'Nombre de usuario de tu cuenta de la Iglesia', false, 'autocapitalize="off" spellcheck="false" placeholder="Si lo sabes"')}
       </div>
-      <div class="row2">${campo('nacimiento', 'Fecha de nacimiento', true, `type="date" max="${todayISO()}"`)}${campo('celular', 'Celular', true, 'type="tel" inputmode="tel" placeholder="Ej. 987 654 321"')}</div>
+      <div class="row2">${campo('nacimiento', 'Fecha de nacimiento', true, `type="date" max="${todayISO()}"`)}${campo('celular', 'Celular', true, 'type="tel" inputmode="tel" placeholder="Ej. 987 654 321"', d.celular || prev.celular || '')}</div>
       ${acuerdoHTML(ctx.prog, prev)}
       <div class="btn-row"><button class="btn primary lg block" type="submit">${ICON.check} ${esc(ctx.boton)}</button></div>
     </form>
-    <p class="who"><button id="qdAtras">Volver a buscar mi nombre</button></p></section>`;
+    ${ctx.volver ? '<p class="who"><button id="qdAtras">Volver a buscar mi nombre</button></p>' : ''}</section>`;
   const seg = $('#qdMiembro [data-v]');
   $$('[data-o]', seg).forEach(b => b.onclick = () => { $$('[data-o]', seg).forEach(x => x.classList.toggle('on', x === b)); seg.dataset.v = b.dataset.o; $('#qdIglesia').classList.toggle('hide', b.dataset.o !== 'si'); });
-  $('#qdAtras').onclick = () => ctx.volver();
+  if(ctx.volver) $('#qdAtras').onclick = () => ctx.volver();
   if(!base) setTimeout(() => $('#qdForm [name=nombres]').focus(), 200);
   $('#qdForm').onsubmit = e => {
     e.preventDefault();
@@ -3269,7 +3306,7 @@ function qrcDatos(d, ctx){
     const { nombres, apellidos, ...datos } = v;
     const { acuerdo, ...recordar } = datos;
     LS.set('ca_yo_datos', recordar);
-    ctx.enviar(base ? { persona: d.persona, datos } : { nombres: titleCase(nombres), apellidos: titleCase(apellidos), datos });
+    ctx.enviar(base ? { persona: d.persona || null, datos } : { nombres: titleCase(nombres), apellidos: titleCase(apellidos), datos });
   };
 }
 const fmtInscripcion = x => !x ? '' : [x.miembro === 'no' ? 'No es miembro' : '', x.cedula ? 'Cédula ' + x.cedula : '', x.usuario ? 'Usuario ' + x.usuario : '', x.nacimiento ? 'Nac. ' + fmtDMY(x.nacimiento) : '', x.celular ? 'Cel. ' + x.celular : ''].filter(Boolean).join(' · ');
@@ -3368,6 +3405,44 @@ async function inscEnviar(x){
     if(navigator.vibrate) navigator.vibrate(40);
     const nom = prettyName(r.nombre);
     $('#qrMain').innerHTML = INSC_P.head + `<section class="card qr-done">${OK_ANIM}<h2>${r.estado === 'actualizado' ? '¡Datos actualizados!' : '¡Inscripción enviada!'}</h2><p>Gracias, ${esc(nom)}. Con estos datos te inscribiremos en ${nomProgDe(INSC_P.prog)}.</p></section>`;
+  }catch(e){ console.error(e); $$('#qrMain button').forEach(b => b.disabled = false); toast(errMsg(e), 'error'); }
+}
+
+/* ============================================================
+   FICHA DEL ALUMNO NUEVO (enlace personal ?f=TOKEN que envía el maestro)
+   El alumno no se busca: el enlace ya sabe quién es y de qué programa.
+   ============================================================ */
+const FICHA_P = { token:'', prog:'S', head:'', r:null };
+async function renderFichaPublica(token){
+  CUR = { type:'qr', code:null };
+  FICHA_P.token = token;
+  pedirAlmacenPersistente();
+  app.innerHTML = qrShell(loadingHTML('Abriendo tu ficha…'));
+  let r;
+  try{ r = await SB.rpc('ficha_por_token', { ficha: token }); }
+  catch(e){ console.error(e); $('#qrMain').innerHTML = `<div class="empty">No se pudo abrir tu ficha. Revisa tu internet.<br><br><button class="btn primary" id="qrRe">Intentar otra vez</button></div>`; $('#qrRe').onclick = () => renderFichaPublica(token); return; }
+  if(!r || r.estado === 'no_existe'){ $('#qrMain').innerHTML = `<div class="empty">Este enlace todavía no está listo o ya no existe.<br>Espera unos minutos y vuelve a abrirlo, o pide a tu maestro que te lo envíe otra vez.<br><br><button class="btn primary" id="qrRe">Intentar otra vez</button></div>`; $('#qrRe').onclick = () => renderFichaPublica(token); return; }
+  FICHA_P.r = r; FICHA_P.prog = r.programa === 'I' ? 'I' : 'S';
+  FICHA_P.head = `<section class="card qr-ev"><small>Seminarios e Institutos de Religión</small><h1>Ficha de inscripción en ${nomProgDe(FICHA_P.prog)}</h1><p class="meta">${esc(prettyName(r.nombre))}${r.maestro ? ' · clase de ' + esc(prettyName(r.maestro)) : ''}</p></section>`;
+  if(r.estado === 'inscrito'){ $('#qrMain').innerHTML = FICHA_P.head + `<section class="card qr-done">${OK_ANIM}<h2>¡Ya estás inscrito!</h2><p>${esc(prettyName(r.nombre))}, tu inscripción en ${nomProgDe(FICHA_P.prog)} ya fue registrada.</p></section>`; return; }
+  if(r.estado === 'completa'){
+    $('#qrMain').innerHTML = FICHA_P.head + `<section class="card qr-done">${OK_ANIM}<h2>Ya completaste tu ficha</h2><p>Gracias, ${esc(prettyName(r.nombre))}. Con estos datos te inscribiremos en ${nomProgDe(FICHA_P.prog)}.</p><p class="who"><button id="fiCorr">Corregir mis datos</button></p></section>`;
+    $('#fiCorr').onclick = fichaDatos; return;
+  }
+  fichaDatos();
+}
+function fichaDatos(){
+  const r = FICHA_P.r;
+  qrcDatos({ ficha:true, nombre:r.nombre, estaca:r.estaca, barrio:r.barrio, celular:r.celular },
+    { prog: FICHA_P.prog, head: FICHA_P.head, intro: `completa tu ficha para inscribirte en ${nomProgDe(FICHA_P.prog)}. Solo el administrador verá tus datos.`, boton: 'Enviar mi ficha', enviar: fichaEnviar, volver: null });
+}
+async function fichaEnviar(x){
+  $$('#qrMain button').forEach(b => b.disabled = true);
+  try{
+    const r = await SB.rpc('completar_ficha', { ficha: FICHA_P.token, datos: x.datos || {} });
+    if(!miYo()) guardarYo({ nombre: r.nombre });
+    if(navigator.vibrate) navigator.vibrate(40);
+    $('#qrMain').innerHTML = FICHA_P.head + `<section class="card qr-done">${OK_ANIM}<h2>${r.estado === 'actualizada' ? '¡Datos actualizados!' : '¡Ficha enviada!'}</h2><p>Gracias, ${esc(prettyName(r.nombre))}. Con estos datos te inscribiremos en ${nomProgDe(FICHA_P.prog)}.</p></section>`;
   }catch(e){ console.error(e); $$('#qrMain button').forEach(b => b.disabled = false); toast(errMsg(e), 'error'); }
 }
 
@@ -3745,7 +3820,7 @@ function renderClassTab(){
         <div class="search-box sm"><span class="si">${ICON.search}</span><input id="cq" type="search" placeholder="Buscar en la base por nombre…" autocomplete="off" spellcheck="false" value="${esc(ST.cq)}"></div>
         ${cls.remote ? '<div class="filt-row" id="cfilt"></div>' : opts.length > 1 ? `<div class="scope-row"><div class="seg" id="cscope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.cscope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div></div>` : '<div style="height:10px"></div>'}
         <div id="cres" class="results"></div>
-        <button class="manual-cta" id="newStu"><span class="mc-ico">${ICON.userPlus}</span><span><b>Alumno nuevo</b><small>No es miembro o no aparece en la base · solo nombre, estaca y barrio</small></span>${ICON.next}</button>
+        <button class="manual-cta" id="newStu"><span class="mc-ico">${ICON.userPlus}</span><span><b>Alumno nuevo</b><small>No es miembro o no aparece en la base · nombre, estaca y barrio${cls.remote ? ' · WhatsApp para enviarle su ficha' : ''}</small></span>${ICON.next}</button>
       </section>`}
       <section class="section"><div class="section-h"><h2>Alumnos de la clase (<span id="stuN">${studs.length}</span>)</h2></div><div id="stuList" class="att-list"></div></section>`;
     if(!ro){
@@ -3808,8 +3883,12 @@ function renderStuList(){
   if(!studs.length){ el.innerHTML = '<div class="empty">Aún no hay alumnos.</div>'; return; }
   el.innerHTML = studs.map((s, i) => {
     const st = studentStats(cls, s.id, dates);
-    return `<div class="att-item" data-sid="${s.id}"><span class="n">${i+1}</span><div class="ai"><b>${esc(prettyName(s.n))} ${s.src==='nuevo'?'<span class="badge b-new">Nuevo</span>':''}</b><small>${esc(stuSub(s)) || '&nbsp;'}</small></div><div class="at"><b>${st.pct === '' ? '—' : st.pct+'%'}</b><br>${st.P}/${st.T}</div>${cls.canEdit ? `<button class="icon-btn sm danger" data-del="${s.id}" aria-label="Quitar">${ICON.trash}</button>` : ''}</div>`;
+    const f = cls.remote ? fichaDe(cls, s) : null;
+    // Alumno nuevo en clase en línea: botón para enviar (o reenviar) su ficha mientras esté pendiente.
+    const envia = cls.remote && cls.canEdit && SB.on() && (f ? f.st === 'pend' : s.src === 'nuevo');
+    return `<div class="att-item${f ? (f.st === 'ok' ? ' ficha-ok' : ' ficha-pend') : ''}" data-sid="${s.id}"><span class="n">${i+1}</span><div class="ai"><b>${esc(prettyName(s.n))} ${f ? fichaBadge(f) : s.src==='nuevo'?'<span class="badge b-new">Nuevo</span>':''}</b><small>${esc(stuSub(s)) || '&nbsp;'}${f && f.st === 'pend' && f.enviado_en ? ' · enlace enviado ' + esc(haceCuanto(f.enviado_en)) : ''}</small></div><div class="at"><b>${st.pct === '' ? '—' : st.pct+'%'}</b><br>${st.P}/${st.T}</div>${envia ? `<button class="icon-btn sm wa" data-fe="${s.id}" aria-label="${f ? 'Reenviar' : 'Enviar'} enlace de inscripción" title="${f ? 'Reenviar' : 'Enviar'} enlace de inscripción">${ICON.chat}</button>` : ''}${cls.canEdit ? `<button class="icon-btn sm danger" data-del="${s.id}" aria-label="Quitar">${ICON.trash}</button>` : ''}</div>`;
   }).join('');
+  $$('[data-fe]', el).forEach(b => b.onclick = e => { e.stopPropagation(); pedirFicha(cls, cls.students[b.dataset.fe]); });
   $$('[data-del]', el).forEach(b => b.onclick = async e => { e.stopPropagation(); const s = cls.students[b.dataset.del]; if(await confirmBox(`¿Quitar a <b>${esc(prettyName(s.n))}</b> de la clase? Sus marcas se conservan en el backup.`, {title:'Quitar alumno', ok:'Quitar', danger:true})) removeStudent(cls, s.id); });
   $$('.att-item', el).forEach(it => it.onclick = () => openStudentCal(cls, it.dataset.sid, () => { renderStuList(); }));
 }
@@ -3917,8 +3996,11 @@ function openStudentCal(cls, sid, onClose){
 function openNewStudent(cls){
   const sw = { stake:cls.meta.stake, ward:cls.meta.ward };
   const pre = ST.cq.trim();
-  sheet(`${sheetHead('Alumno nuevo', progLabel(cls.meta.program))}<form id="pf" autocomplete="off">${personFormHTML({ sw })}</form>
-    <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">${ICON.check} Agregar a la clase</button></div>`, {
+  // En las clases en línea se pide el WhatsApp del alumno para enviarle su ficha de inscripción.
+  const conFicha = !!cls.remote;
+  sheet(`${sheetHead('Alumno nuevo', progLabel(cls.meta.program))}<form id="pf" autocomplete="off">${personFormHTML({ sw })}
+      ${conFicha ? `<div class="field"><label>WhatsApp del alumno <span class="req">*</span></label><input name="whatsapp" type="tel" inputmode="tel" placeholder="Ej. 987 654 321" autocomplete="off"><small class="hint">Le llegará el enlace de su ficha de inscripción en ${nomProgDe(cls.meta.program)}.</small></div>` : ''}</form>
+    <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">${conFicha ? ICON.chat + ' Guardar y enviar enlace de inscripción' : ICON.check + ' Agregar a la clase'}</button></div>`, {
     wide: true,
     onMount(el, close){
       bindPersonForm(el, { sw, onUseExisting: p => { close(); ST.cq = prettyName(p.n); renderClassTab(); } });
@@ -3926,12 +4008,68 @@ function openNewStudent(cls){
       setTimeout(() => $('[name=nombres]', el).focus(), 250);
       $('#ok', el).onclick = () => {
         const v = collectPersonForm(el); if(!v) return;
+        if(conFicha && !normPhone(v.whatsapp)){ $('[name=whatsapp]', el).closest('.field').classList.add('err'); $('[name=whatsapp]', el).focus(); toast('Escribe el WhatsApp del alumno (9 dígitos)', 'error'); return; }
         const loc = readSW(el, 'm');
         const s = { id: cls.remote ? crypto.randomUUID() : uid('s'), pid: null, n: `${v.apellidos}, ${v.nombres}`, src:'nuevo', form:{ nombres:v.nombres, apellidos:v.apellidos }, data:{ k: loc.stake, w: loc.ward }, addedAt: Date.now() };
+        if(conFicha){ s.fichaCel = v.whatsapp; s.fichaTok = nuevoTokenFicha(); }
         cls.students[s.id] = s; markDirty(cls, 'students/'+s.id);
         saveClasses(); queueSync(); close();
+        // WhatsApp se abre ya (en el mismo toque, para que el celular no lo bloquee); la ficha se crea al sincronizar.
+        if(conFicha) enviarFichaWa(cls, s, s.fichaTok, v.whatsapp);
         toast(`✓ ${v.nombres} agregado a la clase`, 'ok');
         ST.cq = ''; renderClassTab(); liveClass(true);
+      };
+    }
+  });
+}
+/* ---------- Ficha de inscripción del alumno nuevo ----------
+   Enlace personal ?f=TOKEN: el alumno abre el formulario de su programa ya con su nombre.
+   Naranja: ficha pendiente · Dorado: ficha completa. */
+// 20 caracteres (el servidor acepta tokens de 16 a 40 letras y números).
+function nuevoTokenFicha(){ const a = new Uint8Array(20); crypto.getRandomValues(a); return Array.from(a, b => 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 56]).join(''); }
+function fichaMsg(nombre, prog, token, maestro){
+  const p = nomProgDe(prog);
+  return `Hola ${prettyName(nombre).split(' ')[0]} 👋\n${maestro ? 'Tu maestro(a) ' + prettyName(maestro) + ' te agregó' : 'Te agregamos'} a la clase de *${p}*.\nCompleta tu *ficha de inscripción* aquí 👇\n${appLink('f', token)}\nSolo toma un par de minutos.`;
+}
+function enviarFichaWa(cls, s, token, cel){ waOpen(fichaMsg(s.n, cls.meta.program, token, cls.meta.teacher), cel); }
+// Estado de la ficha de un alumno: 'pend' (naranja), 'ok' (dorado) o '' si no tiene.
+function fichaDe(cls, s){
+  if(s.fichaCel) return { st:'pend', token:s.fichaTok, whatsapp:s.fichaCel, local:true };
+  const f = (cls.fichas || {})[s.id]; if(!f) return null;
+  return Object.assign({ st: f.completa ? 'ok' : 'pend' }, f);
+}
+function fichaBadge(f){ return !f ? '' : f.st === 'ok' ? '<span class="badge b-oro">Ficha completa</span>' : '<span class="badge b-naranja">Ficha pendiente</span>'; }
+function haceCuanto(iso){
+  if(!iso) return '';
+  const d = Math.floor((Date.now() - Date.parse(iso)) / 86400000);
+  return d <= 0 ? 'hoy' : d === 1 ? 'ayer' : `hace ${d} días`;
+}
+// El maestro envía (o reenvía) el enlace de la ficha. Sirve también para alumnos nuevos agregados antes.
+function pedirFicha(cls, s){
+  const f = fichaDe(cls, s);
+  if(f && f.local){ enviarFichaWa(cls, s, f.token, f.whatsapp); return; }
+  if(f && f.st === 'ok'){ toast(`${prettyName(s.n)} ya completó su ficha ✓`, 'ok'); return; }
+  sheet(`${sheetHead(f ? 'Reenviar enlace de inscripción' : 'Enviar enlace de inscripción', esc(prettyName(s.n)))}
+    ${f && f.enviado_en ? `<p class="hint" style="margin-top:0">Último envío: ${esc(haceCuanto(f.enviado_en))}${f.envios > 1 ? ` · ${f.envios} envíos` : ''}. Aún no completa su ficha.</p>` : ''}
+    <form id="fpf" autocomplete="off"><div class="field"><label>WhatsApp del alumno <span class="req">*</span></label><input name="whatsapp" type="tel" inputmode="tel" placeholder="Ej. 987 654 321" value="${esc((f && f.whatsapp) || '')}"></div></form>
+    <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">${ICON.chat} Enviar por WhatsApp</button></div>`, {
+    onMount(el, close){
+      const i = $('[name=whatsapp]', el); setTimeout(() => i.focus(), 250);
+      $('#fpf', el).onsubmit = e => { e.preventDefault(); $('#ok', el).click(); };
+      $('#ok', el).onclick = async () => {
+        const cel = i.value.trim();
+        if(!normPhone(cel)){ i.closest('.field').classList.add('err'); toast('Escribe el WhatsApp del alumno (9 dígitos)', 'error'); return; }
+        const token = (f && f.token) || nuevoTokenFicha();
+        enviarFichaWa(cls, s, token, cel);
+        close();
+        // Si el alumno aún no subió al servidor, la ficha se crea al sincronizar.
+        if((cls.dirty || {})['students/' + s.id]){ s.fichaCel = cel; s.fichaTok = token; saveClasses(); queueSync(); renderStuList(); return; }
+        try{
+          const r = await SB.rpc('preinscribir_alumno', { alumno:s.id, celular:cel, token });
+          (cls.fichas = cls.fichas || {})[s.id] = Object.assign({}, f || {}, { token:r.token, whatsapp:cel, completa:!!r.completa, enviado_en:new Date().toISOString(), envios:((f && f.envios) || 0) + 1 });
+          saveClasses(); renderStuList();
+          if(r.token !== token) toast('Este alumno ya tenía otro enlace: toca otra vez “Enviar enlace” para mandarle el correcto.', 'warn', { ms:5000 });
+        }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
       };
     }
   });
@@ -4847,6 +4985,9 @@ if(qrcTok){ history.replaceState(null, '', location.pathname + '#/qrc/' + qrcTok
 // Enlace de inscripción: ?i=TOKEN abre la inscripción en Seminario o Instituto.
 const inscTok = (params.get('i') || '').replace(/[^A-Za-z0-9_-]/g, '');
 if(inscTok){ history.replaceState(null, '', location.pathname + '#/insc/' + inscTok); }
+// Ficha del alumno nuevo: ?f=TOKEN abre su formulario de inscripción (enlace personal que envía el maestro).
+const fichaTok = (params.get('f') || '').replace(/[^A-Za-z0-9_-]/g, '');
+if(fichaTok){ history.replaceState(null, '', location.pathname + '#/ficha/' + fichaTok); }
 SB.init();
 route();
 if(deep) openByCode(deep, deepMeta);
