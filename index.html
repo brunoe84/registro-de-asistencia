@@ -330,6 +330,15 @@ svg{width:18px;height:18px;flex-shrink:0}
 .pf-btn.p.on{background:var(--green);border-color:var(--green);color:#fff}
 .pf-btn.f.on{background:var(--red);border-color:var(--red);color:#fff}
 @media(max-width:470px){.pf-btn span{display:none}.pf-btn{padding:10px 12px}}
+/* Marcar todo lo que esté sin marcar */
+.fill-blank{display:flex;align-items:center;justify-content:flex-end;gap:8px 12px;flex-wrap:wrap;margin:0 0 12px}
+.fill-blank .fb-l{color:var(--teal-2);font-size:13.5px;font-weight:600}
+.fill-blank .fb-l small{color:var(--muted);font-weight:600}
+.fb-opts{display:flex;gap:6px}
+.fb-btn{display:inline-flex;align-items:center;gap:6px;border:1.5px solid;border-radius:10px;padding:7px 12px;font-weight:700;font-size:13px;background:#fff}
+.fb-btn svg{width:16px;height:16px}
+.fb-btn.p{border-color:var(--green);color:var(--green)}.fb-btn.p:hover{background:var(--green-50)}
+.fb-btn.f{border-color:var(--red);color:var(--red)}.fb-btn.f:hover{background:var(--red-50)}
 
 /* ---------- Planilla ---------- */
 .plan-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
@@ -389,6 +398,7 @@ table.plan{border-collapse:separate;border-spacing:0;font-size:13px;min-width:10
 .wide~.savebar .sb-in{max-width:1100px}
 .sb-status{flex:1;font-size:12.5px;color:var(--muted);line-height:1.3;min-width:0;text-align:right}
 .sb-status b{display:block;color:var(--navy);font-size:13.5px}
+.sb-status small{font-size:inherit}
 .savebar .btn{padding:13px 18px}
 .savebar .btn.has-pending{background:var(--gold);border-color:var(--gold);color:var(--navy)}
 
@@ -472,6 +482,49 @@ ol.steps li{margin-bottom:5px}
 @keyframes puertaI{0%,12%{transform:rotateY(0)}48%,68%{transform:rotateY(-78deg)}100%{transform:rotateY(0)}}
 @keyframes puertaD{0%,12%{transform:rotateY(0)}48%,68%{transform:rotateY(78deg)}100%{transform:rotateY(0)}}
 @media (prefers-reduced-motion:reduce){.doors i{animation:none}}
+
+/* ---------- iPhone ---------- */
+/* iOS agranda el texto por su cuenta al girar el celular; aquí se respeta el tamaño definido. */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+/* Safari de iPhone hace zoom al tocar un campo con letra menor a 16px y no vuelve atrás: todo queda "agrandado". */
+@media (pointer:coarse){input,select,textarea,.inp,.date-mini{font-size:16px!important}}
+/* Pantallas angostas (iPhone con "Zoom de pantalla: Texto más grande" queda en 320–375px):
+   menos margen y relleno para que el contenido tenga el espacio, sin achicar la letra. */
+@media (max-width:400px){
+  .wrap{padding:12px 10px 32px}
+  .top-in{padding:0 10px;gap:8px}
+  .card{padding:14px 12px}
+  .section{margin-top:16px}
+  .btn{padding:10px 12px}
+  .btn.sm{padding:7px 9px}
+  .btn-row{gap:8px}
+  .btn-row>.btn{flex-basis:120px}
+  .item,.person{gap:9px;padding:10px}
+  .roll-item,.att-item{gap:8px;padding:8px}
+  .av{width:34px;height:34px;font-size:12.5px}
+  .item .ico{width:34px;height:34px}
+  .pf{gap:4px}
+  .pf-btn{padding:9px 10px}
+  .eh-main{gap:10px}
+  .counter{min-width:0;padding:6px 10px}
+  .counter b{font-size:22px}
+  .counter span{white-space:nowrap;font-size:11px}
+  .code-row .hint{min-width:0;flex-basis:100%}
+  .tabs{margin:10px 0}
+  .pend-box{padding:10px 12px}
+  .date-nav{padding:8px;gap:6px}
+  .savebar{padding:8px 10px calc(8px + env(safe-area-inset-bottom))}
+  .savebar .btn{padding:12px 14px}
+  .sb-status small{display:none}
+  .sheet{padding-left:12px;padding-right:12px}
+  .search-box input{padding:13px 42px;font-size:16px}
+  .search-box .si{left:13px}
+  .fill-blank{justify-content:flex-start}
+  .fill-blank .fb-l{flex-basis:100%}
+  .fb-opts{flex:1}.fb-btn{flex:1;justify-content:center}
+  .cal-stats{gap:5px}
+  .cal-months{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -2175,10 +2228,10 @@ function paintSync(){
   $('.lbl', pill).textContent = lbl;
   const sb = $('#sbStatus'), btn = $('#saveBtn');
   if(sb){
-    if(!online) sb.innerHTML = `<b>Guardado en este celular</b>Al terminar, envía la asistencia`;
-    else if(pending) sb.innerHTML = `<b>${pending} cambio${pending>1?'s':''} sin enviar</b>Toca “Guardar asistencia”`;
+    if(!online) sb.innerHTML = `<b>Guardado en este celular</b><small>Al terminar, envía la asistencia</small>`;
+    else if(pending) sb.innerHTML = `<b>${pending} cambio${pending>1?'s':''} sin enviar</b><small>Toca “Guardar asistencia”</small>`;
     else if(SYNC_STATE.s === 'syncing') sb.innerHTML = `<b>Sincronizando…</b>`;
-    else sb.innerHTML = `<b>Todo sincronizado</b>${SYNC_STATE.at ? 'Última vez '+fmtTime(SYNC_STATE.at) : ''}`;
+    else sb.innerHTML = `<b>Todo sincronizado</b>${SYNC_STATE.at ? '<small>Última vez '+fmtTime(SYNC_STATE.at)+'</small>' : ''}`;
   }
   if(btn) btn.classList.toggle('has-pending', pending > 0);
 }
@@ -3602,6 +3655,24 @@ function defaultClassDate(dates){
   const past = dates.filter(d => d <= t);
   return past.length ? past[past.length-1] : (dates[0] || t);
 }
+/* "Marcar todo lo que esté sin marcar" (como en Wise): llena solo las casillas vacías con Presente o Ausente.
+   Lo que ya estaba marcado no se toca. cells() devuelve las casillas vacías [[fecha, alumno], …]. */
+function fillBlankHTML(n){
+  return `<div class="fill-blank ${n ? '' : 'hide'}"><span class="fb-l">Marcar todo lo que esté sin marcar <small>(<span class="fb-n">${n}</span>)</small></span><span class="fb-opts"><button class="fb-btn p" data-fb="P">${CAL_OK}<span>Presente</span></button><button class="fb-btn f" data-fb="F">${CAL_NO}<span>Ausente</span></button></span></div>`;
+}
+function bindFillBlank(root, cls, cells, after){
+  $$('[data-fb]', root).forEach(b => b.onclick = () => {
+    const v = b.dataset.fb; const list = cells();
+    if(!list.length){ toast('No hay casillas sin marcar'); return; }
+    list.forEach(([d, sid]) => setAtt(cls, d, sid, v, true));
+    saveClasses(); queueSync(); after();
+    const n = list.length;
+    toast(`${n} casilla${n>1?'s':''} marcada${n>1?'s':''} como “${v === 'P' ? 'Presente' : 'Ausente'}”`, 'ok', { action:'Deshacer', onAction: () => {
+      list.forEach(([d, sid]) => { if((cls.att[d]||{})[sid] === v) setAtt(cls, d, sid, '', true); });
+      saveClasses(); queueSync(); after();
+    } });
+  });
+}
 function renderClassTab(){
   const cls = CLASSES[CUR.code]; const body = $('#tabBody'); if(!cls || !body) return;
   const ro = !cls.canEdit;
@@ -3627,9 +3698,10 @@ function renderClassTab(){
         <button class="icon-btn" id="dNext" ${idx>=dates.length-1?'disabled style="opacity:.35"':''} aria-label="Sesión siguiente">${ICON.next}</button></div>
       <div class="date-tools">
         <label class="hint" style="display:flex;align-items:center;gap:6px">${ICON.cal}<input type="date" class="date-mini" id="dPick" value="${d}" max="${todayISO()}"></label>
-        ${ro ? '' : `<button class="btn sm" id="allP">${ICON.check} Todos presentes</button>${P && P + F < studs.length ? `<button class="btn sm" id="restF">${ICON.x} Resto como falta</button>` : ''}<button class="btn sm ghost" id="clr">Limpiar</button>`}
+        ${ro ? '' : `<button class="btn sm ghost ${P + F ? '' : 'hide'}" id="clr">Limpiar</button>`}
         <span class="tally"><span style="color:var(--green)">✓ ${P}</span> · <span style="color:var(--red)">✗ ${F}</span> · ${studs.length - P - F} sin marcar</span>
       </div>
+      ${ro ? '' : fillBlankHTML(studs.filter(s => !att[s.id]).length)}
       <div class="roll" id="roll">${studs.map(s => {
         const v = att[s.id] || '';
         return `<div class="roll-item ${ATT_OK(v)?'p':v==='F'?'f':''}" data-sid="${s.id}"><span class="av">${esc(initials(s.n))}</span><div class="ri"><b>${esc(prettyName(s.n))}</b><small>${esc(stuSub(s))}${attNote(v)}</small></div>
@@ -3641,7 +3713,6 @@ function renderClassTab(){
     if(idx < dates.length-1 && idx >= 0) dn.onclick = () => { ST.classDate = dates[idx+1]; renderClassTab(); };
     const pf = $('#pFirst'); if(pf) pf.onclick = () => { ST.classDate = pending[0]; renderClassTab(); };
     const pn = $('#pNext'); if(pn) pn.onclick = () => { ST.classDate = nextPend; renderClassTab(); };
-    const rf = $('#restF'); if(rf) rf.onclick = () => { studs.forEach(s => { if(!(cls.att[d]||{})[s.id]) setAtt(cls, d, s.id, 'F', true); }); saveClasses(); queueSync(); renderClassTab(); };
     $('#dPick').onchange = e => {
       const v = e.target.value; if(!v) return;
       const why = blockedReason(v);
@@ -3655,7 +3726,7 @@ function renderClassTab(){
       ST.classDate = v; renderClassTab();
     };
     if(!ro){
-      $('#allP').onclick = () => { studs.forEach(s => setAtt(cls, d, s.id, 'P', true)); saveClasses(); queueSync(); renderClassTab(); };
+      bindFillBlank(body, cls, () => studs.filter(s => !(cls.att[d]||{})[s.id]).map(s => [d, s.id]), () => { if(CUR.code === cls.code && ST.ctab === 'hoy') renderClassTab(); });
       $('#clr').onclick = async () => { if(!(await confirmBox('Se borrarán las marcas de esta fecha.', {title:'Limpiar fecha', ok:'Limpiar', danger:true}))) return; studs.forEach(s => setAtt(cls, d, s.id, '', true)); saveClasses(); queueSync(); renderClassTab(); };
       $$('#roll .roll-item').forEach(it => {
         const sid = it.dataset.sid;
@@ -3703,6 +3774,8 @@ function refreshRoll(cls, d){
   $$('#roll .roll-item').forEach(it => { const v = att[it.dataset.sid] || ''; it.classList.toggle('p', ATT_OK(v)); it.classList.toggle('f', v==='F'); $('.pf-btn.p', it).classList.toggle('on', ATT_OK(v)); $('.pf-btn.f', it).classList.toggle('on', v==='F'); });
   const P = studs.filter(s => ATT_OK(att[s.id])).length, F = studs.filter(s => att[s.id] === 'F').length;
   const t = $('.tally'); if(t) t.innerHTML = `<span style="color:var(--green)">✓ ${P}</span> · <span style="color:var(--red)">✗ ${F}</span> · ${studs.length - P - F} sin marcar`;
+  const fb = $('#tabBody .fill-blank'); if(fb){ const n = studs.filter(s => !att[s.id]).length; $('.fb-n', fb).textContent = n; fb.classList.toggle('hide', !n); }
+  const clr = $('#clr'); if(clr) clr.classList.toggle('hide', !(P + F));
 }
 function renderClassSearch(cls){
   if(cls.remote) return renderRemoteClassSearch(cls);
@@ -3810,6 +3883,7 @@ function openStudentCal(cls, sid, onClose){
         box.innerHTML = `<div class="sh-head"><div style="display:flex;gap:12px;align-items:center;min-width:0"><span class="av" style="width:48px;height:48px">${esc(initials(s.n))}</span><div style="min-width:0"><h3>${esc(prettyName(s.n))} ${s.src==='nuevo'?'<span class="badge b-new">Nuevo</span>':''}</h3><p>${esc([d0.w, d0.k, progLabel(cls.meta.program)].filter(Boolean).join(' · '))} · <button class="link-btn" id="calInfo">Ver datos</button></p></div></div><button class="icon-btn" data-close aria-label="Cerrar">${ICON.x}</button></div>
           <div class="cal-stats"><div><b>${P}/${T}</b><span>Asistencia</span></div><div><b>${pct === '' ? '—' : pct+'%'}</b><span>Porcentaje</span></div><div><b>${F}</b><span>Faltas</span></div><div><b>${T - P - F}</b><span>Sin marcar</span></div></div>
           <div class="cal-legend"><span><i class="lgd p"></i>Asistió</span><span><i class="lgd f"></i>Falta</span><span><i class="lgd e"></i>Sin marcar</span><span><i class="lgd h"></i>Feriado</span>${ro ? '<span class="badge b-ro">Solo lectura</span>' : '<span class="hint">Toca un día para cambiarlo</span>'}</div>
+          ${ro ? '' : fillBlankHTML(T - P - F)}
           <div class="cal-months">${months.map(monthHTML).join('') || '<div class="empty">La clase aún no tiene días de clase.</div>'}</div>
           <div class="sh-foot"><button class="btn" id="calPrev" ${i<=0?'disabled':''}>${ICON.back} Anterior</button><button class="btn primary" id="calNext" ${i>=studs.length-1?'disabled':''}>Siguiente alumno ${ICON.next}</button></div>`;
         $$('[data-close]', box).forEach(b => b.onclick = close);
@@ -3817,6 +3891,7 @@ function openStudentCal(cls, sid, onClose){
         $('#calPrev', box).onclick = () => { i--; render(); el.scrollTop = 0; };
         $('#calNext', box).onclick = () => { i++; render(); el.scrollTop = 0; };
         if(!ro){
+          bindFillBlank(box, cls, () => dates.filter(d => !(cls.att[d]||{})[s.id]).map(d => [d, s.id]), () => { if(box.isConnected){ const tp = el.scrollTop; render(); el.scrollTop = tp; } });
           $$('.cal-d', box).forEach(b => b.onclick = () => {
             const d = b.dataset.d; const v = (cls.att[d]||{})[s.id] || '';
             setAtt(cls, d, s.id, v === '' ? 'P' : ATT_OK(v) ? 'F' : '');
@@ -3872,13 +3947,16 @@ function renderPlanilla(cls, body){
   const mLabel = k => { const [y,m] = k.split('-'); return MES_L[+m-1][0].toUpperCase()+MES_L[+m-1].slice(1)+' '+y; };
   if(!studs.length){ body.innerHTML = '<div class="empty">Agrega alumnos para ver la planilla.</div>'; return; }
   const t = todayISO();
+  const blanks = () => ds.flatMap(d => studs.filter(s => !(cls.att[d]||{})[s.id]).map(s => [d, s.id]));
   body.innerHTML = `<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}</span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
+    ${ro || !ds.length ? '' : fillBlankHTML(blanks().length)}
     ${ds.length ? `<div class="plan-wrap"><table class="plan ${ro?'ro':''}" id="plan"><thead><tr><th class="sticky">Alumno</th>${ds.map(d => `<th class="${d===t?'today':''}${wks.has(d)?' wk':''}"><span>${DOW[parseISO(d).getDay()]}</span>${fmtShort(d)}</th>`).join('')}<th>%</th></tr></thead>
       <tbody>${studs.map(s => { const st = studentStats(cls, s.id, ds); return `<tr data-sid="${s.id}"><td class="sticky" title="${esc(prettyName(s.n))}">${esc(prettyName(s.n))}</td>${ds.map(d => { const v = (cls.att[d]||{})[s.id] || ''; return `<td class="cell ${ATT_OK(v)?'p':v==='F'?'f':''}${wks.has(d)?' wk':''}" data-d="${d}">${ATT_TXT[v]||''}</td>`; }).join('')}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')}</tbody>
       <tfoot><tr><td class="sticky">Asistentes</td>${ds.map(d => `<td data-foot="${d}"${wks.has(d)?' class="wk"':''}>${studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length}</td>`).join('')}<td></td></tr></tfoot></table></div>` : '<div class="empty">No hay sesiones en este periodo.</div>'}`;
   $('#pm').onchange = e => { ST.planMonth = e.target.value; renderPlanilla(cls, body); };
   $('#pX').onclick = () => exportClass(cls, false);
   $('#pP').onclick = () => exportClassHtml(cls, true);
+  if(!ro) bindFillBlank(body, cls, blanks, () => { if(body.isConnected && $('#plan', body)) renderPlanilla(cls, body); });
   if(ds.length) $('#plan tbody').onclick = e => {
     const nm = e.target.closest('td.sticky');
     if(nm){ openStudentCal(cls, nm.parentElement.dataset.sid, () => renderPlanilla(cls, body)); return; }
@@ -3891,6 +3969,7 @@ function renderPlanilla(cls, body){
     td.classList.toggle('p', ATT_OK(nv)); td.classList.toggle('f', nv==='F'); td.textContent = ATT_TXT[nv]||'';
     const st = studentStats(cls, sid, ds); $('td.pct', td.parentElement).textContent = st.pct === '' ? '—' : st.pct+'%';
     const ft = $(`[data-foot="${d}"]`); if(ft) ft.textContent = studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length;
+    const fb = $('.fill-blank', body); if(fb){ const n = blanks().length; $('.fb-n', fb).textContent = n; fb.classList.toggle('hide', !n); }
   };
 }
 function renderClassShare(cls, body){
