@@ -3550,8 +3550,77 @@ function renderClasses(){
   $('#findCl').onsubmit = e => { e.preventDefault(); const c = normCode($('#clCode').value); if(!c || !c.startsWith('CL')){ toast('Código de clase no válido (CL-XXXXX)','error'); return; } openClass(c); };
   $('#impBk').onclick = importBackupPicker;
 }
+/* Datos de una clase en línea: los edita el administrador o el maestro que la adoptó
+   (titular o su otro dispositivo). Los colaboradores no. */
+function puedeEditarDatos(cls){
+  if(!cls || !cls.remote || !SB.on()) return false;
+  if(SB.admin) return true;
+  const mia = (SB.mis||[]).find(x => x.codigo === cls.code);
+  return !!(mia && (mia.tipo === 'titular' || mia.tipo === 'dispositivo'));
+}
+function renderRemoteClassForm(cls){
+  const code = cls.code;
+  if(!puedeEditarDatos(cls) || !cls.dbId){ go('#/clase/'+code); return; }
+  CUR = { type:'class-form', code };
+  const m = cls.meta;
+  const autoTit = (p, curso, hor) => p === 'I' ? curso : [curso, hor].filter(Boolean).join(' · ');
+  let titTouched = !!m.title && m.title !== autoTit(m.program, m.curso || '', m.horario || '');
+  app.innerHTML = topbar({ back:'#/clase/'+code, title:'Editar datos de la clase', sub:prettyName(m.teacher) }) + `<main class="wrap">
+    <form class="card" id="rcForm" autocomplete="off">
+      <div class="field"><label>Programa</label><div class="seg big" id="prog"><button type="button" data-p="S" class="${m.program==='S'?'on':''}">Seminario</button><button type="button" data-p="I" class="${m.program==='I'?'on':''}">Instituto</button></div></div>
+      <div class="row2">
+        <div class="field"><label>Curso</label><input id="rCurso" maxlength="80" placeholder="Ej. Old Testament" value="${esc(m.curso||'')}"></div>
+        <div class="field"><label>Horario</label><input id="rHor" maxlength="40" placeholder="Ej. 06:00 am" value="${esc(m.horario||'')}"></div>
+      </div>
+      <div class="field"><label>Nombre de la clase <span class="req">*</span></label><input id="rTit" maxlength="80" value="${esc(m.title||'')}"><small class="hint">Se arma solo con el curso y el horario; puedes cambiarlo.</small></div>
+      <div class="field"><label>Nombre del maestro <span class="req">*</span></label><input id="rMae" maxlength="60" value="${esc(m.teacher||'')}"></div>
+      <div class="row2">${swFields(m.stake, m.ward, 'r', { req:true, allWards:'Sin barrio' })}</div>
+      <div class="field"><label>Días de clase <span class="req">*</span></label><div class="chips" id="rDays">${[1,2,3,4,5,6].map(d => `<button type="button" class="chip ${(m.days||[]).includes(d)?'on':''}" data-d="${d}">${DOW_L[d][0].toUpperCase()+DOW_L[d].slice(1,3)}</button>`).join('')}</div><small class="hint">Los domingos y feriados no se marcan. La asistencia ya marcada no se borra.</small></div>
+      <div class="row2">
+        <div class="field"><label>Inicio de clases</label><input type="date" id="rIni" value="${esc(m.start||'')}"></div>
+        <div class="field"><label>Fin de clases</label><input type="date" id="rFin" value="${esc(m.end||'')}"></div>
+      </div>
+      <button type="submit" class="btn primary lg block">${ICON.save} Guardar cambios</button>
+    </form>
+  </main>`;
+  bindTop();
+  const f = $('#rcForm');
+  bindSW(f, 'r', m.ward);
+  let prog = m.program;
+  const retit = () => { if(!titTouched) $('#rTit', f).value = autoTit(prog, $('#rCurso', f).value.trim(), $('#rHor', f).value.trim()); };
+  $$('#prog button', f).forEach(b => b.onclick = () => { prog = b.dataset.p; $$('#prog button', f).forEach(x => x.classList.toggle('on', x === b)); retit(); });
+  $('#rCurso', f).oninput = retit; $('#rHor', f).oninput = retit;
+  $('#rTit', f).oninput = () => { titTouched = true; };
+  $$('#rDays .chip', f).forEach(c => c.onclick = () => c.classList.toggle('on'));
+  f.onsubmit = async e => {
+    e.preventDefault();
+    $$('.field', f).forEach(x => x.classList.remove('err'));
+    const bad = (sel, msg) => { $(sel, f).closest('.field').classList.add('err'); toast(msg, 'error'); };
+    const sw = readSW(f, 'r');
+    const datos = { titulo:$('#rTit', f).value.trim(), maestro:$('#rMae', f).value.trim(), curso:$('#rCurso', f).value.trim(), horario:$('#rHor', f).value.trim(),
+      programa:prog, estaca:sw.stake, barrio:sw.ward, dias:$$('#rDays .chip.on', f).map(c => +c.dataset.d), inicio:$('#rIni', f).value, fin:$('#rFin', f).value };
+    if(!datos.titulo) return bad('#rTit', 'Escribe el nombre de la clase');
+    if(!datos.maestro) return bad('#rMae', 'Escribe el nombre del maestro');
+    if(!datos.estaca) return bad('#rStake', 'Elige la estaca');
+    if(!datos.dias.length) return toast('Elige al menos un día de clase', 'error');
+    if(datos.inicio && datos.fin && datos.fin < datos.inicio) return bad('#rFin', 'El fin no puede ser antes del inicio');
+    const btn = $('button[type=submit]', f); btn.disabled = true;
+    try{
+      await SB.ensureSession();
+      // Si había cambios de calendario sin enviar (fechas extra u omitidas), van primero.
+      if(classPendingCount(cls)) await pushRemoteClass(cls);
+      await SB.rpc('editar_datos_clase', { clase:cls.dbId, datos });
+    }catch(err){ console.error(err); btn.disabled = false; toast(errMsg(err), 'error'); return; }
+    Object.assign(cls.meta, { title:datos.titulo, teacher:datos.maestro, curso:datos.curso, horario:datos.horario, program:prog, stake:datos.estaca, ward:datos.barrio, days:datos.dias, start:datos.inicio || cls.meta.start, end:datos.fin || cls.meta.end });
+    saveClasses();
+    try{ SB.mis = await SB.rpc('mis_clases'); }catch(err){ console.warn(err); }
+    toast('Datos de la clase actualizados', 'ok');
+    go('#/clase/'+code);
+  };
+}
 function renderClassForm(code){
   const cls = code ? CLASSES[code] : null;
+  if(cls && cls.remote) return renderRemoteClassForm(cls);
   if(cls && SB.on() && !cls.remote && !SB.admin && cls.canEdit !== false) return renderClaseLocalBloqueada(cls);
   if(code && (!cls || !cls.canEdit)){ go(code ? '#/clase/'+code : '#/clases'); return; }
   CUR = { type:'class-form', code };
@@ -3641,7 +3710,7 @@ function renderClass(code){
       <div class="eh-main"><div style="min-width:0"><span class="badge ${m.program==='S'?'b-sem':'b-inst'}">${progLabel(m.program)}</span> ${cls.canEdit ? '' : '<span class="badge b-ro">'+ICON.lock.replace('<svg','<svg style="width:12px;height:12px"')+' Solo lectura</span>'}
         <h1 style="margin-top:6px">${esc(m.title)}</h1><p class="meta">Maestro: <b>${esc(cls.remote ? prettyName(m.teacher) : m.teacher)}</b>${m.stake ? ' · '+esc(m.ward || (cls.remote ? stakeShort(m.stake) : m.stake)) : ''} · ${esc(daysTxt)}</p></div>
       <div class="counter"><b id="clCount">0</b><span>alumnos</span></div></div>
-      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button>${cls.remote ? '<span class="hint">Los cambios se guardan en línea.</span>' : cls.canEdit ? '<span class="hint">Código para encontrar la clase y descargar la asistencia.</span>' : `<button class="btn sm" id="unlock">${ICON.lock} Soy el maestro · ingresar PIN</button>`}</div>
+      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button>${cls.remote ? '<span class="hint">Los cambios se guardan en línea.</span>' : cls.canEdit ? '<span class="hint">Código para encontrar la clase y descargar la asistencia.</span>' : `<button class="btn sm" id="unlock">${ICON.lock} Soy el maestro · ingresar PIN</button>`}${puedeEditarDatos(cls) ? `<button class="btn sm" data-go="#/clase/${code}/editar" style="margin-left:auto">${ICON.edit} Editar datos</button>` : ''}</div>
       ${cls.remote && SB.admin ? '<div id="accBox"></div>' : ''}
     </section>
     ${cls.remote ? '<div id="aprobBox"></div>' : ''}
