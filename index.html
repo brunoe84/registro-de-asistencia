@@ -537,6 +537,30 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .cal-stats{gap:5px}
   .cal-months{grid-template-columns:1fr}
 }
+/* Primera vez: ¿quién eres?, parpadeo de la zona donde trabajar y guía de uso */
+.ident-opts{display:grid;gap:10px;position:relative;z-index:1}
+.ident-op{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:rgba(255,255,255,.1);border:1.5px solid rgba(255,255,255,.22);color:#fff;border-radius:16px;padding:13px 14px;font:inherit;cursor:pointer}
+.ident-op:hover,.ident-op:focus-visible{background:rgba(255,255,255,.17);border-color:var(--gold)}
+.ident-op .io-ico{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:var(--gold);color:var(--navy);flex-shrink:0}
+.ident-op .io-ico svg{width:22px;height:22px}
+.ident-op b{display:block;font-size:15.5px}
+.ident-op small{display:block;color:#C8D8E2;font-size:12.5px;margin-top:1px}
+.ident-op .io-go{margin-left:auto;opacity:.7}
+.rol-chg{background:none;border:0;color:#C8D8E2;text-decoration:underline;font:inherit;font-size:12.5px;padding:0;margin-top:10px;cursor:pointer;position:relative;z-index:1}
+.blink2{animation:blink2 .7s ease-in-out 2}
+@keyframes blink2{50%{box-shadow:0 0 0 4px var(--gold),0 0 26px rgba(215,154,40,.6);background-color:var(--gold-50)}}
+#colabZona{border-radius:20px}
+.guia-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.guia-list li{display:flex;gap:12px;align-items:flex-start;background:#F7FAFB;border:1px solid var(--border);border-radius:14px;padding:11px 12px}
+.guia-list .gn{width:30px;height:30px;border-radius:50%;background:var(--navy);color:#fff;display:grid;place-items:center;font:800 13px 'Manrope';flex-shrink:0}
+.guia-list b{display:block;color:var(--navy);font-size:14px}
+.guia-list p{margin:2px 0 0;color:var(--muted);font-size:13px;line-height:1.45}
+.guia-list p b{display:inline;font-size:inherit}
+.sup-sel{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.sup-chip{display:inline-flex;align-items:center;gap:6px;background:var(--teal-50);border:1px solid #C5E1E1;color:#14545A;border-radius:999px;padding:5px 6px 5px 11px;font-size:12.5px;font-weight:700}
+.sup-chip button{border:0;background:#fff;border-radius:50%;width:22px;height:22px;display:grid;place-items:center;color:#14545A;cursor:pointer}
+.sup-chip button svg{width:12px;height:12px}
+@media (prefers-reduced-motion:reduce){.blink2{animation-duration:1.2s}}
 </style>
 </head>
 <body>
@@ -1298,10 +1322,19 @@ const SB = {
   stopWatch(){ this.watchers.forEach(ch => { try{ this.client.removeChannel(ch); }catch(e){} }); this.watchers = []; },
   watchGlobal(){
     if(this.global || !this.client || !this.client.channel) return;
+    // Un supervisor pide varias clases a la vez: se junta en un solo aviso.
+    let nuevas = [];
+    const avisar = debounce(() => {
+      const sup = nuevas.filter(r => r.rol === 'supervisor');
+      const n = nuevas.length; nuevas = [];
+      const s = sup[0];
+      toast(s ? `🔔 ${s.nombres} ${s.apellidos} (supervisor) pide acceso a ${sup.length} clase${sup.length===1?'':'s'}` : `🔔 Nueva${n>1?'s':''} solicitud${n>1?'es':''} de acceso a una clase`, 'warn', { action:'Ver', onAction: () => go('#/solicitudes'), ms:9000 });
+      this.loadCounts().then(() => { if(CUR.type === 'home') renderHome(); if(CUR.type === 'solicitudes') renderSolicitudes(); }).catch(()=>{});
+    }, 1200);
     this.global = this.client.channel('admin-notificaciones').on('postgres_changes', { event:'INSERT', schema:'public', table:'solicitudes_acceso' }, ev => {
       if(ev && ev.new && ev.new.estado && ev.new.estado !== 'pendiente') return;
-      toast('🔔 Nueva solicitud de acceso a una clase', 'warn', { action:'Ver', onAction: () => go('#/solicitudes'), ms:8000 });
-      this.loadCounts().then(() => { if(CUR.type === 'home') renderHome(); if(CUR.type === 'solicitudes') renderSolicitudes(); }).catch(()=>{});
+      nuevas.push((ev && ev.new) || {});
+      avisar();
     }).subscribe();
   },
   async signOut(){
@@ -1531,15 +1564,184 @@ async function desactivarPush(){
   toast('Recordatorios desactivados');
 }
 
+/* ---------- Primera vez: ¿quién eres? ---------- */
+/* Quien entra por primera vez (sin clases, eventos ni solicitudes) se identifica como maestro,
+   supervisor u otro (colaborador de evento o clase). Se guarda en el dispositivo (ca_rol). */
+const ADMIN_WA = '51939628275';
+const miRol = () => LS.get('ca_rol', '');
+const sinNada = () => !(SB.mis||[]).length && !(SB.solicitudes||[]).length && !Object.keys(EVENTS).length && !clasesLocales().length;
+const necesitaIdentificarse = () => SB.on() && !SB.admin && !miRol() && sinNada();
+const ROLES = {
+  maestro:{ ico:'book', t:'Soy Maestro', s:'Busco mi clase para tomar la asistencia',
+    intro:`<p>En tu <b>panel principal</b> vas a encontrar:</p><ul class="steps"><li><b>Tu clase</b>: tócala para tomar la asistencia, ver la planilla y agregar alumnos.</li><li><b>Avisos</b> si tu asistencia se atrasa más de una semana, y recordatorios al celular.</li><li><b>Check-in de evento</b> para devocionales y actividades.</li></ul><p class="hint">Ahora escribe tu nombre como maestro para encontrar tu clase y adoptarla.</p>`, ok:'Buscar mi clase' },
+  supervisor:{ ico:'eye', t:'Soy Supervisor', s:'Superviso una o varias clases',
+    intro:`<p>En tu <b>panel principal</b> vas a encontrar:</p><ul class="steps"><li><b>Las clases que supervisas</b>, cuando el administrador apruebe tu solicitud: su asistencia, planilla y alumnos.</li><li>El estado de tus <b>solicitudes de acceso</b>.</li><li><b>Check-in de evento</b> para devocionales y actividades.</li></ul><p class="hint">Ahora escribe tus datos y elige los maestros o clases que supervisas.</p>`, ok:'Continuar' },
+  otro:{ ico:'users', t:'Otro', s:'Colaborador de evento o clase',
+    intro:`<p>En tu <b>panel principal</b> vas a encontrar:</p><ul class="steps"><li><b>¿Te enviaron un código?</b> Pega ahí el código o el enlace (EV-… de un evento o CL-… de una clase) para ayudar a marcar.</li><li><b>Crear evento</b> si tú organizas la actividad.</li><li>Los eventos y clases en los que colaboras, para volver a entrar.</li></ul>`, ok:'Ir a ingresar el código' }
+};
+function identHTML(){
+  return `<section class="hero">
+      <h1>¡Bienvenido! ¿Quién eres?</h1>
+      <p>Cuéntanos cómo vas a usar la app para mostrarte lo que necesitas.</p>
+      <div class="ident-opts">${Object.entries(ROLES).map(([k, r]) => `<button class="ident-op" data-rol="${k}"><span class="io-ico">${ICON[r.ico]}</span><span><b>${r.t}</b><small>${r.s}</small></span><span class="io-go">${ICON.next}</span></button>`).join('')}</div>
+    </section>`;
+}
+/* Ya se identificó pero todavía no tiene clases: lo que le toca hacer según su rol. */
+function rolHeroHTML(){
+  const rol = miRol();
+  const cambiar = !(SB.mis||[]).length ? `<button class="rol-chg" id="rolChg">No soy ${rol === 'supervisor' ? 'supervisor' : rol === 'otro' ? 'colaborador' : 'maestro'} · cambiar</button>` : '';
+  if(rol === 'supervisor') return `<section class="hero enter-hero"><h1>Supervisa tus clases</h1><p>Pide acceso a las clases que supervisas. Aparecerán aquí cuando el administrador las apruebe.</p><button class="btn gold lg enter-btn" data-go="#/supervisor">${ICON.eye} Pedir acceso a mis clases</button><br>${cambiar}</section>`;
+  if(rol === 'otro') return `<section class="hero enter-hero"><h1>Colabora en un evento o clase</h1><p>Ingresa abajo el código que te enviaron o crea tu propio evento.</p><button class="btn gold lg enter-btn" id="toColab">${ICON.ticket} Ingresar código o crear evento</button><br>${cambiar}</section>`;
+  return `<section class="hero enter-hero">
+      <h1>Toma la asistencia de tu clase</h1>
+      <p>La primera vez escribe tu nombre y elige tu clase. Después la encontrarás aquí mismo.</p>
+      <button class="btn gold lg enter-btn" id="enterBtn">${ICON.book} Entrar a mi clase</button>${(SB.mis||[]).length ? '' : '<br>' + cambiar}
+    </section>`;
+}
+function elegirRol(rol){
+  const r = ROLES[rol]; if(!r) return;
+  sheet(`${sheetHead(r.t, r.s)}<div class="guia-intro">${r.intro}</div><div class="sh-foot"><button class="btn" data-close>Volver</button><button class="btn primary" id="rolOk">${esc(r.ok)}</button></div>`, {
+    onMount(el, close){
+      $('#rolOk', el).onclick = () => {
+        LS.set('ca_rol', rol); close();
+        if(rol === 'maestro') go('#/entrar');
+        else if(rol === 'supervisor') go('#/supervisor');
+        else { renderHome(true); irAColaborar(); }
+      };
+    }
+  });
+}
+/* Desliza la vista hasta un elemento y lo hace parpadear 2 veces: "aquí es donde trabajas". */
+function resaltar(el){
+  if(typeof el === 'string') el = $(el);
+  if(!el) return;
+  el.scrollIntoView({ behavior:'smooth', block:'center' });
+  el.classList.remove('blink2');
+  setTimeout(() => { void el.offsetWidth; el.classList.add('blink2'); }, 450);
+  setTimeout(() => el.classList.remove('blink2'), 2100);
+}
+function irAColaborar(){ setTimeout(() => resaltar('#colabZona'), 120); }
+/* Al adoptar una clase (o entrar a ella por primera vez desde este dispositivo) se vuelve al
+   inicio, se desliza hasta la clase y parpadea para indicar que ahí debe entrar. */
+let RESALTAR_CLASE = null, HOME_FRESCO = false;
+function resaltarClaseEnInicio(codigo){
+  RESALTAR_CLASE = codigo; HOME_FRESCO = true;
+  if(location.hash === '' || location.hash === '#/' || location.hash === '#') renderHome(true); else location.hash = '#/';
+}
+
+/* ---------- Supervisor: pide acceso a varias clases ---------- */
+function renderSupervisor(){
+  CUR = { type:'supervisor', code:null };
+  const yo = LS.get('ca_supervisor', {});
+  const parts = String(myName()).trim().split(/\s+/);
+  const sel = new Map();
+  app.innerHTML = topbar({ back:'#/', title:'Soy supervisor', sub:'Pide acceso a las clases que supervisas' }) + `<main class="wrap">
+    <section class="card" id="supDatos"><h2>${ICON.users} 1. Tus datos</h2>
+      <form id="supF" autocomplete="off">
+        <div class="row2"><div class="field"><label>Nombres <span class="req">*</span></label><input name="nombres" value="${esc(yo.nombres || parts[0] || '')}" autocapitalize="words"></div><div class="field"><label>Apellidos <span class="req">*</span></label><input name="apellidos" value="${esc(yo.apellidos || parts.slice(1).join(' '))}" autocapitalize="words"></div></div>
+        <div class="field"><label>Número de celular <span class="req">*</span></label><input name="celular" type="tel" inputmode="tel" placeholder="Ej. 987 654 321" value="${esc(yo.celular || '')}"></div>
+        <div class="row2"><div class="field"><label>Estaca <span class="req">*</span></label><select name="estaca"><option value="">Seleccionar…</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${s===yo.estaca?'selected':''}>${esc(stakeShort(s))}</option>`).join('')}</select></div><div class="field"><label>Barrio <span class="req">*</span></label><input name="barrio" autocapitalize="words" value="${esc(yo.barrio || '')}"></div></div>
+      </form></section>
+    <section class="card"><h2>${ICON.search} 2. Maestros o clases que supervisas</h2>
+      <p class="hint" style="margin-top:0">Escribe el nombre del maestro, el curso o el horario y toca <b>Agregar</b>. Puedes elegir varias clases.</p>
+      <div class="search-box"><span class="si">${ICON.search}</span><input id="supQ" type="search" placeholder="Nombre del maestro o curso…" autocomplete="off" spellcheck="false"></div>
+      <div id="supSel" class="sup-sel"></div>
+      <div id="supRes" class="results" style="margin-top:12px"></div>
+    </section>
+    <section class="card"><h2>${ICON.lock} 3. Enviar solicitud</h2>
+      <p class="hint" style="margin-top:0">Tu solicitud de acceso se enviará al <b>Administrador</b>. Cuando la apruebe, las clases aparecerán en tu panel principal.</p>
+      <button class="btn primary lg block" id="supGo">${ICON.chat} Notificar al Administrador</button>
+    </section></main>`;
+  bindTop();
+  const paintSel = () => {
+    $('#supSel').innerHTML = [...sel.values()].map(c => `<span class="sup-chip">${esc(prettyName(c.maestro))}${c.horario ? ' · '+esc(c.horario) : ''}<button data-quita="${c.id}" aria-label="Quitar">${ICON.x}</button></span>`).join('');
+    $$('[data-quita]').forEach(b => b.onclick = () => { sel.delete(b.dataset.quita); paintSel(); buscar(); });
+    $('#supGo').textContent = '';
+    $('#supGo').insertAdjacentHTML('beforeend', `${ICON.chat} Notificar al Administrador${sel.size ? ` (${sel.size} clase${sel.size===1?'':'s'})` : ''}`);
+  };
+  const q = $('#supQ');
+  const buscar = debounce(async () => {
+    const el = $('#supRes'); if(!el) return;
+    const txt = q.value;
+    if(norm(txt).length < 3){ el.innerHTML = '<p class="hint" style="margin:0 2px">Sigue escribiendo para ver las clases.</p>'; return; }
+    try{
+      await SB.ensureSession();
+      const list = await SB.rpc('buscar_clases_supervisor', { texto:txt });
+      if(q.value !== txt) return;
+      if(!list.length){ el.innerHTML = `<div class="empty-hint"><p>No encontramos esa clase</p><small>Prueba con el apellido del maestro o el nombre del curso.</small></div>`; return; }
+      el.innerHTML = list.map((c, i) => `<div class="person" style="cursor:default"><span class="av">${esc(initials(c.maestro))}</span><span class="pi"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}</small></span>${
+        c.tengo_acceso ? `<span class="badge b-ok">Ya tienes acceso</span>`
+        : c.solicitud_pendiente && !sel.has(c.id) ? `<span class="badge b-new">Solicitud enviada</span>`
+        : sel.has(c.id) ? `<button class="mk done" data-sq="${i}">${ICON.check} Agregada</button>`
+        : `<button class="mk add" data-sq="${i}">${ICON.plus} Agregar</button>`}</div>`).join('');
+      $$('[data-sq]', el).forEach(b => b.onclick = () => { const c = list[+b.dataset.sq]; if(sel.has(c.id)) sel.delete(c.id); else sel.set(c.id, c); paintSel(); buscar(); });
+    }catch(e){ console.error(e); el.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
+  }, 300);
+  q.oninput = buscar;
+  paintSel();
+  $('#supGo').onclick = async () => {
+    const f = $('#supF'); const v = {}; $$('[name]', f).forEach(i => v[i.name] = i.value.trim());
+    const miss = ['nombres','apellidos','celular','estaca','barrio'].filter(k => !v[k] || (k === 'celular' && v[k].replace(/\D/g,'').length < 9));
+    $$('.field', f).forEach(x => x.classList.remove('err'));
+    if(miss.length){ miss.forEach(k => $(`[name=${k}]`, f).closest('.field').classList.add('err')); toast('Completa tus datos (*). El celular debe tener 9 dígitos.', 'error'); resaltar('#supDatos'); return; }
+    if(!sel.size){ toast('Agrega al menos un maestro o clase que supervisas.', 'error'); resaltar(q.closest('.card')); q.focus(); return; }
+    const b = $('#supGo'); b.disabled = true;
+    try{
+      await SB.ensureSession();
+      const clases = [...sel.values()];
+      const r = await SB.rpc('solicitar_supervision', Object.assign({ clases:clases.map(c => c.id) }, v));
+      LS.set('ca_supervisor', v); LS.set('ca_rol', 'supervisor');
+      setMyName(`${v.nombres} ${v.apellidos}`);
+      SB.solicitudes = await SB.rpc('mis_solicitudes').catch(() => SB.solicitudes);
+      const msg = `Hola 👋 Soy *${v.nombres} ${v.apellidos}*, supervisor de Seminarios e Institutos (${stakeShort(v.estaca)} · ${v.barrio}). Cel: ${v.celular}.\nAcabo de pedir acceso en Check-in Asistencia a ${clases.length === 1 ? 'esta clase' : `estas ${clases.length} clases`}:\n${clases.map(c => `• ${prettyName(c.maestro)} · ${[progLabel(c.programa), stakeShort(c.estaca), c.horario].filter(Boolean).join(' · ')}`).join('\n')}\n\nPor favor, revisa mi solicitud en *Solicitudes de acceso*. ¡Gracias!`;
+      const wa = 'https://wa.me/' + ADMIN_WA + '?text=' + encodeURIComponent(msg);
+      // En el celular se abre WhatsApp en la misma pestaña (Safari bloquea ventanas abiertas después de esperar al servidor).
+      if(matchMedia('(pointer:coarse)').matches) setTimeout(() => { location.href = wa; }, 900); else window.open(wa, '_blank');
+      toast(`✓ Solicitud enviada al administrador${r && r.ya_tenia ? ` · ya tenías acceso a ${r.ya_tenia}` : ''}`, 'ok', { ms:5000 });
+      app.querySelector('main').innerHTML = `<section class="card"><div class="pend-box ok"><div><b>✓ Solicitud enviada al Administrador</b><small>${r ? r.enviadas : clases.length} clase${(r ? r.enviadas : clases.length) === 1 ? '' : 's'}. Ya le llegó el aviso en su panel. Cuando la apruebe, las clases aparecerán en tu panel principal.</small></div></div>
+        <p class="hint">Si no se abrió WhatsApp, toca el botón para enviarle el mensaje al administrador (+51 939 628 275).</p>
+        <div class="btn-row"><a class="btn primary" href="${esc(wa)}" target="_blank" rel="noopener">${ICON.chat} Enviar WhatsApp al Administrador</a><button class="btn" data-go="#/">Ir a mi panel</button></div></section>`;
+      bindTop();
+    }catch(e){ console.error(e); toast(errMsg(e), 'error'); b.disabled = false; }
+  };
+}
+
+/* ---------- Guía de uso de una clase o un evento (se muestra sola la primera vez) ---------- */
+const GUIAS = {
+  clase:{ t:'Cómo usar tu clase', pasos:[
+    ['Agrega a tus alumnos', 'Pestaña <b>Alumnos</b>: busca su nombre en la base y tócalo. Si no aparece, toca <b>Alumno nuevo</b> y escribe su WhatsApp para enviarle su ficha de inscripción.'],
+    ['Pon la asistencia', 'Pestaña <b>Asistencia</b>: elige la fecha y toca ✓ <b>Presente</b> o ✗ <b>Ausente</b> en cada alumno. <b>Marcar todo lo que esté sin marcar</b> llena solo los vacíos. Al terminar toca <b>Guardar asistencia</b> (abajo).'],
+    ['Revisa la planilla', 'Pestaña <b>Planilla</b>: todas las fechas del mes. Toca una casilla para corregirla o el nombre de un alumno para ver su calendario.'],
+    ['Que los alumnos se registren con el QR', 'Pestaña <b>Compartir</b> → <b>Crear QR de la clase</b>. Muéstralo en pantalla o descárgalo e imprímelo. El día de clase los alumnos lo escanean, eligen su nombre y envían. Arriba te aparece <b>asistencias por QR por aprobar</b>: confirma quiénes vinieron.'],
+    ['Comparte la clase para que alguien colabore', 'Pestaña <b>Compartir</b> → <b>Invitar a un colaborador</b>: elige por cuánto tiempo y toca <b>Enviar invitación</b>. El código sirve para una sola persona. (Solo lo ve el maestro de la clase.)'],
+    ['Envía tu asistencia', 'Pestaña <b>Compartir</b>: <b>Enviar asistencia</b>, descarga el reporte o el Excel, o manda el resumen del día por WhatsApp.'],
+    ['Recordatorios', 'En tu panel principal activa los <b>recordatorios</b>: te avisamos si tu asistencia se atrasa más de una semana.']
+  ]},
+  evento:{ t:'Cómo usar tu evento', pasos:[
+    ['Marca a los que llegan', 'Pestaña <b>Marcar</b>: escribe el nombre o apellido y toca a la persona. Elige si buscas en el barrio, la estaca o toda la base. Si no aparece, toca <b>¿No aparece en la lista?</b> y registra sus datos.'],
+    ['Mira la lista', 'Pestaña <b>Lista</b>: quiénes llegaron, filtro por nombre y exportar a Excel o reporte.'],
+    ['Forma grupos', 'Pestaña <b>Grupos</b>: arma grupos al azar con los asistentes.'],
+    ['Que los participantes se registren solos', 'Pestaña <b>Compartir</b>: muestra el <b>QR del evento</b>. Cada participante escanea, busca su nombre y se registra (funciona del día antes al día después del evento). Los acompañantes que anoten aparecen arriba para aprobar.'],
+    ['Invita a colaboradores', 'Pestaña <b>Compartir</b> → <b>Invitar por WhatsApp</b> o copia el código (EV-…). Quien lo ingrese marca en la misma lista.'],
+    ['Guarda', 'Toca <b>Guardar asistencia</b> (abajo) para que todo quede en línea.']
+  ]}
+};
+function openGuia(tipo){
+  const g = GUIAS[tipo]; if(!g) return;
+  LS.set('ca_guia_' + tipo, 1);
+  sheet(`${sheetHead(g.t, 'Guía rápida · puedes volver a verla con el botón “Guía”')}<ol class="guia-list">${g.pasos.map(([t, p], i) => `<li><span class="gn">${i+1}</span><div><b>${t}</b><p>${p}</p></div></li>`).join('')}</ol><div class="sh-foot"><button class="btn primary" data-close>Entendido</button></div>`, { wide:true });
+}
+function guiaPrimeraVez(tipo){ if(!LS.get('ca_guia_' + tipo, 0)) setTimeout(() => { if(!layer.children.length) openGuia(tipo); }, 700); }
+
 /* ---------- Inicio con clases en línea ---------- */
 function homeOnlineHTML(){
   const mis = SB.mis || [];
   const unirArriba = !SB.admin && sinUnir().length;
-  return `${unirArriba ? localesHTML() : ''}<section class="hero enter-hero">
+  return `${unirArriba ? localesHTML() : ''}${necesitaIdentificarse() ? identHTML() : SB.admin ? `<section class="hero enter-hero">
       <h1>Toma la asistencia de tu clase</h1>
       <p>La primera vez escribe tu nombre y elige tu clase. Después la encontrarás aquí mismo.</p>
       <button class="btn gold lg enter-btn" id="enterBtn">${ICON.book} Entrar a mi clase</button>
-    </section>
+    </section>` : rolHeroHTML()}
     ${mis.filter(retrasoDe).map(c => { const r = retrasoDe(c); return `<section class="section"><button class="late-box" data-go="#/clase/${c.codigo}"><span class="late-ico">🔔</span><span class="ii"><b>Tienes asistencia atrasada</b><small>${esc(prettyName(c.maestro))} · ${esc(c.horario)}: ${r.sesiones} sesión${r.sesiones===1?'':'es'} sin marcar desde el ${esc(fmtDate(r.desde))}.</small></span><span class="btn sm gold">Marcar ahora</span></button></section>`; }).join('')}
     ${mis.length ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/entrar">Buscar otra</button></div>
       ${mis.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}${c.tipo === 'colaborador' ? ' · Colaborador' + (c.vence_en ? ' hasta el '+fmtShort(fechaLocal(c.vence_en)) : '') : ''}</small></span><span class="num-badge">${c.alumnos} alum.</span></button>`).join('')}</section>` : ''}
@@ -1554,7 +1756,20 @@ function homeOnlineHTML(){
       <button class="item" data-go="#/admin"><span class="ico t">${ICON.db}</span><span class="ii"><b>Base de personas y periodos</b><small>Subir la base actualizada, feriados y periodos</small></span>${ICON.next}</button>
     </section>` : ''}`;
 }
+function elegirOtroRol(){
+  sheet(`${sheetHead('¿Quién eres?')}<div class="ident-opts">${Object.entries(ROLES).map(([k, r]) => `<button class="item" data-rol2="${k}"><span class="ico g">${ICON[r.ico]}</span><span class="ii"><b>${r.t}</b><small>${r.s}</small></span>${ICON.next}</button>`).join('')}</div>`, {
+    onMount(el, close){ $$('[data-rol2]', el).forEach(b => b.onclick = () => { close(); setTimeout(() => elegirRol(b.dataset.rol2), 250); }); }
+  });
+}
 function bindHomeOnline(){
+  $$('[data-rol]').forEach(b => b.onclick = () => elegirRol(b.dataset.rol));
+  const rc = $('#rolChg'); if(rc) rc.onclick = elegirOtroRol;
+  const tc = $('#toColab'); if(tc) tc.onclick = () => resaltar('#colabZona');
+  if(RESALTAR_CLASE){
+    const code = RESALTAR_CLASE; RESALTAR_CLASE = null;
+    const it = $(`.item[data-go="#/clase/${code}"]`);
+    if(it){ setTimeout(() => resaltar(it), 150); toast('Aquí está tu clase: tócala para entrar', 'ok', { ms:4500 }); }
+  }
   const b = $('#enterBtn');
   if(b) b.onclick = () => (SB.mis||[]).length === 1 ? go('#/clase/'+SB.mis[0].codigo) : go('#/entrar');
   const lo = $('#adminLink');
@@ -1754,7 +1969,8 @@ async function adoptarClase(c, nombre){
 async function abrirMiClase(id){
   await SB.refresh();
   const mia = (SB.mis||[]).find(x => x.id === id);
-  go(mia ? '#/clase/'+mia.codigo : '#/');
+  // Se vuelve al inicio, se desliza hasta la clase y parpadea: ahí debe entrar.
+  if(mia) resaltarClaseEnInicio(mia.codigo); else go('#/');
 }
 function openSolicitud(c){
   const parts = String(myName()).trim().split(/\s+/);
@@ -1964,17 +2180,28 @@ async function renderSolicitudes(){
   try{
     const list = await SB.rpc('solicitudes_pendientes');
     if(!list.length){ body.innerHTML = '<div class="empty">No hay solicitudes pendientes.</div>'; return; }
-    body.innerHTML = list.map((s, i) => `<section class="card"><h2>${esc(s.nombres)} ${esc(s.apellidos)}</h2>
-      <p class="meta">${esc(s.barrio)} · ${esc(stakeShort(s.estaca))} · ${progLabel(s.programa)}</p>
+    // Los supervisores piden varias clases a la vez: se agrupan por persona.
+    const sup = {}, sueltas = [];
+    list.forEach((s, i) => { s.i = i; if(s.rol === 'supervisor') (sup[s.usuario_id] = sup[s.usuario_id] || []).push(s); else sueltas.push(s); });
+    const clRow = s => `<div class="item" style="margin:8px 0 0"><span class="av">${esc(initials(s.maestro))}</span><span class="ii"><b>${esc(prettyName(s.maestro))}</b><small>${esc([progLabel(s.programa), s.horario].filter(Boolean).join(' · '))} · <button class="link-btn" data-go="#/clase/${s.codigo}">Ver clase</button></small></span><button class="btn sm danger" data-no="${s.i}" aria-label="Rechazar">${ICON.x}</button><button class="btn sm primary" data-ok="${s.i}">${ICON.check} Dar acceso</button></div>`;
+    const cel = s => s.celular ? ` · <a class="link-btn" href="https://wa.me/${esc(normPhone(s.celular))}" target="_blank" rel="noopener">${ICON.chat.replace('<svg','<svg style="width:13px;height:13px;vertical-align:-2px"')} ${esc(s.celular)}</a>` : '';
+    body.innerHTML = Object.values(sup).map(g => { const s = g[0]; return `<section class="card"><span class="badge b-new">Supervisor · ${g.length} clase${g.length===1?'':'s'}</span><h2 style="margin-top:6px">${esc(s.nombres)} ${esc(s.apellidos)}</h2>
+      <p class="meta">${esc(s.barrio)} · ${esc(stakeShort(s.estaca))}${cel(s)}</p>
+      ${g.map(clRow).join('')}
+      ${g.length > 1 ? `<div class="btn-row" style="margin-top:12px"><button class="btn primary" data-okall="${esc(s.usuario_id)}">${ICON.check} Dar acceso a las ${g.length}</button><button class="btn danger" data-noall="${esc(s.usuario_id)}">${ICON.x} Rechazar todas</button></div>` : ''}</section>`; }).join('')
+      + sueltas.map(s => `<section class="card"><h2>${esc(s.nombres)} ${esc(s.apellidos)}</h2>
+      <p class="meta">${esc(s.barrio)} · ${esc(stakeShort(s.estaca))} · ${progLabel(s.programa)}${cel(s)}</p>
       <p class="meta">Pide entrar a la clase de <b>${esc(prettyName(s.maestro))}</b> · ${esc(s.horario)} <button class="link-btn" data-go="#/clase/${s.codigo}">Ver clase</button></p>
-      <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-ok="${i}">${ICON.check} Dar acceso</button><button class="btn danger" data-no="${i}">${ICON.x} Rechazar</button></div></section>`).join('');
-    const resolver = async (s, aprobar) => {
-      try{ await SB.rpc('resolver_solicitud', { solicitud:s.id, aprobar }); await SB.loadCounts(); toast(aprobar ? 'Acceso otorgado ✓' : 'Solicitud rechazada', 'ok'); renderSolicitudes(); }
+      <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-ok="${s.i}">${ICON.check} Dar acceso</button><button class="btn danger" data-no="${s.i}">${ICON.x} Rechazar</button></div></section>`).join('');
+    const resolver = async (lista, aprobar) => {
+      try{ for(const s of lista) await SB.rpc('resolver_solicitud', { solicitud:s.id, aprobar }); await SB.loadCounts(); toast(aprobar ? `Acceso otorgado ✓${lista.length > 1 ? ' a '+lista.length+' clases' : ''}` : 'Solicitud rechazada', 'ok'); renderSolicitudes(); }
       catch(e){ console.error(e); toast(errMsg(e), 'error'); }
     };
     $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
-    $$('[data-ok]', body).forEach(b => b.onclick = () => resolver(list[+b.dataset.ok], true));
-    $$('[data-no]', body).forEach(b => b.onclick = () => resolver(list[+b.dataset.no], false));
+    $$('[data-ok]', body).forEach(b => b.onclick = () => resolver([list[+b.dataset.ok]], true));
+    $$('[data-no]', body).forEach(b => b.onclick = () => resolver([list[+b.dataset.no]], false));
+    $$('[data-okall]', body).forEach(b => b.onclick = () => resolver(sup[b.dataset.okall], true));
+    $$('[data-noall]', body).forEach(b => b.onclick = async () => { if(await confirmBox('Se rechazarán todas las clases que pidió este supervisor.', { title:'Rechazar todas', ok:'Rechazar', danger:true })) resolver(sup[b.dataset.noall], false); });
   }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
 }
 
@@ -2235,6 +2462,7 @@ function route(){
   if(parts[0] === 'insc' && parts[1]) return renderInscripcionPublica(parts[1]);
   if(parts[0] === 'ficha' && parts[1]) return renderFichaPublica(parts[1]);
   if(parts[0] === 'entrar') return renderEntrar();
+  if(parts[0] === 'supervisor') return renderSupervisor();
   if(['todas','solicitudes','alertas','seguimiento','inscripciones'].includes(parts[0])){
     if(!SB.admin){ go('#/'); return; }
     if(parts[0] === 'inscripciones') return renderInscripciones();
@@ -2308,6 +2536,24 @@ const tabBtn = (id, label, icon, extra='', cur) => `<button data-tab="${id}" cla
    ============================================================ */
 function renderHome(fresco){
   CUR = { type:'home', code:null };
+  if(HOME_FRESCO){ fresco = true; HOME_FRESCO = false; }
+  // Primera vez: solo se pregunta quién es (sin las demás opciones).
+  if(necesitaIdentificarse()){
+    app.innerHTML = topbar() + `<main class="wrap">${identHTML()}
+      <p class="foot"><span id="dataInfo">Check-in Asistencia</span><br><button class="link-btn" id="adminLink">Soy administrador</button> · <span id="verTap">v${APP_VERSION}</span></p></main>`;
+    bindTop(); bindAdminTriggers(); bindHomeOnline();
+    if(SB.user && fresco !== true) SB.refresh().then(() => { if(CUR.type === 'home') renderHome(true); }).catch(() => {});
+    return;
+  }
+  // "Otro" (colaborador): el código y Crear evento van juntos, arriba, para resaltarlos.
+  const colab = SB.on() && miRol() === 'otro';
+  const joinHTML = `<section class="section">
+      <form class="card join-card" id="joinForm" autocomplete="off">
+        <h2 style="font-size:15.5px;margin-bottom:4px">¿Te enviaron un código?</h2>
+        <p class="hint" style="margin:0 0 10px">Solo si alguien te invitó a <b>ayudar en su evento</b> (EV-…) o a <b>colaborar en su clase</b> (CL-…). Puedes pegar el código, el enlace o el mensaje completo. Si vas a tomar asistencia de tu propia clase, no lo necesitas: usa <b>Mi clase</b>.</p>
+        <div class="join"><input id="joinCode" placeholder="Ej. EV-7K3QX" autocapitalize="characters" spellcheck="false"><button class="btn gold" type="submit">Entrar</button></div>
+      </form>
+    </section>`;
   const evs = Object.values(EVENTS).sort((a,b) => String(b.meta.date).localeCompare(String(a.meta.date)) || (b.meta.createdAt||0)-(a.meta.createdAt||0));
   const cls = Object.values(CLASSES).sort((a,b) => (b.meta.createdAt||0)-(a.meta.createdAt||0));
   app.innerHTML = topbar() + `<main class="wrap">
@@ -2315,6 +2561,7 @@ function renderHome(fresco){
       <h1>Marca asistencia en segundos</h1>
       <p><b>¿Eres maestro?</b> Entra a <b>Mi clase</b> para crear tu clase y tomar asistencia. <b>¿Organizas una actividad?</b> Usa <b>Crear evento</b>. No necesitas ningún código para empezar.</p>
     </section>`}
+    ${colab ? '<div id="colabZona">' + joinHTML : ''}
     <div class="grid2">
       ${SB.on() ? '' : `<article class="action-card cl">
         <div class="ac-ico">${ICON.book}</div>
@@ -2329,6 +2576,7 @@ function renderHome(fresco){
         <div class="btn-row"><button class="btn primary" data-go="#/evento/nuevo">${ICON.plus} Crear evento</button><button class="btn" id="joinEv">Unirme</button></div>
       </article>
     </div>
+    ${colab ? '</div>' : ''}
     <section class="section">
       <div class="section-h"><h2>Eventos en este dispositivo</h2></div>
       ${evs.length ? evs.slice(0,12).map(ev => `<button class="item" data-go="#/evento/${ev.code}"><span class="ico t">${ICON.ticket}</span><span class="ii"><b>${esc(ev.meta.title)}</b><small>${esc([fmtDate(ev.meta.date), ev.meta.ward || ev.meta.stake].filter(Boolean).join(' · '))} · ${ev.code}</small></span><span class="num-badge">${eventRows(ev).length}</span></button>`).join('')
@@ -2336,13 +2584,7 @@ function renderHome(fresco){
     </section>
     ${cls.length && !SB.on() ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/clases">Ver todas</button></div>
       ${cls.slice(0,4).map(classItemHTML).join('')}</section>` : ''}
-    <section class="section">
-      <form class="card join-card" id="joinForm" autocomplete="off">
-        <h2 style="font-size:15.5px;margin-bottom:4px">¿Te enviaron un código?</h2>
-        <p class="hint" style="margin:0 0 10px">Solo si alguien te invitó a <b>ayudar en su evento</b> (EV-…) o a <b>colaborar en su clase</b> (CL-…). Puedes pegar el código, el enlace o el mensaje completo. Si vas a tomar asistencia de tu propia clase, no lo necesitas: usa <b>Mi clase</b>.</p>
-        <div class="join"><input id="joinCode" placeholder="Ej. EV-7K3QX" autocapitalize="characters" spellcheck="false"><button class="btn gold" type="submit">Entrar</button></div>
-      </form>
-    </section>
+    ${colab ? '' : joinHTML}
     <section class="section"><div class="btn-row"><button class="btn" id="impBk">${ICON.upload} Importar reporte, Excel o backup</button><button class="btn" id="expAll">${ICON.download} Backup de todo</button></div></section>
     <p class="foot"><span id="dataInfo">${SB.on() ? 'Check-in Asistencia' : `Base: ${ROSTER.people.length.toLocaleString('es-PE')} personas · act. ${fmtVersion(ROSTER.v)}`}</span><br>${SB.on() ? `<button class="link-btn" id="adminLink">${SB.admin ? 'Cerrar sesión de administrador' : 'Soy administrador'}</button>` : `Sincronización: ${Sync.on() ? 'activa' : 'no configurada'}`} · <span id="verTap">v${APP_VERSION}</span></p>
   </main>`;
@@ -2559,7 +2801,7 @@ function renderEvent(code){
     <section class="card ev-head">
       <div class="eh-main"><div style="min-width:0">${ev.contrib ? '<span class="badge b-man">Colaborador</span>' : ''}<h1 ${ev.contrib?'style="margin-top:6px"':''}>${esc(m.title)}</h1><p class="meta">${esc(m.placeholder ? 'Te uniste solo con el código · ' + fmtDate(m.date) : [m.stake, m.ward || 'Todos los barrios', fmtDate(m.date)].filter(Boolean).join(' · '))}</p></div>
       <div class="counter"><b id="evCount">0</b><span>asistentes</span></div></div>
-      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button><span class="hint">${ev.contrib && offline ? 'Tus registros se unirán al evento por este código.' : 'Comparte este código para registrar desde otros celulares.'}</span></div>
+      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button><span class="hint">${ev.contrib && offline ? 'Tus registros se unirán al evento por este código.' : 'Comparte este código para registrar desde otros celulares.'}</span><button class="btn sm" id="guiaBtn" style="margin-left:auto">❔ Guía</button></div>
       ${ev.contrib && offline ? `<div class="info-box" style="margin:14px 0 0">Marca a los asistentes que te toquen. Al terminar toca <b>Enviar asistencia</b> y mándalo al organizador: él lo importa y se suma a la lista total del evento.</div>` : ''}
     </section>
     <div id="aprobBox"></div>
@@ -2568,6 +2810,8 @@ function renderEvent(code){
   </main>${saveBar(offline ? 'Enviar asistencia' : 'Guardar asistencia', offline)}`;
   bindTop();
   $('#codeChip').onclick = () => showEventCode(code);
+  $('#guiaBtn').onclick = () => openGuia('evento');
+  guiaPrimeraVez('evento');
   $$('#tabs [data-tab]').forEach(b => b.onclick = () => { ST.tab = b.dataset.tab; $$('#tabs [data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderEventTab(); });
   $('#saveBtn').onclick = () => offline ? exportEventHtml(ev, true) : syncEvent(code);
   renderEventTab();
@@ -3710,7 +3954,7 @@ function renderClass(code){
       <div class="eh-main"><div style="min-width:0"><span class="badge ${m.program==='S'?'b-sem':'b-inst'}">${progLabel(m.program)}</span> ${cls.canEdit ? '' : '<span class="badge b-ro">'+ICON.lock.replace('<svg','<svg style="width:12px;height:12px"')+' Solo lectura</span>'}
         <h1 style="margin-top:6px">${esc(m.title)}</h1><p class="meta">Maestro: <b>${esc(cls.remote ? prettyName(m.teacher) : m.teacher)}</b>${m.stake ? ' · '+esc(m.ward || (cls.remote ? stakeShort(m.stake) : m.stake)) : ''} · ${esc(daysTxt)}</p></div>
       <div class="counter"><b id="clCount">0</b><span>alumnos</span></div></div>
-      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button>${cls.remote ? '<span class="hint">Los cambios se guardan en línea.</span>' : cls.canEdit ? '<span class="hint">Código para encontrar la clase y descargar la asistencia.</span>' : `<button class="btn sm" id="unlock">${ICON.lock} Soy el maestro · ingresar PIN</button>`}${puedeEditarDatos(cls) ? `<button class="btn sm" data-go="#/clase/${code}/editar" style="margin-left:auto">${ICON.edit} Editar datos</button>` : ''}</div>
+      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button>${cls.remote ? '<span class="hint">Los cambios se guardan en línea.</span>' : cls.canEdit ? '<span class="hint">Código para encontrar la clase y descargar la asistencia.</span>' : `<button class="btn sm" id="unlock">${ICON.lock} Soy el maestro · ingresar PIN</button>`}<button class="btn sm" id="guiaBtn" style="margin-left:auto">❔ Guía</button>${puedeEditarDatos(cls) ? `<button class="btn sm" data-go="#/clase/${code}/editar">${ICON.edit} Editar datos</button>` : ''}</div>
       ${cls.remote && SB.admin ? '<div id="accBox"></div>' : ''}
     </section>
     ${cls.remote ? '<div id="aprobBox"></div>' : ''}
@@ -3720,6 +3964,8 @@ function renderClass(code){
   bindTop();
   $('#codeChip').onclick = () => copyText(code, 'Código copiado');
   const ul = $('#unlock'); if(ul) ul.onclick = () => unlockClass(cls);
+  $('#guiaBtn').onclick = () => openGuia('clase');
+  if(cls.remote && cls.canEdit && !SB.admin) guiaPrimeraVez('clase');
   $$('#tabs [data-tab]').forEach(b => b.onclick = () => { ST.ctab = b.dataset.tab; $$('#tabs [data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderClassTab(); });
   $('#saveBtn').onclick = () => classOnline(cls) ? syncClass(code) : exportClassHtml(cls, true);
   renderClassTab();
