@@ -1,21 +1,58 @@
-MIT License
+LICENCIA PROPIETARIA - TODOS LOS DERECHOS RESERVADOS
+PROPRIETARY LICENSE - ALL RIGHTS RESERVED
 
-Copyright (c) 2026 Bruno Esteban
+Copyright (c) 2026 Bruno Esteban (brunoe84). Todos los derechos reservados.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+ESPAÑOL
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Este software, su código fuente, diseño, textos, gráficos, datos y demás
+archivos de este repositorio (el "Software") son propiedad exclusiva del
+titular indicado arriba y están protegidos por las leyes de derecho de autor
+y los tratados internacionales aplicables.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Que este repositorio sea visible públicamente NO concede ninguna licencia.
+Sin autorización previa, expresa y por escrito del titular, queda PROHIBIDO:
+
+  1. Copiar, reproducir o descargar el Software, total o parcialmente, salvo
+     para su simple visualización en GitHub.
+  2. Modificar, adaptar, traducir o crear obras derivadas.
+  3. Distribuir, publicar, sublicenciar, alquilar, prestar o transferir el
+     Software a terceros.
+  4. Vender, revender, comercializar u obtener cualquier beneficio económico,
+     directo o indirecto, con el Software o con obras derivadas de él.
+  5. Ofrecer el Software como servicio (SaaS) o alojarlo en servidores propios.
+  6. Eliminar o alterar este aviso de derechos de autor.
+
+Cualquier uso no autorizado constituye una infracción de los derechos de
+autor y podrá dar lugar a acciones civiles y penales.
+
+EL SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍA DE NINGÚN TIPO. EN NINGÚN
+CASO EL TITULAR SERÁ RESPONSABLE POR DAÑOS DERIVADOS DE SU USO.
+
+Para solicitar permisos o licencias de uso, contacte al titular a través de
+GitHub: https://github.com/brunoe84
+
+ENGLISH
+
+This software, its source code, design, text, graphics, data and all other
+files in this repository (the "Software") are the exclusive property of the
+copyright holder named above and are protected by copyright law and
+applicable international treaties.
+
+Public visibility of this repository does NOT grant any license. Without the
+prior, express, written permission of the copyright holder, you may NOT:
+
+  1. Copy, reproduce or download the Software, in whole or in part, except to
+     view it on GitHub.
+  2. Modify, adapt, translate or create derivative works.
+  3. Distribute, publish, sublicense, rent, lend or transfer the Software.
+  4. Sell, resell, commercialize or obtain any direct or indirect financial
+     benefit from the Software or derivative works.
+  5. Offer the Software as a service (SaaS) or host it on your own servers.
+  6. Remove or alter this copyright notice.
+
+Any unauthorized use is a copyright infringement and may result in civil and
+criminal liability.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. IN NO EVENT
+SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY DAMAGES ARISING FROM ITS USE.
