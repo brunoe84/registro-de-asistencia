@@ -1755,7 +1755,7 @@ function homeOnlineHTML(){
     ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2></div>
       <button class="item" data-go="#/todas"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Todas las clases</b><small>Por programa, estaca y maestro · asistencia en vivo</small></span>${ICON.next}</button>
       <button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b><small>Personas que piden entrar a una clase ya adoptada</small></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button>
-      <button class="item" data-go="#/inscripciones"><span class="ico g">${ICON.userPlus}</span><span class="ii"><b>Inscritos para Wise</b><small>Por Seminario e Instituto · enlace y QR de inscripción para compartir</small></span>${ICON.next}</button>
+      <button class="item" data-go="#/inscripciones"><span class="ico g">${ICON.userPlus}</span><span class="ii"><b>Inscritos para Wise</b><small>Por Seminario e Instituto · enlace y QR de inscripción para compartir</small></span><span class="num-badge alert-badge hide" data-badge="inscripciones" title="Por inscribir"></span>${ICON.next}</button>
       <button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b><small>Alumnos sin coincidencia con la base de personas</small></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button>
       <button class="item" data-go="#/admin"><span class="ico t">${ICON.db}</span><span class="ii"><b>Base de personas y periodos</b><small>Subir la base actualizada, feriados y periodos</small></span>${ICON.next}</button>
     </section>` : ''}`;
@@ -2219,7 +2219,7 @@ async function renderInscripciones(atendidas){
   const prog = ST.insProg === 'I' ? 'I' : 'S';
   const nomProg = prog === 'S' ? 'Seminario' : 'Instituto';
   app.innerHTML = topbar({ back:'#/', title:'Inscritos para Wise', sub:'Administración' }) + `<main class="wrap">
-    <div class="seg big" id="insProg" style="margin-bottom:14px">${[['S', 'Seminarios'], ['I', 'Institutos']].map(([k, l]) => `<button data-p="${k}" class="${prog === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="seg big" id="insProg" style="margin-bottom:14px">${[['S', 'Seminarios'], ['I', 'Institutos']].map(([k, l]) => { const n = (SB.counts || {})['inscripciones_' + k]; return `<button data-p="${k}" class="${prog === k ? 'on' : ''}">${l}${n ? ` · ${n} por inscribir` : ''}</button>`; }).join('')}</div>
     <section class="card" id="insEnlace">${loadingHTML('Preparando el enlace…', true)}</section>
     <div id="insBody">${loadingHTML()}</div></main>`;
   bindTop();
@@ -2257,7 +2257,7 @@ async function renderInscripciones(atendidas){
     $$('[data-fc]', body).forEach(b => b.onclick = () => copyText(appLink('f', lista[+b.dataset.fc].token), 'Enlace copiado'));
     $$('[data-cp]', body).forEach(b => b.onclick = () => { const x = lista[+b.dataset.cp], d = x.datos; copyText([prettyName(x.nombre), 'Programa: ' + nomProg, (d.estaca || x.estaca) && 'Estaca: ' + stakeShort(d.estaca || x.estaca), (d.barrio || x.barrio) && 'Barrio: ' + (d.barrio || x.barrio), d.miembro && 'Miembro: ' + (d.miembro === 'si' ? 'Sí' : 'No'), d.cedula && 'Cédula: ' + d.cedula, d.usuario && 'Usuario: ' + d.usuario, d.nacimiento && 'Nacimiento: ' + fmtDMY(d.nacimiento), d.celular && 'Celular: ' + d.celular, d.tutor && 'Padre o madre: ' + d.tutor, d.tutor_celular && 'Número del padre o madre: ' + d.tutor_celular, d.tutor_correo && 'Correo del padre o madre: ' + d.tutor_correo, d.direccion && 'Dirección: ' + d.direccion, d.acuerdo && 'Aceptó el acuerdo de inscripción en ' + d.acuerdo, x.origen === 'enlace' ? 'Origen: enlace de inscripción' : 'Clase: ' + prettyName(x.maestro) + ' · ' + x.horario].filter(Boolean).join('\n'), 'Datos copiados'); });
     $$('[data-at]', body).forEach(b => b.onclick = async () => {
-      try{ await SB.rpc('atender_inscripcion', { inscripcion: lista[+b.dataset.at].id, atendida: !atendidas }); renderInscripciones(atendidas); }
+      try{ await SB.rpc('atender_inscripcion', { inscripcion: lista[+b.dataset.at].id, atendida: !atendidas }); await SB.loadCounts().catch(()=>{}); renderInscripciones(atendidas); }
       catch(e){ console.error(e); toast(errMsg(e), 'error'); }
     });
   }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
@@ -2541,6 +2541,8 @@ const tabBtn = (id, label, icon, extra='', cur) => `<button data-tab="${id}" cla
 function renderHome(fresco){
   CUR = { type:'home', code:null };
   if(HOME_FRESCO){ fresco = true; HOME_FRESCO = false; }
+  // Contadores del administrador al día (inscritos por pasar a Wise, alertas, solicitudes).
+  if(SB.admin && fresco !== true) SB.loadCounts().catch(() => {});
   // Primera vez: solo se pregunta quién es (sin las demás opciones).
   if(necesitaIdentificarse()){
     app.innerHTML = topbar() + `<main class="wrap">${identHTML()}

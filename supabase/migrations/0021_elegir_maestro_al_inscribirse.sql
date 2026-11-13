@@ -7,6 +7,7 @@
 -- 2. buscar_clases_inscripcion(token, texto, estaca): clases activas del programa del enlace que
 --    coinciden con el maestro o con el barrio (el de la clase o el de sus alumnos).
 -- 3. unirme_a_clase_inscripcion(token, inscripcion, clase): agrega al joven a la lista de la clase.
+-- 4. contadores_admin incluye los inscritos por pasar a Wise (total y por programa).
 
 -- ---------- 1. inscribirme devuelve el id ----------
 create or replace function public.inscribirme(token text, persona uuid default null, nombres text default null, apellidos text default null, datos jsonb default '{}')
@@ -174,6 +175,30 @@ begin
 
   return jsonb_build_object('estado', case when ya then 'ya_estaba' else 'unido' end,
     'maestro', c.maestro_nombre, 'curso', c.curso, 'horario', c.horario, 'dias', c.dias);
+end;
+$$;
+
+-- ---------- 4. Contador de inscritos por pasar a Wise (inicio del administrador) ----------
+create or replace function public.contadores_admin()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.es_admin() then
+    raise exception 'Solo el administrador';
+  end if;
+  return jsonb_build_object(
+    'solicitudes', (select count(*) from public.solicitudes_acceso where estado = 'pendiente'),
+    'alertas', (select count(*) from public.clase_alumnos where vinculo = 'pendiente' and retirado_en is null),
+    'inscripciones', (select count(*) from public.inscripciones i where i.atendida_en is null),
+    'inscripciones_S', (select count(*) from public.inscripciones i left join public.clases c on c.id = i.clase_id
+                        where i.atendida_en is null and coalesce(i.programa, c.programa) = 'S'),
+    'inscripciones_I', (select count(*) from public.inscripciones i left join public.clases c on c.id = i.clase_id
+                        where i.atendida_en is null and coalesce(i.programa, c.programa) = 'I')
+  );
 end;
 $$;
 
