@@ -1825,14 +1825,14 @@ const marcasLocales = cls => Object.values(cls.att || {}).reduce((n, d) => n + O
 // Unir es OBLIGATORIO: las clases que solo existen en el celular ya no se usan; sus alumnos y su
 // asistencia deben pasar a la clase en línea.
 const sinUnir = () => clasesLocales().filter(c => !c.enLinea);
+// Solo se muestran las que FALTAN unir. Las ya unidas no se ven (su asistencia ya está en la clase
+// en línea); su copia sigue en el celular como respaldo, sin borrarse.
 function localesHTML(){
-  const list = clasesLocales();
+  const list = sinUnir();
   if(!list.length) return '';
-  const faltan = list.filter(c => !c.enLinea).length;
-  return `<section class="section${faltan ? ' unir-oblig' : ''}"><div class="section-h"><h2>${faltan ? '⚠ Une tu clase guardada en este celular' : 'Guardadas en este dispositivo'}</h2></div>
-    <p class="hint" style="margin:0 2px 8px">${faltan ? '<b>Es obligatorio.</b> Estas clases se crearon antes de la base en línea y ya no se pueden usar para tomar asistencia. Únelas a tu clase en línea: sus alumnos y su asistencia se suman a ella y no se pierde nada.' : 'Clases que creaste aquí antes de la base en línea. Ya están unidas a tu clase en línea; esta copia queda como respaldo.'}</p>
-    ${list.map(c => `<div class="item"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(c.meta.title || 'Clase')}</b><small>${esc([c.meta.teacher, progLabel(c.meta.program), classStudents(c).length+' alumnos', marcasLocales(c)+' marcas'].filter(Boolean).join(' · '))}${c.esperando && !c.enLinea ? ' · esperando acceso a la clase en línea' : ''}</small></span>${
-      c.enLinea ? `<button class="btn sm" data-go="#/clase/${esc(c.enLinea)}">${ICON.check} Unida</button>` : `<button class="btn sm gold" data-unir="${esc(c.code)}">Unir ahora</button>`}</div>`).join('')}</section>`;
+  return `<section class="section unir-oblig"><div class="section-h"><h2>⚠ Une tu clase guardada en este celular</h2></div>
+    <p class="hint" style="margin:0 2px 8px"><b>Es obligatorio.</b> ${list.length > 1 ? 'Estas clases se crearon' : 'Esta clase se creó'} antes de la base en línea y ya no sirve para tomar asistencia. <b>Únela a tu clase en línea</b>: sus alumnos y su asistencia se suman a ella y no se pierde nada.</p>
+    ${list.map(c => `<div class="item"><span class="ico g">${ICON.book}</span><span class="ii"><b>${esc(c.meta.title || 'Clase')}</b><small>${esc([c.meta.teacher, progLabel(c.meta.program), classStudents(c).length+' alumnos', marcasLocales(c)+' marcas'].filter(Boolean).join(' · '))}${c.esperando ? ' · esperando acceso a la clase en línea' : ''}</small></span><button class="btn gold" data-unir="${esc(c.code)}">Unir ahora</button></div>`).join('')}</section>`;
 }
 function datosLocal(cls){
   const m = cls.meta || {};
