@@ -186,6 +186,10 @@ svg{width:18px;height:18px;flex-shrink:0}
 .b-sem{background:var(--teal-50);color:var(--teal-2)}
 .b-inst{background:var(--purple-50);color:var(--purple)}
 .b-man{background:var(--amber-50);color:var(--amber)}
+.b-multi{background:#E6F0FA;color:#1F5C99;margin:6px 0 2px}
+.multi-scope{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.multi-scope .inp{width:auto;min-width:170px;padding:8px 10px;font-size:14px;font-weight:600}
+.multi-scope .inp.on{border-color:var(--teal,#1F7A80);background:#EAF5F5}
 .b-new{background:var(--gold-50);color:#8A5D0D}
 .b-ro{background:#EEF2F4;color:var(--muted)}
 .b-ok{background:var(--green-50);color:var(--green)}
@@ -2579,7 +2583,7 @@ function renderHome(fresco){
     ${colab ? '</div>' : ''}
     <section class="section">
       <div class="section-h"><h2>Eventos en este dispositivo</h2></div>
-      ${evs.length ? evs.slice(0,12).map(ev => `<button class="item" data-go="#/evento/${ev.code}"><span class="ico t">${ICON.ticket}</span><span class="ii"><b>${esc(ev.meta.title)}</b><small>${esc([fmtDate(ev.meta.date), ev.meta.ward || ev.meta.stake].filter(Boolean).join(' · '))} · ${ev.code}</small></span><span class="num-badge">${eventRows(ev).length}</span></button>`).join('')
+      ${evs.length ? evs.slice(0,12).map(ev => `<button class="item" data-go="#/evento/${ev.code}"><span class="ico t">${ICON.ticket}</span><span class="ii"><b>${esc(ev.meta.title)}</b><small>${esc([fmtDate(ev.meta.date), ev.meta.multi ? 'Multiestaca' : ev.meta.ward || ev.meta.stake].filter(Boolean).join(' · '))} · ${ev.code}</small></span><span class="num-badge">${eventRows(ev).length}</span></button>`).join('')
         : `<div class="empty">Aún no hay eventos. Crea uno o únete con un código.</div>`}
     </section>
     ${cls.length && !SB.on() ? `<section class="section"><div class="section-h"><h2>Mis clases</h2><button class="btn sm ghost" data-go="#/clases">Ver todas</button></div>
@@ -2694,18 +2698,18 @@ function askName(){
 /* ============================================================
    CAMPOS DE ESTACA / BARRIO
    ============================================================ */
-function swFields(stake, ward, px, {req=false, allWards='Todos los barrios'}={}){
+function swFields(stake, ward, px, {req=false, allWards='Todos los barrios', multi=false, isMulti=false}={}){
   const sts = stakesList();
-  const other = stake && !sts.includes(stake);
+  const other = !isMulti && stake && !sts.includes(stake);
   return `<div class="field" data-sw="${px}"><label>Estaca${req?' <span class="req">*</span>':''}</label>
-    <select id="${px}Stake"><option value="">Seleccionar…</option>${sts.map(s=>`<option ${s===stake?'selected':''}>${esc(s)}</option>`).join('')}<option value="__o" ${other?'selected':''}>Otra…</option></select>
+    <select id="${px}Stake"><option value="">Seleccionar…</option>${multi ? `<option value="__m" ${isMulti?'selected':''}>🌐 Multiestaca (varias estacas)</option>` : ''}${sts.map(s=>`<option ${!isMulti && s===stake?'selected':''}>${esc(s)}</option>`).join('')}<option value="__o" ${other?'selected':''}>Otra…</option></select>
     <input id="${px}StakeO" class="${other?'':'hide'} mt6" placeholder="Escribe la estaca" value="${other?esc(stake):''}"></div>
     <div class="field"><label>Barrio</label><select id="${px}Ward" data-all="${esc(allWards)}"></select><input id="${px}WardO" class="hide mt6" placeholder="Escribe el barrio o rama"></div>`;
 }
 function bindSW(root, px, ward){
   const ss = $('#'+px+'Stake',root), so = $('#'+px+'StakeO',root), ws = $('#'+px+'Ward',root), wo = $('#'+px+'WardO',root);
   const fill = sel => {
-    const st = ss.value === '__o' ? '' : ss.value;
+    const st = ss.value === '__o' || ss.value === '__m' ? '' : ss.value;
     const list = st ? wardsOf(st) : [];
     const isO = !!sel && !list.includes(sel);
     ws.innerHTML = `<option value="">${esc(ws.dataset.all)}</option>` + list.map(w=>`<option ${w===sel?'selected':''}>${esc(w)}</option>`).join('') + `<option value="__o" ${isO?'selected':''}>Otro…</option>`;
@@ -2737,10 +2741,15 @@ function renderEventForm(code){
   CUR = { type: ev ? 'event-edit' : 'event-new', code };
   const m = ev ? ev.meta : { title:'', stake:'', ward:'', date:todayISO(), fields:['k','w'], custom:[] };
   const defs = FIELD_DEFS;
+  const isMulti = !!m.multi;
+  const multiSts = [...new Set([...stakesList(), ...(m.stakes || [])])];
   app.innerHTML = topbar({ back: ev ? '#/evento/'+code : '#/', title: ev ? 'Editar evento' : 'Nuevo evento', sub:'Check-in de evento' }) + `<main class="wrap">
     <form class="card" id="evForm" autocomplete="off">
       <div class="field"><label>Título del evento <span class="req">*</span></label><input id="fTitle" maxlength="90" placeholder="Ej. Devocional de jóvenes adultos" value="${esc(m.title)}"></div>
-      <div class="row2">${swFields(m.stake, m.ward, 'f', {req:true})}</div>
+      <div class="row2">${swFields(m.stake, m.ward, 'f', {req:true, multi:true, isMulti})}</div>
+      <div class="field ${isMulti ? '' : 'hide'}" id="fMultiBox"><label>Estacas que participan <span class="opt">(opcional)</span></label>
+        <div class="chips" id="fStakes">${multiSts.map(s => `<button type="button" class="chip ${(m.stakes||[]).includes(s)?'on':''}" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>
+        <small class="hint">Actividad <b>multiestaca</b>: al marcar asistencia se busca en <b>toda la base</b> y puedes filtrar por una estaca. Si no eliges ninguna, el filtro ofrece todas.</small></div>
       <div class="field"><label>Fecha</label><input type="date" id="fDate" value="${esc(m.date)}"></div>
       <div class="field"><label>Datos que se adjuntan a cada asistente</label>
         <div class="chips" id="fFields">${defs.map(f=>`<button type="button" class="chip ${(m.fields||[]).includes(f.k)?'on':''}" data-k="${f.k}">${f.label}</button>`).join('')}</div>
@@ -2757,6 +2766,14 @@ function renderEventForm(code){
   bindTop();
   const f = $('#evForm');
   bindSW(f, 'f', m.ward);
+  const syncMulti = () => {
+    const on = $('#fStake', f).value === '__m';
+    $('#fMultiBox', f).classList.toggle('hide', !on);
+    $('#fWard', f).closest('.field').classList.toggle('hide', on);
+  };
+  $('#fStake', f).addEventListener('change', syncMulti);
+  syncMulti();
+  $$('#fStakes .chip', f).forEach(c => c.onclick = () => c.classList.toggle('on'));
   $$('#fFields .chip', f).forEach(c => c.onclick = () => c.classList.toggle('on'));
   const cbox = $('#fCustom', f);
   const bindCF = () => $$('.cf-row', cbox).forEach(r => {
@@ -2771,9 +2788,13 @@ function renderEventForm(code){
     const sw = readSW(f, 'f');
     $$('.field', f).forEach(x => x.classList.remove('err'));
     if(!title){ $('#fTitle', f).closest('.field').classList.add('err'); $('#fTitle', f).focus(); toast('Escribe el título del evento','error'); return; }
-    if(!sw.stake){ $('[data-sw="f"]', f).classList.add('err'); toast('Selecciona la estaca','error'); return; }
+    if(!sw.stake){ $('[data-sw="f"]', f).classList.add('err'); toast('Selecciona la estaca o Multiestaca','error'); return; }
+    const multi = sw.stake === '__m';
     const custom = $$('.cf-row', cbox).map(r => ({ id:r.dataset.id, label:$('.cf-label',r).value.trim(), type:$('.cf-type',r).value, options:$('.cf-opts',r).value.split(',').map(s=>s.trim()).filter(Boolean) })).filter(c => c.label);
-    const meta = { ...(ev ? ev.meta : {}), title, stake:sw.stake, ward:sw.ward, date: $('#fDate', f).value || todayISO(), fields: $$('#fFields .chip.on', f).map(c=>c.dataset.k), custom, wa: $('#fWa', f).value.trim() };
+    // Multiestaca: sin estaca ni barrio propios (el QR y la búsqueda usan toda la base); las estacas elegidas solo sirven de filtro.
+    const meta = { ...(ev ? ev.meta : {}), title, stake: multi ? '' : sw.stake, ward: multi ? '' : sw.ward, multi, stakes: multi ? $$('#fStakes .chip.on', f).map(c => c.dataset.s) : [],
+      date: $('#fDate', f).value || todayISO(), fields: $$('#fFields .chip.on', f).map(c=>c.dataset.k), custom, wa: $('#fWa', f).value.trim() };
+    if(ev && (meta.multi !== !!ev.meta.multi || meta.stake !== ev.meta.stake || meta.ward !== ev.meta.ward)) ST.scope = null;
     if(ev){ ev.meta = meta; ev.metaPending = true; saveEvents(); syncEvent(code, {silent:true}); toast('Evento actualizado','ok'); go('#/evento/'+code); return; }
     if($('#fMy', f).value.trim()) setMyName($('#fMy', f).value);
     const btn = $('button[type=submit]', f); btn.disabled = true;
@@ -2799,9 +2820,9 @@ function renderEvent(code){
   const offline = !Sync.on() && !eventoEnNube(ev);
   app.innerHTML = topbar({ back:'#/', title:m.title, sub:'Check-in · '+code }) + `<main class="wrap has-savebar">
     <section class="card ev-head">
-      <div class="eh-main"><div style="min-width:0">${ev.contrib ? '<span class="badge b-man">Colaborador</span>' : ''}<h1 ${ev.contrib?'style="margin-top:6px"':''}>${esc(m.title)}</h1><p class="meta">${esc(m.placeholder ? 'Te uniste solo con el código · ' + fmtDate(m.date) : [m.stake, m.ward || 'Todos los barrios', fmtDate(m.date)].filter(Boolean).join(' · '))}</p></div>
+      <div class="eh-main"><div style="min-width:0">${ev.contrib ? '<span class="badge b-man">Colaborador</span>' : ''}<h1 ${ev.contrib?'style="margin-top:6px"':''}>${esc(m.title)}</h1>${m.multi ? '<span class="badge b-multi">🌐 Multiestaca</span>' : ''}<p class="meta">${esc(m.placeholder ? 'Te uniste solo con el código · ' + fmtDate(m.date) : [evLugar(m), fmtDate(m.date)].filter(Boolean).join(' · '))}</p></div>
       <div class="counter"><b id="evCount">0</b><span>asistentes</span></div></div>
-      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button><span class="hint">${ev.contrib && offline ? 'Tus registros se unirán al evento por este código.' : 'Comparte este código para registrar desde otros celulares.'}</span><button class="btn sm" id="guiaBtn" style="margin-left:auto">❔ Guía</button></div>
+      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button><span class="hint">${ev.contrib && offline ? 'Tus registros se unirán al evento por este código.' : 'Comparte este código para registrar desde otros celulares.'}</span><span class="btn-row" style="margin:0 0 0 auto;gap:8px;flex-wrap:nowrap">${ev.contrib || m.placeholder ? '' : `<button class="btn sm" id="editEv">${ICON.edit} Editar</button>`}<button class="btn sm" id="guiaBtn">❔ Guía</button></span></div>
       ${ev.contrib && offline ? `<div class="info-box" style="margin:14px 0 0">Marca a los asistentes que te toquen. Al terminar toca <b>Enviar asistencia</b> y mándalo al organizador: él lo importa y se suma a la lista total del evento.</div>` : ''}
     </section>
     <div id="aprobBox"></div>
@@ -2811,6 +2832,7 @@ function renderEvent(code){
   bindTop();
   $('#codeChip').onclick = () => showEventCode(code);
   $('#guiaBtn').onclick = () => openGuia('evento');
+  const eb = $('#editEv'); if(eb) eb.onclick = () => go('#/evento/'+code+'/editar');
   guiaPrimeraVez('evento');
   $$('#tabs [data-tab]').forEach(b => b.onclick = () => { ST.tab = b.dataset.tab; $$('#tabs [data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderEventTab(); });
   $('#saveBtn').onclick = () => offline ? exportEventHtml(ev, true) : syncEvent(code);
@@ -2868,7 +2890,20 @@ function scopeOptions(stake, ward){
   o.push(['all', 'Toda la base']);
   return o;
 }
+// Evento multiestaca: «Toda la base» o una estaca elegida en el desplegable (scope 'k:<estaca>').
+function multiStakes(m){ return m.stakes && m.stakes.length ? m.stakes : stakesList(); }
+function evScope(m, scope){
+  if(scope && scope.startsWith('k:')) return { k:scope.slice(2), w:'' };
+  if(scope === 'w') return { k:m.stake || '', w:m.ward || '' };
+  if(scope === 'k') return { k:m.stake || '', w:'' };
+  return { k:'', w:'' };
+}
+function evLugar(m){
+  if(m.multi) return 'Multiestaca' + (m.stakes && m.stakes.length ? ': ' + m.stakes.join(', ') : ' · toda la base');
+  return [m.stake, m.ward || (m.stake ? 'Todos los barrios' : '')].filter(Boolean).join(' · ');
+}
 function scopeFilter(scope, stake, ward){
+  if(scope && scope.startsWith('k:')){ const k = scope.slice(2); return p => p.k === k; }
   if(scope === 'w' && ward) return p => p.w === ward && (!stake || p.k === stake);
   if(scope === 'k' && stake) return p => p.k === stake;
   return null;
@@ -2877,11 +2912,16 @@ function renderEventTab(){
   const ev = EVENTS[CUR.code]; const body = $('#tabBody'); if(!ev || !body) return;
   const m = ev.meta;
   if(ST.tab === 'marcar'){
-    const opts = scopeOptions(m.stake, m.ward);
+    const msts = m.multi ? multiStakes(m) : [];
+    const opts = m.multi ? [['all', 'Toda la base'], ...msts.map(s => ['k:' + s, s])] : scopeOptions(m.stake, m.ward);
     if(!ST.scope || !opts.some(o => o[0] === ST.scope)) ST.scope = opts[0][0];
+    const scopeRow = m.multi
+      ? `<div class="scope-row"><div class="multi-scope"><div class="seg" id="scope"><button data-s="all" class="${ST.scope==='all'?'on':''}">🌐 Toda la base</button></div>
+          <select class="inp sm ${ST.scope==='all'?'':'on'}" id="scopeK" aria-label="Filtrar por estaca"><option value="">Filtrar por estaca…</option>${msts.map(s => `<option value="k:${esc(s)}" ${ST.scope==='k:'+s?'selected':''}>${esc(s)}</option>`).join('')}</select></div><span class="hint" id="scopeHint"></span></div>`
+      : opts.length > 1 ? `<div class="scope-row"><div class="seg" id="scope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.scope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div><span class="hint" id="scopeHint"></span></div>` : '<div style="height:12px"></div>';
     body.innerHTML = `
       <div class="search-box"><span class="si">${ICON.search}</span><input id="q" type="search" placeholder="Buscar por nombre o apellido…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" value="${esc(ST.q)}"><button class="icon-btn sm clear ${ST.q?'':'hide'}" id="qClear" aria-label="Limpiar">${ICON.x}</button></div>
-      ${opts.length > 1 ? `<div class="scope-row"><div class="seg" id="scope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.scope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div><span class="hint" id="scopeHint"></span></div>` : '<div style="height:12px"></div>'}
+      ${scopeRow}
       <div id="results" class="results"></div>
       <button class="manual-cta" id="manualBtn"><span class="mc-ico">${ICON.userPlus}</span><span><b>¿No aparece en la lista?</b><small>Registrar sus datos para inscribirlo en Wise</small></span>${ICON.next}</button>
       <p class="who">Registrando como <b>${esc(myName() || 'sin nombre')}</b> · <button id="chName">cambiar</button></p>`;
@@ -2889,7 +2929,9 @@ function renderEventTab(){
     q.oninput = () => { ST.q = q.value; $('#qClear').classList.toggle('hide', !q.value); renderResults(); };
     q.onkeydown = e => { if(e.key === 'Enter'){ const first = $('#results .person:not(.is-marked)'); if(first) first.click(); } };
     $('#qClear').onclick = () => { ST.q = ''; q.value = ''; $('#qClear').classList.add('hide'); renderResults(); q.focus(); };
-    $$('#scope button').forEach(b => b.onclick = () => { ST.scope = b.dataset.s; $$('#scope button').forEach(x => x.classList.toggle('on', x === b)); renderResults(); });
+    $$('#scope button').forEach(b => b.onclick = () => { ST.scope = b.dataset.s; $$('#scope button').forEach(x => x.classList.toggle('on', x === b)); syncScopeK(); renderResults(); });
+    const sk = $('#scopeK');
+    if(sk) sk.onchange = () => { ST.scope = sk.value || 'all'; $$('#scope button').forEach(x => x.classList.toggle('on', x.dataset.s === ST.scope)); syncScopeK(); renderResults(); };
     $('#manualBtn').onclick = () => openManualEvent(ev);
     $('#chName').onclick = askName;
     renderResults();
@@ -2945,7 +2987,7 @@ function renderEventTab(){
     $('#xPd').onclick = () => exportEventHtml(ev, false);
     $('#waSum').onclick = () => {
       const man = rows.filter(r => r.src === 'manual').length;
-      waOpen(`*Asistencia · ${ev.meta.title}*\n${[ev.meta.stake, ev.meta.ward].filter(Boolean).join(' · ')}\n${fmtDate(ev.meta.date)}\n\n✅ Total asistentes: *${rows.length}*\n📝 Inscripciones manuales: ${man}\nCódigo: ${CUR.code}`);
+      waOpen(`*Asistencia · ${ev.meta.title}*\n${evLugar(ev.meta)}\n${fmtDate(ev.meta.date)}\n\n✅ Total asistentes: *${rows.length}*\n📝 Inscripciones manuales: ${man}\nCódigo: ${CUR.code}`);
     };
     $('#bk').onclick = () => downloadBackup({ kind:'ca-backup', type:'event', ver:1, exportedAt:new Date().toISOString(), data: cleanForBackup(ev) }, 'Backup evento '+ev.meta.title);
     $('#rmEv').onclick = async () => {
@@ -2954,6 +2996,11 @@ function renderEventTab(){
       delete EVENTS[CUR.code]; saveEvents(); go('#/');
     };
   }
+}
+function syncScopeK(){
+  const sk = $('#scopeK'); if(!sk) return;
+  sk.value = ST.scope && ST.scope.startsWith('k:') ? ST.scope : '';
+  sk.classList.toggle('on', !!sk.value);
 }
 function renderResults(){
   const el = $('#results'); if(!el) return;
@@ -2981,7 +3028,11 @@ function renderResults(){
   if(res.total > res.list.length) html += `<div class="hint" style="text-align:center">Mostrando ${res.list.length} de ${res.total}. Escribe más para afinar.</div>`;
   el.innerHTML = html;
   $$('.person[data-pid]', el).forEach(b => b.onclick = () => onPickEvent(ev, PBY.get(b.dataset.pid), marked.get(b.dataset.pid)));
-  const more = $('#moreScope'); if(more) more.onclick = () => { const o = scopeOptions(m.stake, m.ward); const i = o.findIndex(x => x[0] === ST.scope); ST.scope = o[Math.min(i+1, o.length-1)][0]; $$('#scope button').forEach(x => x.classList.toggle('on', x.dataset.s === ST.scope)); renderResults(); };
+  const more = $('#moreScope'); if(more) more.onclick = () => {
+    if(m.multi) ST.scope = 'all';
+    else { const o = scopeOptions(m.stake, m.ward); const i = o.findIndex(x => x[0] === ST.scope); ST.scope = o[Math.min(i+1, o.length-1)][0]; }
+    $$('#scope button').forEach(x => x.classList.toggle('on', x.dataset.s === ST.scope)); syncScopeK(); renderResults();
+  };
 }
 // Evento en línea: la base de personas se busca en Supabase (el celular ya no la guarda).
 let EVQ = { key:'', list:[] };
@@ -2989,7 +3040,7 @@ const EVP = new Map();
 const personaDe = id => PBY.get(id) || EVP.get(id);
 function renderResultsOnline(el, ev, q, marked, hint){
   const m = ev.meta;
-  const fk = ST.scope === 'all' ? '' : (m.stake || ''), fw = ST.scope === 'w' ? (m.ward || '') : '';
+  const { k:fk, w:fw } = evScope(m, ST.scope);
   const key = [ev.remote, norm(q), fk, fw].join('|');
   const paint = () => {
     const dentro = EVQ.list.filter(p => p.en_filtro), fuera = EVQ.list.filter(p => !p.en_filtro);
@@ -3187,7 +3238,7 @@ async function paintQrCard(ev){
     <div class="btn-row" style="margin-top:10px"><button class="btn danger" id="qrOff">Apagar QR</button></div>`;
   try{ const cv = await qrCanvas(link, { size:420 }); cv.className = 'qr-img'; $('.qr-wrap', box).appendChild(cv); }
   catch(e){ $('.qr-wrap', box).innerHTML = `<p class="hint">No se pudo dibujar el QR (revisa tu internet). El enlace sí funciona.</p>`; }
-  const poster = () => qrCanvas(link, { title: ev.meta.title, sub: [fmtDate(ev.meta.date), ev.meta.ward || ev.meta.stake].filter(Boolean).join(' · '), size:900 });
+  const poster = () => qrCanvas(link, { title: ev.meta.title, sub: [fmtDate(ev.meta.date), ev.meta.multi ? 'Multiestaca' : ev.meta.ward || ev.meta.stake].filter(Boolean).join(' · '), size:900 });
   $('#qrBig', box).onclick = async () => {
     const cv = await poster();
     sheet(`${sheetHead('QR de asistencia', esc(ev.meta.title))}<div class="qr-full" id="qrFull"></div><div class="sh-foot"><button class="btn primary" data-close>Cerrar</button></div>`, { wide:true, onMount(el){ $('#qrFull', el).appendChild(cv); } });
@@ -4879,7 +4930,7 @@ function buildEventReport(ev){
   const fields = FIELD_DEFS.filter(f => (m.fields||[]).includes(f.k)); const cus = m.custom || [];
   const man = rows.filter(r => r.src === 'manual');
   const byWho = {}; rows.forEach(r => { const k = r.by || 'Sin nombre'; byWho[k] = (byWho[k]||0) + 1; });
-  const sub = [m.stake, m.ward || (m.stake ? 'Todos los barrios' : ''), fmtDate(m.date), 'Código '+ev.code, ev.contrib ? 'Aporte de '+(myName()||'colaborador') : ''].filter(Boolean).join(' · ');
+  const sub = [evLugar(m), fmtDate(m.date), 'Código '+ev.code, ev.contrib ? 'Aporte de '+(myName()||'colaborador') : ''].filter(Boolean).join(' · ');
   const detail = (r, i) => {
     const mm = r.manual || {}, d = r.data || {};
     const kv = r.src === 'manual'
