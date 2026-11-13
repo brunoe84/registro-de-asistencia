@@ -3724,8 +3724,52 @@ async function inscEnviar(x){
     if(!miYo()) guardarYo({ nombre: r.nombre, persona_id: x.persona || undefined, nombres: x.nombres, apellidos: x.apellidos });
     if(navigator.vibrate) navigator.vibrate(40);
     const nom = prettyName(r.nombre);
-    $('#qrMain').innerHTML = INSC_P.head + `<section class="card qr-done">${OK_ANIM}<h2>${r.estado === 'actualizado' ? '¡Datos actualizados!' : '¡Inscripción enviada!'}</h2><p>Gracias, ${esc(nom)}. Con estos datos te inscribiremos en ${nomProgDe(INSC_P.prog)}.</p></section>`;
+    $('#qrMain').innerHTML = INSC_P.head + `<section class="card qr-done">${OK_ANIM}<h2>${r.estado === 'actualizado' ? '¡Datos actualizados!' : '¡Inscripción enviada!'}</h2><p>Gracias, ${esc(nom)}. Con estos datos te inscribiremos en ${nomProgDe(INSC_P.prog)}.</p></section>`
+      + (r.id ? '<div id="inscMaestro"></div>' : '');
+    if(r.id) inscElegirMaestro(r.id, x.datos || {});
   }catch(e){ console.error(e); $$('#qrMain button').forEach(b => b.disabled = false); toast(errMsg(e), 'error'); }
+}
+// Último paso (opcional): elegir su clase por el nombre del maestro o, si no lo sabe, por su barrio.
+const diasCortos = d => (d || []).slice().sort((a, b) => a - b).map(n => DOW[n]).filter(Boolean).join('-');
+function inscElegirMaestro(inscId, datos){
+  const box = $('#inscMaestro'); if(!box) return;
+  box.innerHTML = `<section class="card"><h2>${ICON.users} ¿Quién es tu maestro?</h2>
+    <p class="hint" style="margin-top:0">Escribe el <b>nombre de tu maestro</b>. Si no lo sabes, escribe el <b>nombre de tu barrio</b> y te mostramos las clases de ahí. Así quedas en su lista desde hoy.</p>
+    <div class="search-box"><span class="si">${ICON.search}</span><input id="mq" type="search" placeholder="Nombre del maestro o de tu barrio" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
+    <div id="mRes" class="results"><div class="empty-hint"><small>Escribe al menos 3 letras.</small></div></div>
+    <p class="who"><button id="mSkip">Todavía no tengo maestro</button></p></section>`;
+  const q = $('#mq'), res = $('#mRes');
+  let n = 0, ultimo = null;
+  const buscar = debounce(async () => {
+    const t = q.value.trim(); if(t === ultimo) return; ultimo = t;
+    const id = ++n;
+    if(!norm(t).split(' ').some(w => w.length >= 3)){ res.innerHTML = `<div class="empty-hint"><small>Escribe al menos 3 letras.</small></div>`; return; }
+    res.innerHTML = loadingHTML('Buscando clases…', true);
+    try{
+      const list = await SB.rpc('buscar_clases_inscripcion', { token: INSC_P.token, texto: t, estaca: datos.estaca || null });
+      if(id !== n) return;
+      const porBarrio = list.length && list.every(c => c.coincide === 'barrio');
+      res.innerHTML = list.length
+        ? (porBarrio ? `<div class="hint" style="margin:2px 2px 8px">Clases con alumnos de “${esc(t)}”. Elige la tuya:</div>` : '')
+          + list.map((c, i) => `<button class="person" data-i="${i}"><span class="av">${esc(initials(c.maestro))}</span><span class="pi"><b>${c.coincide === 'maestro' ? highlight(c.maestro, t) : esc(prettyName(c.maestro))}</b><small>${esc([c.curso, [diasCortos(c.dias), c.horario].filter(Boolean).join(' '), c.barrio || stakeShort(c.estaca_clase), c.alumnos ? c.alumnos + ' alumno' + (c.alumnos > 1 ? 's' : '') : ''].filter(Boolean).join(' · '))}</small></span><span class="mk">Es mi clase</span></button>`).join('')
+        : `<div class="empty-hint"><p>No encontramos clases con “${esc(t)}”</p><small>Prueba solo con el apellido de tu maestro o con el nombre de tu barrio.</small></div>`;
+      $$('[data-i]', res).forEach(b => b.onclick = () => inscUnirClase(inscId, list[+b.dataset.i]));
+    }catch(e){ console.error(e); ultimo = null; if(id === n) res.innerHTML = `<div class="info-box">No se pudo buscar: ${esc(errMsg(e))}.</div>`; }
+  }, 350);
+  ['input', 'keyup', 'change', 'search'].forEach(ev => q.addEventListener(ev, buscar));
+  $('#mSkip').onclick = () => { box.innerHTML = `<div class="info-box" style="margin-top:12px">Está bien. Cuando sepas quién es tu maestro, él podrá agregarte a su clase.</div>`; };
+  // Sugerencia inicial: las clases de su barrio.
+  if(norm(datos.barrio || '').split(' ').some(w => w.length >= 3)){ q.value = datos.barrio; buscar(); }
+}
+async function inscUnirClase(inscId, c){
+  const ok = await confirmBox(`<b>${esc(prettyName(c.maestro))}</b><br>${esc([c.curso, [diasCortos(c.dias), c.horario].filter(Boolean).join(' ')].filter(Boolean).join(' · '))}`, { title:'¿Es tu clase?', ok:'Sí, unirme' });
+  if(!ok) return;
+  $$('#inscMaestro button').forEach(b => b.disabled = true);
+  try{
+    const r = await SB.rpc('unirme_a_clase_inscripcion', { token: INSC_P.token, inscripcion: inscId, clase: c.id });
+    if(navigator.vibrate) navigator.vibrate(40);
+    $('#inscMaestro').innerHTML = `<section class="card qr-done">${OK_ANIM}<h2>${r.estado === 'ya_estaba' ? '¡Ya estabas en su clase!' : '¡Ya estás en tu clase!'}</h2><p>Maestro: <b>${esc(prettyName(r.maestro))}</b><br>${esc([r.curso, [diasCortos(r.dias), r.horario].filter(Boolean).join(' ')].filter(Boolean).join(' · '))}</p></section>`;
+  }catch(e){ console.error(e); $$('#inscMaestro button').forEach(b => b.disabled = false); toast(errMsg(e), 'error'); }
 }
 
 /* ============================================================
