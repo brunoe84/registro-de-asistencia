@@ -294,6 +294,8 @@ svg{width:18px;height:18px;flex-shrink:0}
 .acuerdo-txt h4,.legal-txt h4{font-size:13.5px;margin:12px 0 4px}
 .legal-txt{font-size:14px;line-height:1.55}
 .legal-txt p{margin:0 0 8px}
+.llave-card{border:1.5px solid var(--teal);background:#F4FAFA}
+.llave-ok{margin:12px 2px 0}
 .base-sel{border-top:1px solid var(--line);padding-top:14px;margin-top:4px}
 .base-sel .radio-list{margin-top:8px}
 .base-sel .radio-list input{width:18px;height:18px;padding:0;flex-shrink:0;margin-top:2px}
@@ -2247,6 +2249,132 @@ let PERSONAS_CACHE = null;
 /* Inscritos para Wise2, por programa. Vienen del QR de una clase (no estaban en la lista) o del
    enlace de inscripción del programa. Solo el administrador ve estos datos y los marca como
    inscritos cuando los pasa a Wise2. */
+/* ---------- Datos de inscripción cifrados de punta a punta ----------
+   El celular del joven cifra los datos sensibles con la llave pública del administrador
+   (RSA-OAEP + AES-GCM). La llave privada solo se abre con la contraseña del administrador
+   (PBKDF2): en el servidor nadie puede leerlos. Cada dispositivo del administrador recuerda
+   la llave abierta (IndexedDB, no exportable). */
+const SENSIBLES = ['cedula', 'usuario', 'nacimiento', 'celular', 'tutor', 'tutor_celular', 'tutor_correo', 'direccion'];
+const RSA_ALG = { name:'RSA-OAEP', hash:'SHA-256' };
+const aB64 = buf => { const u = new Uint8Array(buf); let s = ''; for(let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s); };
+const deB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const soloSensibles = d => Object.fromEntries(SENSIBLES.filter(k => d && d[k] && d[k] !== '*').map(k => [k, d[k]]));
+function idbAbrir(){ return new Promise((res, rej) => { const r = indexedDB.open('ca_llaves', 1); r.onupgradeneeded = () => r.result.createObjectStore('k'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbLeer(key){ try{ const db = await idbAbrir(); return await new Promise((res, rej) => { const q = db.transaction('k').objectStore('k').get(key); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); }); }catch{ return null; } }
+async function idbGuardar(key, val){ try{ const db = await idbAbrir(); await new Promise((res, rej) => { const t = db.transaction('k', 'readwrite'); if(val == null) t.objectStore('k').delete(key); else t.objectStore('k').put(val, key); t.oncomplete = res; t.onerror = () => rej(t.error); }); }catch(e){ console.warn(e); } }
+async function claveDeContrasena(pass, sal, iter){
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name:'PBKDF2', salt:sal, iterations:iter, hash:'SHA-256' }, base, { name:'AES-GCM', length:256 }, false, ['encrypt', 'decrypt']);
+}
+async function crearLlaveInscripciones(pass){
+  const kp = await crypto.subtle.generateKey(Object.assign({ modulusLength:2048, publicExponent:new Uint8Array([1, 0, 1]) }, RSA_ALG), true, ['encrypt', 'decrypt']);
+  const pub = await crypto.subtle.exportKey('spki', kp.publicKey), pk8 = await crypto.subtle.exportKey('pkcs8', kp.privateKey);
+  const sal = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12)), iter = 310000;
+  const enc = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, await claveDeContrasena(pass, sal, iter), pk8);
+  return { datos:{ publica:aB64(pub), privada_cifrada:aB64(enc), sal:aB64(sal), iv:aB64(iv), iteraciones:iter }, priv: await crypto.subtle.importKey('pkcs8', pk8, RSA_ALG, false, ['decrypt']) };
+}
+async function abrirLlaveInscripciones(info, pass){
+  let pk8;
+  try{ pk8 = await crypto.subtle.decrypt({ name:'AES-GCM', iv:deB64(info.iv) }, await claveDeContrasena(pass, deB64(info.sal), info.iteraciones), deB64(info.privada_cifrada)); }
+  catch{ throw new Error('Contraseña incorrecta'); }
+  return crypto.subtle.importKey('pkcs8', pk8, RSA_ALG, false, ['decrypt']);
+}
+async function cifrarConLlave(publica, obj){
+  const pub = await crypto.subtle.importKey('spki', deB64(publica), RSA_ALG, false, ['encrypt']);
+  const k = await crypto.subtle.generateKey({ name:'AES-GCM', length:256 }, true, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const c = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, k, new TextEncoder().encode(JSON.stringify(obj)));
+  const kw = await crypto.subtle.encrypt(RSA_ALG, pub, await crypto.subtle.exportKey('raw', k));
+  return { v:'1', k:aB64(kw), iv:aB64(iv), c:aB64(c) };
+}
+async function descifrarConLlave(priv, cif){
+  const k = await crypto.subtle.importKey('raw', await crypto.subtle.decrypt(RSA_ALG, priv, deB64(cif.k)), 'AES-GCM', false, ['decrypt']);
+  return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name:'AES-GCM', iv:deB64(cif.iv) }, k, deB64(cif.c))));
+}
+// Celular del joven: cifra lo sensible antes de enviar. Sin llave creada (o sin WebCrypto) va como antes
+// y el administrador lo cifra al abrir sus inscripciones.
+let LLAVE_PUB;
+async function cifrarDatosInscripcion(datos, prog){
+  try{
+    if(!(globalThis.crypto && crypto.subtle)) return datos;
+    if(LLAVE_PUB === undefined) LLAVE_PUB = (await SB.rpc('llave_publica_inscripciones')) || null;
+    const sens = soloSensibles(datos);
+    if(!LLAVE_PUB || !Object.keys(sens).length) return datos;
+    const rest = Object.fromEntries(Object.entries(datos).filter(([k]) => !SENSIBLES.includes(k)));
+    // "*" solo para pasar las validaciones del servidor: no se guardan.
+    const marcas = prog === 'S' ? { nacimiento:'*', celular:'*', tutor:'*', tutor_celular:'*' } : { nacimiento:'*', celular:'*' };
+    return Object.assign(rest, marcas, { cifrado: await cifrarConLlave(LLAVE_PUB, sens) });
+  }catch(e){ console.warn('No se pudo cifrar', e); return datos; }
+}
+// Administrador: estado de la llave en este dispositivo.
+const LLAVE = { info:undefined, priv:null };
+const llaveIdbKey = info => 'insc:' + info.publica.slice(-32);
+async function llaveAdmin(){
+  if(LLAVE.info === undefined) LLAVE.info = (await SB.rpc('llave_admin_inscripciones')) || null;
+  if(LLAVE.info && !LLAVE.priv) LLAVE.priv = await idbLeer(llaveIdbKey(LLAVE.info));
+  return LLAVE;
+}
+function llaveCardHTML(L, nBloq){
+  if(!(globalThis.crypto && crypto.subtle)) return `<div class="warn-box">Este navegador no permite cifrar. Abre la app con https en un navegador actualizado.</div>`;
+  if(!L.info) return `<section class="card llave-card"><h2>🔒 Protege los datos de inscripción</h2>
+    <p class="hint" style="margin-top:0">Crea una contraseña solo tuya. Desde ese momento la fecha de nacimiento, celulares, cédula, usuario y los datos del padre o madre viajan <b>cifrados</b>: en el servidor nadie puede leerlos, solo tú con esta contraseña.</p>
+    <div class="row2"><div class="field"><label>Contraseña nueva</label><input type="password" id="llP1" autocomplete="new-password" placeholder="Mínimo 8 caracteres"></div>
+      <div class="field"><label>Repite la contraseña</label><input type="password" id="llP2" autocomplete="new-password"></div></div>
+    <div class="info-box">Anótala en un lugar seguro. <b>Si la olvidas, los datos que aún no pasaste a Wise no se podrán leer.</b> En cada dispositivo nuevo te la pediremos una sola vez.</div>
+    <div class="btn-row"><button class="btn primary" id="llCrear">🔒 Crear contraseña y proteger</button></div></section>`;
+  if(!L.priv) return `<section class="card llave-card"><h2>🔒 Escribe tu contraseña de inscripciones</h2>
+    <p class="hint" style="margin-top:0">${nBloq ? `<b>${nBloq}</b> inscripci${nBloq === 1 ? 'ón tiene' : 'ones tienen'} datos cifrados. ` : ''}Este dispositivo la recordará; no tendrás que escribirla otra vez aquí.</p>
+    <div class="join"><input type="password" id="llPass" autocomplete="current-password" placeholder="Tu contraseña de inscripciones"><button class="btn primary" id="llAbrir">Abrir</button></div>
+    <p class="who"><button id="llOlvide">Olvidé mi contraseña</button></p></section>`;
+  return `<p class="hint llave-ok">🔒 Datos cifrados de punta a punta · abiertos en este dispositivo · <button class="link-btn" id="llCerrar">Cerrar aquí</button></p>`;
+}
+function bindLlaveCard(atendidas){
+  const re = () => renderInscripciones(atendidas);
+  const crear = async (reemplazar) => {
+    const p1 = $('#llP1').value, p2 = $('#llP2').value;
+    if(p1.length < 8) return toast('La contraseña necesita al menos 8 caracteres', 'error');
+    if(p1 !== p2) return toast('Las contraseñas no coinciden', 'error');
+    $('#llCrear').disabled = true; $('#llCrear').textContent = 'Creando la llave…';
+    try{
+      const { datos, priv } = await crearLlaveInscripciones(p1);
+      await SB.rpc('guardar_llave_inscripciones', { datos, reemplazar: !!reemplazar });
+      LLAVE.info = Object.assign({}, datos); LLAVE.priv = priv; LLAVE_PUB = datos.publica;
+      await idbGuardar(llaveIdbKey(LLAVE.info), priv);
+      toast('🔒 Listo: los datos de inscripción ahora viajan cifrados', 'ok', { ms:4500 });
+      re();
+    }catch(e){ console.error(e); $('#llCrear').disabled = false; $('#llCrear').textContent = '🔒 Crear contraseña y proteger'; toast(errMsg(e), 'error'); }
+  };
+  const bc = $('#llCrear'); if(bc) bc.onclick = () => crear(!!LLAVE.reemplazar);
+  const ba = $('#llAbrir');
+  if(ba){
+    const abrir = async () => {
+      ba.disabled = true; ba.textContent = 'Abriendo…';
+      try{ LLAVE.priv = await abrirLlaveInscripciones(LLAVE.info, $('#llPass').value); await idbGuardar(llaveIdbKey(LLAVE.info), LLAVE.priv); re(); }
+      catch(e){ ba.disabled = false; ba.textContent = 'Abrir'; toast(e.message || 'No se pudo abrir', 'error'); }
+    };
+    ba.onclick = abrir; $('#llPass').onkeydown = e => { if(e.key === 'Enter') abrir(); };
+  }
+  const bo = $('#llOlvide');
+  if(bo) bo.onclick = async () => {
+    if(!(await confirmBox('Se creará una contraseña nueva. Las inscripciones cifradas con la anterior que aún no pasaste a Wise <b>no se podrán leer</b> (solo sus nombres). Las que ya guardaste en este u otro dispositivo no se pierden.', { title:'Olvidé mi contraseña', ok:'Crear contraseña nueva', danger:true }))) return;
+    LLAVE.info = null; LLAVE.reemplazar = true; re();
+  };
+  const bx = $('#llCerrar');
+  if(bx) bx.onclick = async () => { await idbGuardar(llaveIdbKey(LLAVE.info), null); LLAVE.priv = null; toast('La llave se cerró en este dispositivo'); re(); };
+}
+// Inscripciones que aún tienen datos en claro en el servidor (anteriores a la llave): se cifran ahora.
+async function cifrarPendientesEnClaro(lista){
+  if(!LLAVE.info || !LLAVE.priv) return;
+  const filas = [];
+  for(const x of lista){
+    if(!x.enClaro) continue;
+    try{ filas.push({ id:x.id, cifrado: await cifrarConLlave(LLAVE.info.publica, soloSensibles(x.datos)) }); }catch(e){ console.warn(e); }
+  }
+  if(!filas.length) return;
+  try{ const n = await SB.rpc('cifrar_inscripciones', { filas }); if(n) toast(`🔒 Se cifraron ${n} inscripci${n === 1 ? 'ón anterior' : 'ones anteriores'} en el servidor`, 'ok'); }
+  catch(e){ console.warn('cifrar_inscripciones', e); }
+}
+
 async function renderInscripciones(atendidas){
   CUR = { type:'inscripciones', code:null };
   const prog = ST.insProg === 'I' ? 'I' : 'S';
@@ -2261,20 +2389,36 @@ async function renderInscripciones(atendidas){
   const body = $('#insBody');
   try{
     const todos = await SB.rpc('inscripciones_wise', { atendidas: !!atendidas, prog });
-    const EST = { pendiente:'Asistencia por aprobar', aprobada:'Asistencia aprobada', rechazada:'El maestro dijo que no vino' };
+    // Descifrar con la llave de este dispositivo; los ya inscritos se completan con la copia local.
+    let L = { info:null, priv:null };
+    try{ L = await llaveAdmin(); }catch(e){ console.warn('llave', e); }
+    const local = LS.get('ca_insc_local', {});
+    for(const x of todos){
+      x.datos = x.datos || {};
+      x.enClaro = !atendidas && Object.keys(soloSensibles(x.datos)).length > 0;
+      if(x.datos.cifrado){
+        if(L.priv){ try{ Object.assign(x.datos, await descifrarConLlave(L.priv, x.datos.cifrado)); }catch(e){ console.warn(e); x.bloqueada = true; } }
+        else x.bloqueada = true;
+      }
+      if(local[x.id]) x.datos = Object.assign({}, local[x.id], soloSensibles(x.datos), Object.fromEntries(Object.entries(x.datos).filter(([k]) => !SENSIBLES.includes(k))));
+    }
+    const nBloq = todos.filter(x => x.bloqueada).length;
+    cifrarPendientesEnClaro(todos);
+    const EST ={ pendiente:'Asistencia por aprobar', aprobada:'Asistencia aprobada', rechazada:'El maestro dijo que no vino' };
     // Alumnos nuevos del maestro: naranja si no completaron la ficha, dorado si ya la completaron.
     const color = x => x.origen !== 'maestro' ? '' : x.completada_en ? 'dorado' : 'naranja';
     const nN = todos.filter(x => color(x) === 'naranja').length, nD = todos.filter(x => color(x) === 'dorado').length;
     const filtro = ['naranja', 'dorado', 'otros'].includes(ST.insFiltro) ? ST.insFiltro : 'todos';
     const lista = filtro === 'todos' ? todos : todos.filter(x => filtro === 'otros' ? x.origen !== 'maestro' : color(x) === filtro);
     const sinCompletar = x => x.origen === 'maestro' && !x.completada_en;
-    body.innerHTML = `<div class="seg" style="margin:14px 0" id="insTabs"><button data-t="0" class="${atendidas ? '' : 'on'}">Por inscribir</button><button data-t="1" class="${atendidas ? 'on' : ''}">Ya inscritos</button></div>
+    body.innerHTML = `${llaveCardHTML(L, nBloq)}<div class="seg" style="margin:14px 0" id="insTabs"><button data-t="0" class="${atendidas ? '' : 'on'}">Por inscribir</button><button data-t="1" class="${atendidas ? 'on' : ''}">Ya inscritos</button></div>
       <div class="ins-sum" id="insFil">${[['todos', 'Todos', todos.length, ''], ['naranja', 'Ficha pendiente', nN, '#E8692A'], ['dorado', 'Ficha completa', nD, 'var(--gold)'], ['otros', 'QR y enlace general', todos.length - nN - nD, '']].filter(f => f[0] === 'todos' || f[2] || f[0] === filtro).map(([k, l, n, c]) => `<button data-f="${k}" class="${filtro === k ? 'on' : ''}">${c ? `<span class="dot" style="background:${c}"></span>` : ''}${l} · ${n}</button>`).join('')}</div>
       <p class="hint" style="margin:0 0 12px">${lista.length} ${atendidas ? (lista.length === 1 ? 'ya inscrito' : 'ya inscritos') : 'por inscribir'} en ${nomProg}. <b>Solo tú ves estos datos.</b>${!atendidas && nN ? ' Los <b style="color:#B4470E">naranjas</b> los agregó un maestro y aún no completan su ficha: puedes reenviarles el enlace.' : ''}</p>
       ${lista.map((x, i) => `<section class="card ins-card ${color(x)}">
         <div class="ins-h"><b>${esc(prettyName(x.nombre))}</b>${x.origen === 'maestro' ? (x.completada_en ? '<span class="badge b-oro">Ficha completa</span>' : '<span class="badge b-naranja">Ficha pendiente</span>') : x.origen === 'enlace' ? '<span class="badge b-ok">Enlace de inscripción</span>' : `<span class="badge ${x.aprobada === 'aprobada' ? 'b-ok' : 'b-ro'}">${esc(EST[x.aprobada] || x.aprobada)}</span>`}</div>
         <p class="meta" style="margin-top:2px">${esc(x.origen === 'maestro' ? ['Alumno nuevo de la clase de ' + prettyName(x.maestro), x.horario, x.retirado ? 'ya no está en la clase' : ''].filter(Boolean).join(' · ') : x.origen === 'enlace' ? 'Se inscribió con el enlace de ' + nomProg : ['QR de la clase de ' + prettyName(x.maestro), x.horario].filter(Boolean).join(' · '))}</p>
         ${sinCompletar(x) ? `<p class="meta" style="margin-top:4px;color:#B4470E"><b>${x.enviado_en ? 'Enlace enviado ' + esc(haceCuanto(x.enviado_en)) + (x.envios > 1 ? ' · ' + x.envios + ' envíos' : '') : 'Enlace aún no enviado'}</b> · agregado ${esc(haceCuanto(x.creado_en))}</p>` : ''}
+        ${x.bloqueada ? `<p class="meta" style="margin-top:6px">🔒 <b>Datos protegidos.</b> Escribe tu contraseña de inscripciones arriba para verlos.</p>` : ''}
         <dl class="kv">${[['Estaca', stakeShort(x.datos.estaca || x.estaca)], ['Barrio', x.datos.barrio || x.barrio], ['Miembro de la Iglesia', x.datos.miembro === 'si' ? 'Sí' : x.datos.miembro === 'no' ? 'No' : ''], ['Cédula de miembro', x.datos.cedula], ['Usuario de la Iglesia', x.datos.usuario], ['Fecha de nacimiento', x.datos.nacimiento ? fmtDMY(x.datos.nacimiento) : ''], ['Celular', x.datos.celular], ['WhatsApp que dio el maestro', x.whatsapp && x.whatsapp !== x.datos.celular ? x.whatsapp : ''], ['Padre o madre', x.datos.tutor], ['Número del padre o madre', x.datos.tutor_celular], ['Correo del padre o madre', x.datos.tutor_correo], ['Dirección de casa', x.datos.direccion], ['Acuerdo aceptado', x.datos.acuerdo ? x.datos.acuerdo + (x.datos.acepto_en ? ' · ' + new Date(x.datos.acepto_en).toLocaleString('es-PE') : '') : sinCompletar(x) ? '' : 'No registrado'], ['En la base', x.origen === 'maestro' ? (x.en_base ? 'Sí' : 'No') : x.en_base ? 'Sí' : 'No (escribió sus datos)'], [x.origen === 'maestro' ? 'Agregado por el maestro' : 'Se registró', new Date(x.creado_en).toLocaleString('es-PE')], ['Completó su ficha', x.origen === 'maestro' && x.completada_en ? new Date(x.completada_en).toLocaleString('es-PE') : '']].filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
         <div class="btn-row">${sinCompletar(x) && !atendidas ? `<button class="btn sm wa-btn" data-fw="${i}">${ICON.chat} ${x.envios ? 'Reenviar' : 'Enviar'} enlace</button><button class="btn sm" data-fc="${i}">${ICON.copy} Copiar enlace</button>` : `<button class="btn sm" data-cp="${i}">${ICON.copy} Copiar datos</button>`}<button class="btn sm ${atendidas || sinCompletar(x) ? '' : 'primary'}" data-at="${i}">${atendidas ? 'Volver a “por inscribir”' : ICON.check + ' Ya lo inscribí en Wise'}</button></div>
       </section>`).join('') || `<div class="empty">${atendidas ? 'Todavía no marcaste a nadie como inscrito.' : filtro !== 'todos' ? 'No hay nadie con este filtro.' : 'No hay nadie por inscribir en ' + nomProg + '.'}</div>`}`;
@@ -2290,9 +2434,17 @@ async function renderInscripciones(atendidas){
     $$('[data-fc]', body).forEach(b => b.onclick = () => copyText(appLink('f', lista[+b.dataset.fc].token), 'Enlace copiado'));
     $$('[data-cp]', body).forEach(b => b.onclick = () => { const x = lista[+b.dataset.cp], d = x.datos; copyText([prettyName(x.nombre), 'Programa: ' + nomProg, (d.estaca || x.estaca) && 'Estaca: ' + stakeShort(d.estaca || x.estaca), (d.barrio || x.barrio) && 'Barrio: ' + (d.barrio || x.barrio), d.miembro && 'Miembro: ' + (d.miembro === 'si' ? 'Sí' : 'No'), d.cedula && 'Cédula: ' + d.cedula, d.usuario && 'Usuario: ' + d.usuario, d.nacimiento && 'Nacimiento: ' + fmtDMY(d.nacimiento), d.celular && 'Celular: ' + d.celular, d.tutor && 'Padre o madre: ' + d.tutor, d.tutor_celular && 'Número del padre o madre: ' + d.tutor_celular, d.tutor_correo && 'Correo del padre o madre: ' + d.tutor_correo, d.direccion && 'Dirección: ' + d.direccion, d.acuerdo && 'Aceptó el acuerdo de inscripción en ' + d.acuerdo, x.origen === 'enlace' ? 'Origen: enlace de inscripción' : 'Clase: ' + prettyName(x.maestro) + ' · ' + x.horario].filter(Boolean).join('\n'), 'Datos copiados'); });
     $$('[data-at]', body).forEach(b => b.onclick = async () => {
-      try{ await SB.rpc('atender_inscripcion', { inscripcion: lista[+b.dataset.at].id, atendida: !atendidas }); await SB.loadCounts().catch(()=>{}); renderInscripciones(atendidas); }
+      const x = lista[+b.dataset.at];
+      if(!atendidas){
+        // Al pasarlo a Wise, sus datos sensibles se borran del servidor: quedan solo en este dispositivo.
+        if(x.bloqueada && !(await confirmBox('Sus datos están cifrados y este dispositivo aún no los abrió. Si continúas, se borrarán del servidor sin guardarse aquí.', { title:'¿Marcar sin abrir sus datos?', ok:'Marcar igual', danger:true }))) return;
+        const sens = soloSensibles(x.datos);
+        if(Object.keys(sens).length){ const loc = LS.get('ca_insc_local', {}); loc[x.id] = sens; LS.set('ca_insc_local', loc); }
+      }
+      try{ await SB.rpc('atender_inscripcion', { inscripcion: x.id, atendida: !atendidas }); await SB.loadCounts().catch(()=>{}); renderInscripciones(atendidas); }
       catch(e){ console.error(e); toast(errMsg(e), 'error'); }
     });
+    bindLlaveCard(atendidas);
   }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
 }
 // Enlace y QR de inscripción del programa, para compartir con los jóvenes.
@@ -2801,7 +2953,7 @@ const LEGAL = {
       'De las personas en las listas de clases y eventos: nombres y apellidos, estaca, barrio o rama y programa (Seminario o Instituto).',
       'De la asistencia: fecha y hora de cada registro, quién lo marcó y, si el evento las incluye, las respuestas a sus preguntas y la firma de un registro manual.',
       'De quien usa la aplicación: un identificador anónimo de sesión, el nombre que escribes como maestro, colaborador o supervisor, el celular que deja un supervisor al pedir acceso y, si los activas, los datos técnicos para enviarte recordatorios al celular.',
-      'Solo para la inscripción en Seminario o Instituto, y visibles únicamente para el Administrador: fecha de nacimiento, celular, cédula y usuario de miembro (opcionales) y, en Seminario, nombre, número, correo y dirección del padre o madre.',
+      'Solo para la inscripción en Seminario o Instituto, y visibles únicamente para el Administrador: fecha de nacimiento, celular, cédula y usuario de miembro (opcionales) y, en Seminario, nombre, número, correo y dirección del padre o madre. Estos datos se cifran en el celular de quien se inscribe antes de enviarse: en el servidor quedan cifrados y nadie puede leerlos, ni siquiera el proveedor del servicio; solo el Administrador los abre con su contraseña. Cuando el Administrador completa la inscripción en el sistema del programa, se borran del servidor y quedan únicamente en su dispositivo.',
       'De las listas externas que suba un organizador o maestro: solo nombre, estaca, barrio y programa. Las fechas de nacimiento, direcciones, correos, celulares y documentos se excluyen en el celular y nunca se envían.']],
     ['3. Para qué los usamos', ['Únicamente para registrar y consultar la asistencia a clases y eventos, formar grupos, enviar recordatorios a los maestros y, en el caso de las inscripciones, inscribir al alumno en el sistema del programa. No vendemos, no alquilamos y no usamos estos datos para publicidad.']],
     ['4. Quién puede verlos', ['Cada clase o evento solo lo ven quienes tienen acceso: su maestro o su organizador, los colaboradores que ellos invitan con un código y el Administrador. Las clases y listas privadas (con base propia) solo las ven quien las creó y sus colaboradores. Los datos de inscripción solo los ve el Administrador.']],
@@ -2809,7 +2961,7 @@ const LEGAL = {
     ['6. Cuánto tiempo', ['Mientras la clase, el evento o el periodo académico lo requieran y luego el tiempo razonable para reportes. Quien organiza un evento puede quitar su lista propia en cualquier momento, y el Administrador puede eliminar la información cuando ya no sea necesaria.']],
     ['7. Menores de edad', ['Cuando se registra a menores de edad, quien lo hace declara contar con la autorización de su padre, madre o tutor. La inscripción en Seminario la aceptan el alumno y su padre, madre o tutor.']],
     ['8. Tus derechos', ['Puedes pedir acceso, rectificación, cancelación u oposición sobre tus datos (derechos ARCO) escribiendo al Administrador por WhatsApp al +51 939 628 275. Responderemos dentro de los plazos de ley. También puedes acudir a la Autoridad Nacional de Protección de Datos Personales.']],
-    ['9. Seguridad y cambios', ['Usamos conexiones cifradas, accesos por código y permisos por usuario. Ningún sistema es completamente infalible. Si cambiamos esta Política, se te pedirá aceptarla de nuevo.']],
+    ['9. Seguridad y cambios', ['Usamos conexiones cifradas, cifrado de punta a punta para los datos de inscripción, accesos por código y permisos por usuario. Ningún sistema es completamente infalible. Si cambiamos esta Política, se te pedirá aceptarla de nuevo.']],
   ]},
 };
 const legalHTML = k => `${LEGAL[k].secciones.map(([t, ps]) => `<h4>${esc(t)}</h4>${ps.map(p => `<p>${esc(p)}</p>`).join('')}`).join('')}<p class="hint">Versión ${TERMS_VERSION}.</p>`;
@@ -3874,7 +4026,7 @@ function qrcDatos(d, ctx){
   $$('[data-o]', seg).forEach(b => b.onclick = () => { $$('[data-o]', seg).forEach(x => x.classList.toggle('on', x === b)); seg.dataset.v = b.dataset.o; $('#qdIglesia').classList.toggle('hide', b.dataset.o !== 'si'); });
   if(ctx.volver) $('#qdAtras').onclick = () => ctx.volver();
   if(!base) setTimeout(() => $('#qdForm [name=nombres]').focus(), 200);
-  $('#qdForm').onsubmit = e => {
+  $('#qdForm').onsubmit = async e => {
     e.preventDefault();
     const v = {}; $$('#qdForm [name]').forEach(i => { if(i.value.trim()) v[i.name] = i.value.trim(); });
     v.miembro = seg.dataset.v;
@@ -3889,9 +4041,12 @@ function qrcDatos(d, ctx){
     $('#qdAcepto').classList.remove('err');
     if(!$('#qdAcuerdo').checked){ $('#qdAcepto').classList.add('err'); toast('Para inscribirte debes aceptar el acuerdo de inscripción', 'error'); return; }
     v.acuerdo = ACUERDO_VERSION[prog];
-    const { nombres, apellidos, ...datos } = v;
-    const { acuerdo, ...recordar } = datos;
+    const { nombres, apellidos, ...datos0 } = v;
+    const { acuerdo, ...recordar } = datos0;
     LS.set('ca_yo_datos', recordar);
+    // Lo sensible viaja cifrado: solo el administrador puede leerlo.
+    const sb = $('#qdForm [type=submit]'); if(sb.disabled) return; sb.disabled = true;
+    const datos = await cifrarDatosInscripcion(datos0, prog);
     ctx.enviar(base ? { persona: d.persona || null, datos } : { nombres: titleCase(nombres), apellidos: titleCase(apellidos), datos });
   };
 }
