@@ -291,6 +291,18 @@ svg{width:18px;height:18px;flex-shrink:0}
 .acuerdo details{border:1px solid var(--border);border-radius:12px;background:#FAFCFC}
 .acuerdo summary{cursor:pointer;padding:11px 13px;font-weight:700;font-size:13.5px;color:var(--teal-2)}
 .acuerdo-txt{max-height:320px;overflow:auto;padding:0 13px 12px;font-size:12.5px;line-height:1.5;color:var(--text)}
+.acuerdo-txt h4,.legal-txt h4{font-size:13.5px;margin:12px 0 4px}
+.legal-txt{font-size:14px;line-height:1.55}
+.legal-txt p{margin:0 0 8px}
+.base-sel{border-top:1px solid var(--line);padding-top:14px;margin-top:4px}
+.base-sel .radio-list{margin-top:8px}
+.base-sel .radio-list input{width:18px;height:18px;padding:0;flex-shrink:0;margin-top:2px}
+.base-sel .radio-list label{font-size:14px;font-weight:400;color:var(--text)}
+.drop{margin-top:10px;border:2px dashed var(--border);border-radius:14px;padding:18px 14px;text-align:center;cursor:pointer;background:#FAFCFC;color:var(--text);font-size:14px;transition:border-color .15s,background .15s}
+.drop svg{display:block;margin:0 auto 6px;color:var(--teal)}
+.drop b{display:block}
+.drop small{display:block;color:var(--muted);margin-top:3px}
+.drop.over,.drop:hover{border-color:var(--teal);background:var(--teal-50)}
 .acuerdo-txt h4{font-size:13px;margin:12px 0 4px}
 .acuerdo-txt p{margin:0 0 8px}
 .check-row.err{color:var(--red)}
@@ -964,7 +976,7 @@ function eventRows(ev, todos){
   const seen = new Set();
   return rows.filter(r => { if(!r.pid) return true; if(seen.has(r.pid)) return false; seen.add(r.pid); return true; });
 }
-function eventPendingCount(ev){ return Object.keys(ev.pending||{}).length + Object.keys(ev.sigPending||{}).length + (ev.metaPending?1:0); }
+function eventPendingCount(ev){ return Object.keys(ev.pending||{}).length + Object.keys(ev.sigPending||{}).length + (ev.metaPending?1:0) + (ev.basePending?1:0); }
 
 const porAprobar = ev => eventRows(ev, true).filter(r => r.estado === 'por_aprobar');
 // El evento vive en Supabase: lo creó este dispositivo (se sube solo) o se unió con el código en línea.
@@ -992,6 +1004,11 @@ async function syncEventOnline(code, {silent=false}={}){
       saveEvents();
     }
     if(ev.metaPending){ await SB.rpc('actualizar_evento', { evento: ev.remote, meta: metaParaNube(ev.meta) }); ev.metaPending = false; }
+    if(ev.basePending && !ev.contrib){
+      const n = await SB.rpc('cargar_base_evento', { evento: ev.remote, filas: ev.basePending });
+      delete ev.basePending; saveEvents();
+      if(!silent || n) toast(n ? `Lista propia cargada: ${n.toLocaleString('es-PE')} personas` : 'El evento vuelve a usar la base del Programa Ica', 'ok');
+    }
     const sent = Object.entries(ev.pending || {});
     const filas = sent.map(([id]) => {
       const r = ev.rows[id]; if(!r) return null;
@@ -1472,6 +1489,7 @@ async function openRemoteClass(code, unirse){
     cls.remote = true; cls.canEdit = true;
     let ok = await pullRemoteClass(cls);
     if(!ok && unirse){
+      if(!(await aceptarTerminos('colaborar_clase'))){ go('#/'); return; }
       const r = await SB.rpc('unirme_con_codigo', { codigo_clase:code });
       const avisos = {
         no_existe:'No existe ninguna clase ni invitación con ese código. Revisa que esté bien escrito.',
@@ -1701,6 +1719,7 @@ function renderSupervisor(){
     $$('.field', f).forEach(x => x.classList.remove('err'));
     if(miss.length){ miss.forEach(k => $(`[name=${k}]`, f).closest('.field').classList.add('err')); toast('Completa tus datos (*). El celular debe tener 9 dígitos.', 'error'); resaltar('#supDatos'); return; }
     if(!sel.size){ toast('Agrega al menos un maestro o clase que supervisas.', 'error'); resaltar(q.closest('.card')); q.focus(); return; }
+    if(!(await aceptarTerminos('supervisor'))) return;
     const b = $('#supGo'); b.disabled = true;
     try{
       await SB.ensureSession();
@@ -1972,6 +1991,7 @@ async function buscarMiClase(txt){
 }
 async function adoptarClase(c, nombre){
   if(!(await confirmBox(`<b>${esc(prettyName(c.maestro))}</b><br>${esc([stakeShort(c.estaca), c.horario, c.curso].filter(Boolean).join(' · '))}<br><br>La clase quedará guardada en tu inicio y otra persona necesitará permiso del administrador para verla.`, { title:'¿Esta es tu clase?', ok:'Sí, es mi clase' }))) return;
+  if(!(await aceptarTerminos('adoptar'))) return;
   try{
     setMyName(nombre);
     await SB.rpc('guardar_mi_nombre', { nombre_nuevo:nombre });
@@ -2005,6 +2025,7 @@ function openSolicitud(c){
         const miss = ['nombres','apellidos','estaca','barrio'].filter(k => !v[k]);
         $$('.field', el).forEach(f => f.classList.remove('err'));
         if(miss.length){ miss.forEach(k => $(`[name=${k}]`, el).closest('.field').classList.add('err')); toast('Completa los campos obligatorios (*)', 'error'); return; }
+        if(!(await aceptarTerminos('solicitar_acceso'))) return;
         try{
           await SB.ensureSession();
           const r = await SB.rpc('solicitar_acceso', Object.assign({ clase:c.id }, v));
@@ -2477,6 +2498,7 @@ function route(){
   if(parts[0] === 'qrc' && parts[1]) return renderQrClase(parts[1]);
   if(parts[0] === 'insc' && parts[1]) return renderInscripcionPublica(parts[1]);
   if(parts[0] === 'ficha' && parts[1]) return renderFichaPublica(parts[1]);
+  if(parts[0] === 'terminos' || parts[0] === 'privacidad') return renderLegal(parts[0]);
   if(parts[0] === 'entrar') return renderEntrar();
   if(parts[0] === 'supervisor') return renderSupervisor();
   if(['todas','solicitudes','alertas','seguimiento','inscripciones'].includes(parts[0])){
@@ -2491,6 +2513,7 @@ function route(){
   if(parts[0] === 'evento' && parts[1] && parts[2] === 'editar') return renderEventForm(parts[1]);
   if(parts[0] === 'evento' && parts[1]) return renderEvent(parts[1]);
   if(parts[0] === 'clases') return SB.on() ? go('#/') : renderClasses();
+  if(parts[0] === 'clase' && parts[1] === 'crear') return SB.on() ? renderCrearClase() : go('#/clase/nueva');
   if(parts[0] === 'clase' && parts[1] === 'nueva') return SB.on() ? go('#/') : renderClassForm(null);
   if(parts[0] === 'clase' && parts[1] && parts[2] === 'editar') return renderClassForm(parts[1]);
   if(parts[0] === 'clase' && parts[1]) return renderClass(parts[1]);
@@ -2558,7 +2581,7 @@ function renderHome(fresco){
   // Primera vez: solo se pregunta quién es (sin las demás opciones).
   if(necesitaIdentificarse()){
     app.innerHTML = topbar() + `<main class="wrap">${identHTML()}
-      <p class="foot"><span id="dataInfo">Check-in Asistencia</span><br><button class="link-btn" id="adminLink">Soy administrador</button> · <span id="verTap">v${APP_VERSION}</span></p></main>`;
+      <p class="foot"><span id="dataInfo">Check-in Asistencia</span><br><button class="link-btn" id="adminLink">Soy administrador</button> · <span id="verTap">v${APP_VERSION}</span><br><a href="#/terminos">Términos y Condiciones</a> · <a href="#/privacidad">Política de Privacidad</a></p></main>`;
     bindTop(); bindAdminTriggers(); bindHomeOnline();
     if(SB.user && fresco !== true) SB.refresh().then(() => { if(CUR.type === 'home') renderHome(true); }).catch(() => {});
     return;
@@ -2593,6 +2616,12 @@ function renderHome(fresco){
         <p>Devocionales, conferencias, actividades de estaca o barrio. Lista en vivo y exportable a Excel.</p>
         <div class="btn-row"><button class="btn primary" data-go="#/evento/nuevo">${ICON.plus} Crear evento</button><button class="btn" id="joinEv">Unirme</button></div>
       </article>
+      ${SB.on() ? `<article class="action-card cl">
+        <div class="ac-ico">${ICON.book}</div>
+        <h2>Crear clase</h2>
+        <p>¿Tu clase no está en la lista? Créala y toma asistencia con la base del Programa Ica o con tu propia lista en Excel.</p>
+        <div class="btn-row"><button class="btn navy" data-go="#/clase/crear">${ICON.plus} Crear clase</button></div>
+      </article>` : ''}
     </div>
     ${colab ? '</div>' : ''}
     <section class="section">
@@ -2604,7 +2633,7 @@ function renderHome(fresco){
       ${cls.slice(0,4).map(classItemHTML).join('')}</section>` : ''}
     ${colab ? '' : joinHTML}
     <section class="section"><div class="btn-row"><button class="btn" id="impBk">${ICON.upload} Importar reporte, Excel o backup</button><button class="btn" id="expAll">${ICON.download} Backup de todo</button></div></section>
-    <p class="foot"><span id="dataInfo">${SB.on() ? 'Check-in Asistencia' : `Base: ${ROSTER.people.length.toLocaleString('es-PE')} personas · act. ${fmtVersion(ROSTER.v)}`}</span><br>${SB.on() ? `<button class="link-btn" id="adminLink">${SB.admin ? 'Cerrar sesión de administrador' : 'Soy administrador'}</button>` : `Sincronización: ${Sync.on() ? 'activa' : 'no configurada'}`} · <span id="verTap">v${APP_VERSION}</span></p>
+    <p class="foot"><span id="dataInfo">${SB.on() ? 'Check-in Asistencia' : `Base: ${ROSTER.people.length.toLocaleString('es-PE')} personas · act. ${fmtVersion(ROSTER.v)}`}</span><br>${SB.on() ? `<button class="link-btn" id="adminLink">${SB.admin ? 'Cerrar sesión de administrador' : 'Soy administrador'}</button>` : `Sincronización: ${Sync.on() ? 'activa' : 'no configurada'}`} · <span id="verTap">v${APP_VERSION}</span><br><a href="#/terminos">Términos y Condiciones</a> · <a href="#/privacidad">Política de Privacidad</a></p>
   </main>`;
   bindTop();
   $('#joinForm').onsubmit = e => { e.preventDefault(); const raw = $('#joinCode').value; const mm = raw.match(/[?&]m=([A-Za-z0-9_-]+)/); openByCode(raw, mm ? unpackMeta(mm[1]) : null); };
@@ -2647,6 +2676,7 @@ async function openEvent(code, linkMeta){
     go('#/evento/'+code); return;
   }
   if(SB.on()){
+    if(!(await aceptarTerminos('colaborar_evento'))) return;
     toast('Buscando evento…');
     try{
       await SB.init();   // con el enlace de invitación, la conexión todavía se está abriendo
@@ -2741,6 +2771,210 @@ function readSW(root, px){
 /* ============================================================
    FORMULARIO DE EVENTO
    ============================================================ */
+/* ============================================================
+   TÉRMINOS Y CONDICIONES · POLÍTICA DE PRIVACIDAD
+   Se aceptan al crear un evento o una clase, adoptar una clase, colaborar o supervisar.
+   Texto modelo: conviene que lo revise un abogado antes de difundirlo.
+   ============================================================ */
+const TERMS_VERSION = '2026-11';
+const LEGAL = {
+  terminos: { titulo:'Términos y Condiciones', secciones:[
+    ['1. Qué es esta herramienta', ['Check-in Asistencia (“la aplicación”) es una herramienta gratuita para registrar la asistencia a clases de Seminario e Instituto y a eventos o actividades. La administra el Administrador del Programa Ica de Seminarios e Institutos (“el Administrador”).']],
+    ['2. Aceptación', ['Al crear un evento o una clase, adoptar una clase, colaborar en ella o solicitar acceso, declaras que leíste y aceptas estos Términos y la Política de Privacidad. Si no estás de acuerdo, no uses esas funciones.']],
+    ['3. Tus responsabilidades', [
+      'Usar la aplicación solo para registrar asistencia y organizar actividades legítimas.',
+      'Registrar únicamente a personas que participan realmente y contar con su autorización, o la de su padre, madre o tutor si son menores de edad.',
+      'Subir listas o bases de datos solo si tienes derecho a usarlas. La aplicación conserva únicamente nombre, estaca, barrio y programa; no incluyas otros datos.',
+      'Cuidar los códigos, enlaces y QR de tus clases y eventos: quien los recibe puede ver o marcar la asistencia según el acceso que le des.',
+      'Verificar que la información que registras sea correcta.']],
+    ['4. Información que subes', ['Eres el único responsable de las listas, nombres, respuestas y demás información que ingreses o subas, y de haber obtenido el consentimiento necesario para hacerlo. Al subir un Excel o una lista, el celular descarta antes de enviarlos las fechas de nacimiento, direcciones, correos, celulares, documentos y cualquier otra columna que no sea nombre, estaca, barrio o programa.']],
+    ['5. Limitación de responsabilidad', [
+      'La aplicación se ofrece “tal cual” y “según disponibilidad”, sin garantías de ningún tipo, expresas ni implícitas, incluidas la de funcionamiento continuo, ausencia de errores o conservación permanente de los datos.',
+      'En la máxima medida permitida por la ley, el Administrador, sus colaboradores y quienes apoyan el programa no son responsables por: (a) la información que los usuarios ingresan, suben o comparten, ni por su exactitud o licitud; (b) el uso indebido de la aplicación, de los códigos, enlaces o QR por parte de usuarios o terceros; (c) la pérdida, alteración o divulgación de datos causada por fallas técnicas, del proveedor de servicios en la nube, del celular o de la conexión, o por accesos no autorizados; (d) las decisiones que se tomen con base en los reportes de asistencia; (e) daños directos, indirectos, lucro cesante o daño moral derivados del uso o la imposibilidad de uso de la aplicación.',
+      'Te comprometes a mantener indemne al Administrador frente a cualquier reclamo de terceros que se origine en la información que registraste o subiste, o en el incumplimiento de estos Términos.']],
+    ['6. Suspensión y cambios', ['El Administrador puede suspender accesos, eliminar clases, eventos o listas que incumplan estos Términos, y modificar o descontinuar la aplicación. Podemos actualizar estos Términos; la versión vigente se indica abajo y, si cambia, se te pedirá aceptarla de nuevo.']],
+    ['7. Ley aplicable', ['Estos Términos se rigen por las leyes de la República del Perú.']],
+  ]},
+  privacidad: { titulo:'Política de Privacidad', secciones:[
+    ['1. Responsable', ['El Administrador del Programa Ica de Seminarios e Institutos es responsable del tratamiento de los datos de esta aplicación, conforme a la Ley N.° 29733, Ley de Protección de Datos Personales, y su reglamento.']],
+    ['2. Datos que tratamos (y nada más)', [
+      'De las personas en las listas de clases y eventos: nombres y apellidos, estaca, barrio o rama y programa (Seminario o Instituto).',
+      'De la asistencia: fecha y hora de cada registro, quién lo marcó y, si el evento las incluye, las respuestas a sus preguntas y la firma de un registro manual.',
+      'De quien usa la aplicación: un identificador anónimo de sesión, el nombre que escribes como maestro, colaborador o supervisor, el celular que deja un supervisor al pedir acceso y, si los activas, los datos técnicos para enviarte recordatorios al celular.',
+      'Solo para la inscripción en Seminario o Instituto, y visibles únicamente para el Administrador: fecha de nacimiento, celular, cédula y usuario de miembro (opcionales) y, en Seminario, nombre, número, correo y dirección del padre o madre.',
+      'De las listas externas que suba un organizador o maestro: solo nombre, estaca, barrio y programa. Las fechas de nacimiento, direcciones, correos, celulares y documentos se excluyen en el celular y nunca se envían.']],
+    ['3. Para qué los usamos', ['Únicamente para registrar y consultar la asistencia a clases y eventos, formar grupos, enviar recordatorios a los maestros y, en el caso de las inscripciones, inscribir al alumno en el sistema del programa. No vendemos, no alquilamos y no usamos estos datos para publicidad.']],
+    ['4. Quién puede verlos', ['Cada clase o evento solo lo ven quienes tienen acceso: su maestro o su organizador, los colaboradores que ellos invitan con un código y el Administrador. Las clases y listas privadas (con base propia) solo las ven quien las creó y sus colaboradores. Los datos de inscripción solo los ve el Administrador.']],
+    ['5. Dónde se guardan', ['En servidores de proveedores de servicios en la nube (Supabase para la base de datos y Vercel para la aplicación), que pueden estar fuera del Perú; al aceptar autorizas esa transferencia, con las medidas de seguridad que ofrecen esos proveedores. Una copia de trabajo queda en el celular de quien registra.']],
+    ['6. Cuánto tiempo', ['Mientras la clase, el evento o el periodo académico lo requieran y luego el tiempo razonable para reportes. Quien organiza un evento puede quitar su lista propia en cualquier momento, y el Administrador puede eliminar la información cuando ya no sea necesaria.']],
+    ['7. Menores de edad', ['Cuando se registra a menores de edad, quien lo hace declara contar con la autorización de su padre, madre o tutor. La inscripción en Seminario la aceptan el alumno y su padre, madre o tutor.']],
+    ['8. Tus derechos', ['Puedes pedir acceso, rectificación, cancelación u oposición sobre tus datos (derechos ARCO) escribiendo al Administrador por WhatsApp al +51 939 628 275. Responderemos dentro de los plazos de ley. También puedes acudir a la Autoridad Nacional de Protección de Datos Personales.']],
+    ['9. Seguridad y cambios', ['Usamos conexiones cifradas, accesos por código y permisos por usuario. Ningún sistema es completamente infalible. Si cambiamos esta Política, se te pedirá aceptarla de nuevo.']],
+  ]},
+};
+const legalHTML = k => `${LEGAL[k].secciones.map(([t, ps]) => `<h4>${esc(t)}</h4>${ps.map(p => `<p>${esc(p)}</p>`).join('')}`).join('')}<p class="hint">Versión ${TERMS_VERSION}.</p>`;
+function renderLegal(k){
+  CUR = { type:'legal', code:null };
+  app.innerHTML = topbar({ back:'#/', title:LEGAL[k].titulo, sub:'Check-in Asistencia' }) + `<main class="wrap"><section class="card legal-txt">${legalHTML(k)}
+    <p class="hint"><a href="#/${k === 'terminos' ? 'privacidad' : 'terminos'}">${k === 'terminos' ? 'Ver la Política de Privacidad' : 'Ver los Términos y Condiciones'}</a></p></section></main>`;
+  bindTop();
+}
+const TERMS_CTX = { evento:'crear un evento', crear_clase:'crear una clase', adoptar:'adoptar una clase', colaborar_clase:'colaborar en una clase', colaborar_evento:'colaborar en un evento', solicitar_acceso:'pedir acceso a una clase', supervisor:'supervisar clases' };
+/** Pide aceptar los términos (una vez por versión en este celular) y lo registra en línea. */
+async function aceptarTerminos(ctx, { servidor = false } = {}){
+  if(LS.get('ca_terminos', '') !== TERMS_VERSION){
+    const ok = await new Promise(res => {
+      let done = false;
+      sheet(`${sheetHead('Antes de continuar', 'Términos y privacidad')}
+        <p style="margin:0 0 10px">Para ${esc(TERMS_CTX[ctx] || 'continuar')} necesitas aceptar los Términos y Condiciones y la Política de Privacidad.</p>
+        <ul class="steps" style="margin-top:0"><li>Solo guardamos <b>nombre, estaca, barrio y programa</b> de las personas, y su asistencia.</li><li>Registra solo a quienes participan y con su autorización (o la de sus padres, si son menores).</li><li>Eres responsable de la información que ingresas o subes.</li></ul>
+        <div class="acuerdo" style="border:0;padding-top:0"><details><summary>Leer los Términos y Condiciones</summary><div class="acuerdo-txt">${legalHTML('terminos')}</div></details>
+        <details style="margin-top:8px"><summary>Leer la Política de Privacidad</summary><div class="acuerdo-txt">${legalHTML('privacidad')}</div></details></div>
+        <label class="check-row" style="margin-top:12px"><input type="checkbox" id="tAcepto"><span>He leído y acepto los <b>Términos y Condiciones</b> y la <b>Política de Privacidad</b>.</span></label>
+        <div class="sh-foot"><button class="btn" data-no>Cancelar</button><button class="btn primary" data-yes disabled>${ICON.check} Acepto y continúo</button></div>`, {
+        onMount(el, close){
+          const yes = $('[data-yes]', el);
+          $('#tAcepto', el).onchange = e => { yes.disabled = !e.target.checked; };
+          $('[data-no]', el).onclick = () => { done = true; res(false); close(); };
+          yes.onclick = () => { done = true; res(true); close(); };
+        },
+        onClose(){ if(!done) res(false); }
+      });
+    });
+    if(!ok) return false;
+    LS.set('ca_terminos', TERMS_VERSION); LS.set('ca_terminos_en', Date.now());
+  }
+  if(SB.on()){
+    const registrar = async () => {
+      await SB.ensureSession();
+      const marca = ((SB.user && SB.user.id) || '') + '|' + TERMS_VERSION;
+      if(servidor ? await SB.rpc('acepto_terminos') : LS.get('ca_terminos_srv', '') === marca) return;
+      await SB.rpc('aceptar_terminos', { version: TERMS_VERSION, contexto: ctx });
+      LS.set('ca_terminos_srv', marca);
+    };
+    if(servidor){ try{ await registrar(); }catch(e){ console.warn('términos', e); } }
+    else registrar().catch(e => console.warn('términos', e));
+  }
+  return true;
+}
+
+/* ============================================================
+   BASE DE DATOS EXTERNA (Excel, CSV…) para un evento o una clase
+   Se toma SOLO nombre, estaca, barrio y programa. Todo lo demás se descarta en el
+   celular antes de enviar (fechas de nacimiento, direcciones, correos, celulares…).
+   ============================================================ */
+const COL_SENSIBLE = [['nacim','birth','fecha','edad','age','cumple'], ['direcc','address','domicilio','calle'], ['correo','email','e-mail','mail'], ['celular','telef','phone','movil','whatsapp','cel'], ['dni','documento','cedula','pasaporte','membership','mrn','registro']];
+const SENSIBLE_LBL = ['Fechas de nacimiento', 'Direcciones', 'Correos', 'Celulares', 'Documentos'];
+function tipoColumna(h){
+  if(!h) return '';
+  if(['student name','nombre completo','nombres y apellidos','apellidos y nombres','alumno','participante','asistente','full name','name','preferred name','nombres completos','integrante','joven'].includes(h)) return 'full';
+  if(['nombres','nombre','first name','given name','given names','primer nombre'].includes(h)) return 'nom';
+  if(['apellidos','apellido','last name','surname','apellido paterno'].includes(h)) return 'ape';
+  if(h === 'apellido materno') return 'ape2';
+  const s = COL_SENSIBLE.findIndex(ws => ws.some(w => h.includes(w)));
+  if(s >= 0) return 's' + s;
+  if(h.includes('estaca') || h.startsWith('stake') || h.includes('distrito')) return 'k';
+  if(h.includes('barrio') || h.startsWith('ward') || h === 'rama' || h === 'unidad' || h.includes('branch')) return 'w';
+  if(['programa','program','program name'].includes(h)) return 'g';
+  return '';
+}
+const pareceNombre = v => { const s = String(v || '').trim(); return /^[A-Za-zÀ-ÿÑñ'´.,\- ]{5,}$/.test(s) && s.split(/[\s,]+/).filter(Boolean).length >= 2; };
+async function leerListaExterna(file, colNombre){
+  await loadScript(SHEETJS_URL);
+  const buf = await file.arrayBuffer();
+  let wb;
+  if(/\.(csv|txt)$/i.test(file.name) || /csv|text\/plain/.test(file.type)){
+    // CSV: UTF-8 (TextDecoder quita el BOM); si no es UTF-8 válido, Windows-1252 (Excel en español).
+    let txt;
+    try{ txt = new TextDecoder('utf-8', { fatal:true }).decode(buf); }catch{ txt = new TextDecoder('windows-1252').decode(buf); }
+    wb = XLSX.read(txt, { type:'string', raw:false });
+  } else wb = XLSX.read(buf, { type:'array', raw:false });
+  const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, raw:false, defval:'' });
+  // Encabezado: la fila (de las primeras 15) con más columnas reconocidas.
+  let hi = -1, best = 0;
+  for(let i = 0; i < Math.min(15, raw.length); i++){
+    const n = (raw[i] || []).filter(c => tipoColumna(norm(c))).length;
+    if(n > best){ best = n; hi = i; }
+  }
+  const H = hi >= 0 ? raw[hi].map(c => String(c || '').trim()) : [];
+  const ncols = Math.max(...raw.slice(0, 50).map(r => (r || []).length), 0);
+  const tipos = Array.from({ length: ncols }, (_, i) => tipoColumna(norm(H[i] || '')));
+  // Sin encabezado de nombre (o elegido a mano): la columna indicada o la que más parece nombres.
+  if(colNombre != null){ tipos.forEach((t, i) => { if(t === 'full' || t === 'nom' || t === 'ape' || t === 'ape2') tipos[i] = ''; }); tipos[colNombre] = 'full'; }
+  else if(!tipos.some(t => t === 'full' || t === 'nom' || t === 'ape')){
+    const datos = raw.slice(hi + 1, hi + 80);
+    let mejor = -1, max = 0;
+    for(let i = 0; i < ncols; i++){
+      if(tipos[i]) continue;
+      const n = datos.filter(r => pareceNombre(r && r[i])).length;
+      if(n > max){ max = n; mejor = i; }
+    }
+    if(mejor >= 0) tipos[mejor] = 'full';
+  }
+  const ix = t => tipos.indexOf(t);
+  if(ix('full') < 0 && ix('nom') < 0 && ix('ape') < 0) throw new Error('No encontramos una columna con nombres. Revisa que el archivo tenga una columna “Nombres” o “Nombre completo”.');
+  const rows = [], vistos = new Set();
+  for(let i = hi + 1; i < raw.length; i++){
+    const r = raw[i] || [];
+    const get = t => ix(t) >= 0 ? String(r[ix(t)] || '').replace(/\s+/g, ' ').trim() : '';
+    let n = get('full');
+    if(!n){ const ape = [get('ape'), get('ape2')].filter(Boolean).join(' '), nom = get('nom'); n = ape && nom ? `${ape}, ${nom}` : (ape || nom); }
+    // Descarta celdas que no son nombres (correos, números, fechas).
+    if(!n || /@|\d{3,}/.test(n) || n.length < 3) continue;
+    n = n.slice(0, 120);
+    const key = norm(n); if(vistos.has(key)) continue; vistos.add(key);
+    const gv = get('g').toUpperCase();
+    rows.push({ n, k: get('k').slice(0, 80), w: get('w').slice(0, 80), g: /^S|SEM/.test(gv) ? 'S' : /^I|INS/.test(gv) ? 'I' : '' });
+  }
+  if(!rows.length) throw new Error('El archivo no tiene filas con nombres.');
+  const excluidas = [...new Set(tipos.filter(t => /^s\d$/.test(t)).map(t => SENSIBLE_LBL[+t.slice(1)]))];
+  const ignoradas = tipos.filter(t => !t).length;
+  const opciones = Array.from({ length: ncols }, (_, i) => ({ i, nombre: H[i] || `Columna ${XLSX.utils.encode_col(i)}`, tipo: tipos[i] }));
+  return { rows, archivo: file.name, excluidas, ignoradas, opciones, usadas: { nombre: ix('full') >= 0 || ix('nom') >= 0 || ix('ape') >= 0, estaca: ix('k') >= 0, barrio: ix('w') >= 0, programa: ix('g') >= 0 } };
+}
+/** Selector «Base del Programa Ica» / «Otra base de datos» con zona para soltar el Excel. */
+function baseSelectorHTML(px, actual, info, que){
+  return `<div class="field base-sel" id="${px}Base"><label>Base de datos para buscar ${que === 'clase' ? 'a tus alumnos' : 'a los asistentes'}</label>
+    <div class="radio-list">
+      <label><input type="radio" name="${px}BaseOpt" value="ica" ${actual !== 'propia' ? 'checked' : ''}><span><b>Usar la base de datos del Programa Ica</b><small>Jóvenes de Seminarios e Institutos de las estacas Cañete, Chincha, Ica, Nasca y Pisco.</small></span></label>
+      <label><input type="radio" name="${px}BaseOpt" value="propia" ${actual === 'propia' ? 'checked' : ''}><span><b>Usar otra base de datos</b><small>Sube tu propio Excel o CSV con los nombres${que === 'clase' ? ': serán los alumnos de tu clase' : ''}.</small></span></label>
+    </div>
+    <div class="drop ${actual === 'propia' ? '' : 'hide'}" id="${px}Drop" tabindex="0">
+      <input type="file" id="${px}File" accept=".xlsx,.xls,.csv,.ods" class="hide">
+      <div id="${px}DropTxt">${info ? `<b>${esc(info.archivo || 'Lista actual')}</b>${(+info.n || 0).toLocaleString('es-PE')} personas<small>Toca o arrastra otro archivo para reemplazarla.</small>` : `${ICON.upload}<b>Toca aquí o arrastra tu Excel</b><small>.xlsx, .xls, .csv · Solo se guardan nombre, estaca, barrio y programa.</small>`}</div>
+    </div>
+    <div id="${px}Prev"></div></div>`;
+}
+function bindBaseSelector(root, px){
+  const st = { modo: $(`[name=${px}BaseOpt]:checked`, root).value, lista: null, file: null };
+  const drop = $('#' + px + 'Drop', root), inp = $('#' + px + 'File', root), prev = $('#' + px + 'Prev', root);
+  $$(`[name=${px}BaseOpt]`, root).forEach(r => r.onchange = () => { st.modo = r.value; drop.classList.toggle('hide', st.modo !== 'propia'); prev.classList.toggle('hide', st.modo !== 'propia'); });
+  const leer = async (file, col) => {
+    st.file = file;
+    prev.innerHTML = loadingHTML('Leyendo el archivo…', true);
+    try{
+      const L = await leerListaExterna(file, col);
+      st.lista = L;
+      const ok = (b, t) => `<span class="badge ${b ? 'b-ok' : 'b-ro'}">${b ? '✓' : '—'} ${t}</span>`;
+      prev.innerHTML = `<div class="info-box" style="margin-top:10px"><b>${esc(L.archivo)}</b>: ${L.rows.length.toLocaleString('es-PE')} personas.<br>
+          <span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-top:6px">${ok(L.usadas.nombre, 'Nombre')}${ok(L.usadas.estaca, 'Estaca')}${ok(L.usadas.barrio, 'Barrio')}${ok(L.usadas.programa, 'Programa')}</span>
+          ${L.excluidas.length ? `<div style="margin-top:8px">🔒 <b>Excluidos por privacidad</b> (no se suben): ${esc(L.excluidas.join(', '))}.</div>` : ''}
+          ${L.ignoradas ? `<div class="hint" style="margin-top:4px">${L.ignoradas} columna${L.ignoradas > 1 ? 's' : ''} más no se usa${L.ignoradas > 1 ? 'n' : ''}.</div>` : ''}</div>
+        <div class="field" style="margin-top:10px"><label>¿La columna de nombres es correcta?</label><select class="inp" id="${px}Col">${L.opciones.map(o => `<option value="${o.i}" ${o.tipo === 'full' || (o.tipo === 'nom' && !L.opciones.some(x => x.tipo === 'full')) ? 'selected' : ''}>${esc(o.nombre)}</option>`).join('')}</select>
+          <small class="hint">Ejemplos: ${L.rows.slice(0, 3).map(r => esc(prettyName(r.n))).join(' · ')}</small></div>`;
+      $('#' + px + 'DropTxt', root).innerHTML = `<b>${esc(L.archivo)}</b>${L.rows.length.toLocaleString('es-PE')} personas<small>Toca o arrastra otro archivo para reemplazarla.</small>`;
+      $('#' + px + 'Col', root).onchange = e => leer(st.file, +e.target.value);
+    }catch(e){ console.error(e); st.lista = null; prev.innerHTML = `<div class="warn-box" style="margin-top:10px">${esc(e.message || 'No se pudo leer el archivo')}</div>`; }
+  };
+  drop.onclick = e => { if(e.target !== inp) inp.click(); };
+  drop.onkeydown = e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); inp.click(); } };
+  inp.onchange = () => { if(inp.files[0]) leer(inp.files[0]); inp.value = ''; };
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files && e.dataTransfer.files[0]; if(f) leer(f); };
+  return st;
+}
+
 function customRowHTML(c){
   return `<div class="cf-row" data-id="${esc(c.id)}">
     <input class="inp cf-label" placeholder="Pregunta" value="${esc(c.label||'')}">
@@ -2774,6 +3008,7 @@ function renderEventForm(code){
         <small class="hint">Se preguntan al marcar. Ej.: “¿Trajo sus escrituras?” (Sí/No) · “Talla de polo” (S, M, L).</small></div>
       <div class="field"><label>WhatsApp para recibir la asistencia <span class="opt">(opcional)</span></label><input id="fWa" type="tel" inputmode="tel" placeholder="Ej. 987 654 321" value="${esc(m.wa||'')}"><small class="hint">Al tocar “Enviar asistencia”, los colaboradores abren directamente el chat con este número.</small></div>
       ${ev ? '' : `<div class="field"><label>Tu nombre <span class="opt">(quién registra en este celular)</span></label><input id="fMy" value="${esc(myName())}" placeholder="Ej. Hno. Pérez"></div>`}
+      ${SB.on() && !(ev && ev.contrib) ? baseSelectorHTML('fb', m.base, m.base === 'propia' ? m.baseInfo : null, 'evento') : ''}
       <div class="btn-row" style="margin-top:6px"><button type="submit" class="btn primary lg">${ev ? ICON.save+' Guardar cambios' : ICON.check+' Crear evento y generar código'}</button></div>
     </form>
   </main>`;
@@ -2788,6 +3023,7 @@ function renderEventForm(code){
   $('#fStake', f).addEventListener('change', syncMulti);
   syncMulti();
   $$('#fStakes .chip', f).forEach(c => c.onclick = () => c.classList.toggle('on'));
+  const baseSt = $('#fbBase', f) ? bindBaseSelector(f, 'fb') : null;
   $$('#fFields .chip', f).forEach(c => c.onclick = () => c.classList.toggle('on'));
   const cbox = $('#fCustom', f);
   const bindCF = () => $$('.cf-row', cbox).forEach(r => {
@@ -2809,12 +3045,28 @@ function renderEventForm(code){
     const meta = { ...(ev ? ev.meta : {}), title, stake: multi ? '' : sw.stake, ward: multi ? '' : sw.ward, multi, stakes: multi ? $$('#fStakes .chip.on', f).map(c => c.dataset.s) : [],
       date: $('#fDate', f).value || todayISO(), fields: $$('#fFields .chip.on', f).map(c=>c.dataset.k), custom, wa: $('#fWa', f).value.trim() };
     if(ev && (meta.multi !== !!ev.meta.multi || meta.stake !== ev.meta.stake || meta.ward !== ev.meta.ward)) ST.scope = null;
-    if(ev){ ev.meta = meta; ev.metaPending = true; saveEvents(); syncEvent(code, {silent:true}); toast('Evento actualizado','ok'); go('#/evento/'+code); return; }
+    // Base de datos: la del Programa Ica o una lista propia (solo nombre, estaca, barrio y programa).
+    let basePendiente;
+    if(baseSt){
+      const antes = ev && ev.meta.base === 'propia';
+      if(baseSt.modo === 'propia'){
+        if(!baseSt.lista && !antes){ $('#fbBase', f).classList.add('err'); $('#fbBase', f).scrollIntoView({ block:'center', behavior:'smooth' }); toast('Sube tu Excel o elige la base del Programa Ica', 'error'); return; }
+        meta.base = 'propia';
+        if(baseSt.lista){ basePendiente = baseSt.lista.rows; meta.baseInfo = { archivo: baseSt.lista.archivo, n: baseSt.lista.rows.length, en: Date.now() }; }
+      } else {
+        meta.base = 'ica'; delete meta.baseInfo;
+        if(antes) basePendiente = [];
+      }
+    }
+    if(!ev && !(await aceptarTerminos('evento'))) return;
+    if(ev){ ev.meta = meta; ev.metaPending = true; if(basePendiente) ev.basePending = basePendiente; saveEvents(); syncEvent(code, {silent:true}); toast('Evento actualizado','ok'); go('#/evento/'+code); return; }
     if($('#fMy', f).value.trim()) setMyName($('#fMy', f).value);
     const btn = $('button[type=submit]', f); btn.disabled = true;
     const newCode = await uniqueCode('EV', 'events');
     meta.createdAt = Date.now(); meta.by = myName();
-    EVENTS[newCode] = newEventObj(newCode, meta); saveEvents();
+    EVENTS[newCode] = newEventObj(newCode, meta);
+    if(basePendiente) EVENTS[newCode].basePending = basePendiente;
+    saveEvents();
     ST.tab = 'marcar'; ST.q = ''; ST.scope = null;
     go('#/evento/'+newCode);
     syncEvent(newCode, {silent:true});
@@ -3021,7 +3273,7 @@ function renderResults(){
   const ev = EVENTS[CUR.code]; const m = ev.meta;
   const q = ST.q.trim();
   const hint = $('#scopeHint');
-  const marked = new Map(); eventRows(ev, true).forEach(r => { if(r.pid) marked.set(r.pid, r); });
+  const marked = new Map(); eventRows(ev, true).forEach(r => { if(r.pid) marked.set(r.pid, r); if(m.base === 'propia' && r.n && !marked.has('n:' + norm(r.n))) marked.set('n:' + norm(r.n), r); });
   if(norm(q).length >= 2 && ev.remote && SB.on()) return renderResultsOnline(el, ev, q, marked, hint);
   if(norm(q).length < 2){
     if(hint) hint.textContent = '';
@@ -3061,14 +3313,14 @@ function renderResultsOnline(el, ev, q, marked, hint){
     const show = ST.evMore ? EVQ.list : dentro;
     if(hint) hint.textContent = dentro.length ? `${dentro.length}${EVQ.list.length >= 40 ? '+' : ''} coincidencia${dentro.length > 1 ? 's' : ''}` : '';
     let html = show.map(p => {
-      const r = marked.get(p.id);
+      const r = marked.get(p.id) || marked.get('n:' + norm(p.n));
       const mk = !r ? `<span class="mk">Marcar</span>` : r.estado === 'por_aprobar' ? `<span class="mk wait">Por aprobar</span>` : `<span class="mk done">${ICON.check} ${fmtTime(r.t)}</span>`;
       return `<button class="person ${r && r.estado !== 'por_aprobar' ? 'is-marked' : ''}" data-pid="${p.id}"><span class="av">${esc(initials(p.n))}</span><span class="pi"><b>${highlight(p.n, q)}</b><small>${esc(personSub(p))}</small></span>${mk}</button>`;
     }).join('');
     if(!show.length) html = `<div class="empty-hint">${ICON.search}<p>No se encontró “${esc(q)}”${fk ? ' en ' + (fw ? 'el barrio' : 'la estaca') : ''}</p><small>Revisa la ortografía o regístralo manualmente abajo.</small></div>`;
     if(!ST.evMore && fuera.length) html += `<button class="btn sm ghost more-btn" id="moreScope">Ver ${fuera.length} coincidencia${fuera.length > 1 ? 's' : ''} fuera de ${fw ? 'este barrio' : 'esta estaca'}</button>`;
     el.innerHTML = html;
-    $$('.person[data-pid]', el).forEach(b => b.onclick = () => onPickEvent(ev, personaDe(b.dataset.pid), marked.get(b.dataset.pid)));
+    $$('.person[data-pid]', el).forEach(b => b.onclick = () => onPickEvent(ev, personaDe(b.dataset.pid), marked.get(b.dataset.pid) || marked.get('n:' + norm((personaDe(b.dataset.pid) || {}).n || ''))));
     const more = $('#moreScope'); if(more) more.onclick = () => { ST.evMore = true; paint(); };
   };
   if(EVQ.key === key) return paint();
@@ -3969,6 +4221,75 @@ function renderRemoteClassForm(cls){
     try{ SB.mis = await SB.rpc('mis_clases'); }catch(err){ console.warn(err); }
     toast('Datos de la clase actualizados', 'ok');
     go('#/clase/'+code);
+  };
+}
+/* Crear clase en línea (cualquier usuario; queda como titular).
+   Base del Programa Ica → clase del programa (la ve el administrador).
+   Otra base → clase privada: sus alumnos son los de la lista subida. */
+function renderCrearClase(){
+  CUR = { type:'class-create', code:null };
+  const autoTit = (p, curso, hor) => p === 'I' ? curso : [curso, hor].filter(Boolean).join(' · ');
+  let titTouched = false, prog = 'S';
+  app.innerHTML = topbar({ back:'#/', title:'Crear clase', sub:'Mi clase' }) + `<main class="wrap">
+    <div class="info-box">¿Tu clase ya existe en la lista del programa? Búscala con <a href="#/entrar">Buscar mi clase</a> y adóptala: así no se duplica.</div>
+    <form class="card" id="ncForm" autocomplete="off">
+      <div class="field"><label>Programa</label><div class="seg big" id="prog"><button type="button" data-p="S" class="on">Seminario</button><button type="button" data-p="I">Instituto</button></div></div>
+      <div class="row2">
+        <div class="field"><label>Curso</label><input id="nCurso" maxlength="80" placeholder="Ej. Antiguo Testamento"></div>
+        <div class="field"><label>Horario</label><input id="nHor" maxlength="40" placeholder="Ej. 06:00 am"></div>
+      </div>
+      <div class="field"><label>Nombre de la clase</label><input id="nTit" maxlength="80" placeholder="Se arma con el curso y el horario"></div>
+      <div class="field"><label>Nombre del maestro <span class="req">*</span></label><input id="nMae" maxlength="60" value="${esc(myName())}" placeholder="Ej. Hna. Yazmin Berrocal"></div>
+      <div class="row2">${swFields('', '', 'n', { allWards:'Sin barrio' })}</div>
+      <div class="field"><label>Días de clase <span class="req">*</span></label><div class="chips" id="nDays">${[1,2,3,4,5,6].map(d => `<button type="button" class="chip ${d <= 5 ? 'on' : ''}" data-d="${d}">${DOW_L[d][0].toUpperCase()+DOW_L[d].slice(1,3)}</button>`).join('')}</div><small class="hint" id="nDaysHint">Seminario: normalmente de lunes a viernes. Los domingos y feriados no se marcan.</small></div>
+      <div class="row2">
+        <div class="field"><label>Inicio de clases</label><input type="date" id="nIni" value="${todayISO()}"></div>
+        <div class="field"><label>Fin de clases <span class="opt">(opcional)</span></label><input type="date" id="nFin"></div>
+      </div>
+      ${baseSelectorHTML('nb', 'ica', null, 'clase')}
+      <button type="submit" class="btn primary lg block">${ICON.check} Crear clase</button>
+    </form>
+  </main>`;
+  bindTop();
+  const f = $('#ncForm');
+  bindSW(f, 'n', '');
+  const baseSt = bindBaseSelector(f, 'nb');
+  const retit = () => { if(!titTouched) $('#nTit', f).value = autoTit(prog, $('#nCurso', f).value.trim(), $('#nHor', f).value.trim()); };
+  $$('#prog button', f).forEach(b => b.onclick = () => {
+    prog = b.dataset.p; $$('#prog button', f).forEach(x => x.classList.toggle('on', x === b)); retit();
+    $('#nDaysHint', f).textContent = (prog === 'S' ? 'Seminario: normalmente de lunes a viernes.' : 'Instituto: normalmente un día por semana.') + ' Los domingos y feriados no se marcan.';
+  });
+  $('#nCurso', f).oninput = retit; $('#nHor', f).oninput = retit;
+  $('#nTit', f).oninput = () => { titTouched = true; };
+  $$('#nDays .chip', f).forEach(c => c.onclick = () => c.classList.toggle('on'));
+  f.onsubmit = async e => {
+    e.preventDefault();
+    $$('.field', f).forEach(x => x.classList.remove('err'));
+    const bad = (sel, msg) => { const x = $(sel, f); x.closest('.field').classList.add('err'); x.scrollIntoView({ block:'center', behavior:'smooth' }); toast(msg, 'error'); };
+    const sw = readSW(f, 'n');
+    const propia = baseSt.modo === 'propia';
+    const datos = { titulo:$('#nTit', f).value.trim(), maestro:$('#nMae', f).value.trim(), curso:$('#nCurso', f).value.trim(), horario:$('#nHor', f).value.trim(),
+      programa:prog, estaca:sw.stake, barrio:sw.ward, dias:$$('#nDays .chip.on', f).map(c => +c.dataset.d), inicio:$('#nIni', f).value, fin:$('#nFin', f).value,
+      base: propia ? 'propia' : 'ica',
+      // Solo nombre, estaca y barrio: lo demás del Excel ya se descartó en el celular.
+      alumnos: propia && baseSt.lista ? baseSt.lista.rows.slice(0, 500).map(r => ({ nombre:r.n, estaca:r.k || sw.stake || '', barrio:r.w || '' })) : [] };
+    if(!datos.curso && !datos.titulo) return bad('#nCurso', 'Escribe el curso o el nombre de la clase');
+    if(!datos.maestro) return bad('#nMae', 'Escribe el nombre del maestro');
+    if(!propia && !datos.estaca) return bad('#nStake', 'Elige la estaca');
+    if(!datos.dias.length) return toast('Elige al menos un día de clase', 'error');
+    if(datos.inicio && datos.fin && datos.fin < datos.inicio) return bad('#nFin', 'El fin no puede ser antes del inicio');
+    if(propia && !baseSt.lista){ $('#nbBase', f).classList.add('err'); $('#nbBase', f).scrollIntoView({ block:'center', behavior:'smooth' }); return toast('Sube tu Excel con los alumnos o elige la base del Programa Ica', 'error'); }
+    if(propia && baseSt.lista.rows.length > 500) toast('Solo se agregan los primeros 500 nombres', 'warn');
+    if(!(await aceptarTerminos('crear_clase', { servidor:true }))) return;
+    const btn = $('button[type=submit]', f); btn.disabled = true; btn.textContent = 'Creando la clase…';
+    try{
+      await SB.ensureSession();
+      setMyName(datos.maestro);
+      const r = await SB.rpc('crear_clase', { datos });
+      try{ SB.mis = await SB.rpc('mis_clases'); }catch(err){ console.warn(err); }
+      toast(propia ? `Clase creada con ${r.alumnos} alumno${r.alumnos === 1 ? '' : 's'} ✓` : 'Clase creada ✓ Ahora agrega a tus alumnos', 'ok', { ms:4500 });
+      go('#/clase/' + r.codigo);
+    }catch(err){ console.error(err); btn.disabled = false; btn.innerHTML = `${ICON.check} Crear clase`; toast(errMsg(err), 'error'); }
   };
 }
 function renderClassForm(code){
