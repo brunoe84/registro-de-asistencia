@@ -1299,7 +1299,18 @@ const SB = {
     if(volvio) this.mis = await this.rpc('mis_clases');
     recordarAccesos(this.mis);
   },
-  async loadCounts(){ this.counts = await this.rpc('contadores_admin'); paintBadges(); },
+  async loadCounts(){
+    const c = await this.rpc('contadores_admin');
+    // Inscritos por pasar a Wise = Seminario + Instituto. Si el servidor aún no los cuenta (sin 0021), se calculan aquí.
+    if(c && c.inscripciones == null){
+      try{
+        const [s, i] = await Promise.all(['S', 'I'].map(prog => this.rpc('inscripciones_wise', { atendidas:false, prog })));
+        c.inscripciones_S = (s || []).length; c.inscripciones_I = (i || []).length;
+        c.inscripciones = c.inscripciones_S + c.inscripciones_I;
+      }catch(e){ console.warn('No se pudo contar inscritos', e); }
+    }
+    this.counts = c; paintBadges();
+  },
   async rpc(name, args){
     if(!this.client) throw new Error('No hay conexión con el servidor. Revisa tu internet.');
     const { data, error } = await this.client.rpc(name, args || {});
