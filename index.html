@@ -683,6 +683,7 @@ function loadScript(src){
 const I = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const ICON = {
   back: I('<path d="M15 18l-6-6 6-6"/>'), next: I('<path d="M9 18l6-6-6-6"/>'),
+  home: I('<path d="M3 10.5L12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/>'),
   search: I('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>'),
   check: I('<path d="M20 6L9 17l-5-5"/>'), x: I('<path d="M18 6L6 18M6 6l12 12"/>'), plus: I('<path d="M12 5v14M5 12h14"/>'),
   userPlus: I('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/>'),
@@ -2499,7 +2500,7 @@ function route(){
 
 function topbar({back, title, sub}={}){
   return `<header class="top"><div class="top-in">
-    ${back ? `<button class="icon-btn" data-go="${back}" aria-label="Volver">${ICON.back}</button><div class="top-title"><b>${esc(title)}</b>${sub?`<small>${esc(sub)}</small>`:''}</div>`
+    ${back ? `<button class="icon-btn" data-go="${back}" aria-label="Volver">${ICON.back}</button><button class="icon-btn" data-go="#/" aria-label="Ir al inicio" title="Inicio">${ICON.home}</button><div class="top-title"><b>${esc(title)}</b>${sub?`<small>${esc(sub)}</small>`:''}</div>`
            : `<div class="brand" id="brand"><span class="mark">S&amp;I</span><span class="bt"><b>Check-in Asistencia</b><small>Seminarios e Institutos</small></span></div><span class="spacer"></span>`}
     <button class="sync-pill" id="syncPill" title="Estado de sincronización"><span class="dot"></span><span class="lbl"></span></button>
   </div></header>`;
