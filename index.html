@@ -865,7 +865,7 @@ function expandCompact(c){
   c.p.forEach(r => {
     const wi = c.wards[r[3]] || [0,''];
     const p = { n:r[0], k:c.stakes[wi[0]]||'', w:wi[1]||'' };
-    if(r[5] && typeof r[5] === 'object') ['id','src','added'].forEach(k => { if(r[5][k]) p[k] = r[5][k]; });
+    if(r[5] && typeof r[5] === 'object') ['id','src','added','x'].forEach(k => { if(r[5][k]) p[k] = r[5][k]; });
     let id = p.id || pidFor(p.n, p.w);
     while(used.has(id)) id += 'x';
     used.add(id); p.id = id;
@@ -882,7 +882,7 @@ function compactPeople(people, v){
     if(!(wk in wIdx)){ wIdx[wk] = wards.length; wards.push([sIdx[st], wd]); }
     const row = [x.n, 0, '', wIdx[wk], ''];
     const extra = {};
-    ['src','added'].forEach(k => { if(x[k]) extra[k] = x[k]; });
+    ['src','added','x'].forEach(k => { if(x[k]) extra[k] = x[k]; });
     if(x.id && x.id !== pidFor(x.n, x.w)) extra.id = x.id;
     if(Object.keys(extra).length) row.push(extra);
     return row;
@@ -2367,7 +2367,7 @@ async function subirBaseEnLinea(rows, archivo){
   if(!SB.on() || !SB.admin) return;
   try{
     toast('Subiendo la base y revisando alertas…');
-    const r = await SB.rpc('cargar_personas', { filas:rows.filter(x => x.n).map(x => ({ nombre:x.n, estaca:x.k || '', barrio:x.w || '', programa:x.g || '' })), archivo });
+    const r = await SB.rpc('cargar_personas', { filas:rows.filter(x => x.n).map(x => ({ nombre:x.n, estaca:x.k || '', barrio:x.w || '', programa:x.g || '', genero:x.x || '' })), archivo });
     await SB.loadCounts();
     sheet(`${sheetHead('Base actualizada')}<dl class="kv"><dt>Personas en el archivo</dt><dd>${r.total}</dd><dt>Personas nuevas</dt><dd>${r.nuevas}</dd><dt>Alertas resueltas</dt><dd>${r.resueltas}</dd><dt>Siguen con alerta</dt><dd>${r.siguen}</dd></dl>
       <div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="toAl">Ver alertas</button></div>`, { onMount(el, close){ $('#toAl', el).onclick = () => { close(); go('#/alertas'); }; } });
@@ -2860,7 +2860,7 @@ async function aceptarTerminos(ctx, { servidor = false } = {}){
 
 /* ============================================================
    BASE DE DATOS EXTERNA (Excel, CSV…) para un evento o una clase
-   Se toma SOLO nombre, estaca, barrio y programa. Todo lo demás se descarta en el
+   Se toma SOLO nombre, estaca, barrio, programa y género. Todo lo demás se descarta en el
    celular antes de enviar (fechas de nacimiento, direcciones, correos, celulares…).
    ============================================================ */
 const COL_SENSIBLE = [['nacim','birth','fecha','edad','age','cumple'], ['direcc','address','domicilio','calle'], ['correo','email','e-mail','mail'], ['celular','telef','phone','movil','whatsapp','cel'], ['dni','documento','cedula','pasaporte','membership','mrn','registro']];
@@ -2871,6 +2871,7 @@ function tipoColumna(h){
   if(['nombres','nombre','first name','given name','given names','primer nombre'].includes(h)) return 'nom';
   if(['apellidos','apellido','last name','surname','apellido paterno'].includes(h)) return 'ape';
   if(h === 'apellido materno') return 'ape2';
+  if(esColGenero(h)) return 'x';
   const s = COL_SENSIBLE.findIndex(ws => ws.some(w => h.includes(w)));
   if(s >= 0) return 's' + s;
   if(h.includes('estaca') || h.startsWith('stake') || h.includes('distrito')) return 'k';
@@ -2878,6 +2879,37 @@ function tipoColumna(h){
   if(['programa','program','program name'].includes(h)) return 'g';
   return '';
 }
+/* Género: 'H' hombre, 'M' mujer, '' sin dato. Sirve para mezclar o separar hombres y mujeres en los grupos. */
+const esColGenero = h => ['genero','sexo','gender','sex','genero del alumno','student gender'].includes(h);
+// Lee la columna completa: si trae "F/M" (inglés), la M es hombre; si trae "H/M", la M es mujer.
+function lectorGenero(valores){
+  const vs = valores.map(v => norm(v)).filter(Boolean);
+  const mEsHombre = vs.some(v => v === 'f' || v.startsWith('fem') || v === 'female') || !vs.some(v => v === 'h' || v.startsWith('hombre'));
+  return v => {
+    const s = norm(v);
+    if(!s) return '';
+    if(s === 'm') return mEsHombre ? 'H' : 'M';
+    if(s === 'h' || /^(masc|male|hombre|varon|man\b|boy|nino\b|joven varon)/.test(s)) return 'H';
+    if(s === 'f' || /^(fem|female|mujer|dama|woman|girl|nina\b|senorita)/.test(s)) return 'M';
+    return '';
+  };
+}
+// Sin dato en la base: se deduce por el primer nombre (Apellidos, Nombres). Si no se puede, ''.
+const NOMBRES_MUJER = new Set('raquel isabel carmen ruth rut esther ester beatriz luz pilar rocio consuelo dolores mercedes ines abigail abigaíl noemi belen milagros nicole michelle yasmin jasmin jazmin karen lizbeth lisbeth elizabeth elisabeth ingrid astrid ivonne madeleine mirian miriam flor sol marisol rosmery sharon nayeli arely allison alison evelyn carol marilyn jennifer jenifer lucero rubi ruby itzel heidy abril zoe chloe naomi dafne karin kimberly kimberley rachel sarai yuli nely deysi daysi mery nancy lucy betty ely merly gaby yesica jessica jesica liz luz maribel mabel anabel aracely araceli nicol scarlet scarleth fiorel yamile janet janeth lisbet yudith judith edith lizeth lisseth yanet yaneth gladys mildred maryori yomira yoselin joselyn jocelyn joseline brigitte grisel guadalupe soledad trinidad caridad libertad paz nieves concepcion asuncion angeles ashley britney shirley kelly leidy lady wendy sheyla sheila mayra maily nayely mishel madelein solange ivette yvette annie juliet julieth marian maryan'.split(' '));
+const NOMBRES_HOMBRE = new Set('luca joshua josua bautista nicola elias jonas tomas matias josias isaias jeremias zacarias andres dennis denis jesus moises noe jose joel abel isaac david daniel saul samuel manuel miguel angel gabriel rafael ismael ezequiel emanuel misael nathanael natanael abdiel uriel ariel'.split(' '));
+function adivinarGenero(nombre){
+  const s = String(nombre || '');
+  const nombres = (s.includes(',') ? s.split(',').slice(1).join(' ') : s).trim();
+  for(const t of norm(nombres).split(' ').filter(x => x.length > 1)){
+    if(t === 'maria' || t === 'ma') return 'M';
+    if(NOMBRES_MUJER.has(t)) return 'M';
+    if(NOMBRES_HOMBRE.has(t)) return 'H';
+    if(/(a|ene|ine|ane|elle|ille|ise|ice|eth|ith|yn|een)$/.test(t)) return 'M';
+    if(/(o|os|el|er|an|on|en|in|ar|or|ir|ur|us|is|es|ez|al|il|ul|y|i|u|e|t|d|k|x|z|s|l|n|r)$/.test(t)) return 'H';
+  }
+  return '';
+}
+const GEN_LBL = { H:'Hombre', M:'Mujer' };
 const pareceNombre = v => { const s = String(v || '').trim(); return /^[A-Za-zÀ-ÿÑñ'´.,\- ]{5,}$/.test(s) && s.split(/[\s,]+/).filter(Boolean).length >= 2; };
 async function leerListaExterna(file, colNombre){
   await loadScript(SHEETJS_URL);
@@ -2914,6 +2946,7 @@ async function leerListaExterna(file, colNombre){
   const ix = t => tipos.indexOf(t);
   if(ix('full') < 0 && ix('nom') < 0 && ix('ape') < 0) throw new Error('No encontramos una columna con nombres. Revisa que el archivo tenga una columna “Nombres” o “Nombre completo”.');
   const rows = [], vistos = new Set();
+  const genDe = lectorGenero(ix('x') >= 0 ? raw.slice(hi + 1).map(r => (r || [])[ix('x')]) : []);
   for(let i = hi + 1; i < raw.length; i++){
     const r = raw[i] || [];
     const get = t => ix(t) >= 0 ? String(r[ix(t)] || '').replace(/\s+/g, ' ').trim() : '';
@@ -2924,13 +2957,15 @@ async function leerListaExterna(file, colNombre){
     n = n.slice(0, 120);
     const key = norm(n); if(vistos.has(key)) continue; vistos.add(key);
     const gv = get('g').toUpperCase();
-    rows.push({ n, k: get('k').slice(0, 80), w: get('w').slice(0, 80), g: /^S|SEM/.test(gv) ? 'S' : /^I|INS/.test(gv) ? 'I' : '' });
+    const row = { n, k: get('k').slice(0, 80), w: get('w').slice(0, 80), g: /^S|SEM/.test(gv) ? 'S' : /^I|INS/.test(gv) ? 'I' : '' };
+    const x = genDe(get('x')); if(x) row.x = x;
+    rows.push(row);
   }
   if(!rows.length) throw new Error('El archivo no tiene filas con nombres.');
   const excluidas = [...new Set(tipos.filter(t => /^s\d$/.test(t)).map(t => SENSIBLE_LBL[+t.slice(1)]))];
   const ignoradas = tipos.filter(t => !t).length;
   const opciones = Array.from({ length: ncols }, (_, i) => ({ i, nombre: H[i] || `Columna ${XLSX.utils.encode_col(i)}`, tipo: tipos[i] }));
-  return { rows, archivo: file.name, excluidas, ignoradas, opciones, usadas: { nombre: ix('full') >= 0 || ix('nom') >= 0 || ix('ape') >= 0, estaca: ix('k') >= 0, barrio: ix('w') >= 0, programa: ix('g') >= 0 } };
+  return { rows, archivo: file.name, excluidas, ignoradas, opciones, usadas: { nombre: ix('full') >= 0 || ix('nom') >= 0 || ix('ape') >= 0, estaca: ix('k') >= 0, barrio: ix('w') >= 0, programa: ix('g') >= 0, genero: rows.some(r => r.x) } };
 }
 /** Selector «Base del Programa Ica» / «Otra base de datos» con zona para soltar el Excel. */
 function baseSelectorHTML(px, actual, info, que){
@@ -2941,7 +2976,7 @@ function baseSelectorHTML(px, actual, info, que){
     </div>
     <div class="drop ${actual === 'propia' ? '' : 'hide'}" id="${px}Drop" tabindex="0">
       <input type="file" id="${px}File" accept=".xlsx,.xls,.csv,.ods" class="hide">
-      <div id="${px}DropTxt">${info ? `<b>${esc(info.archivo || 'Lista actual')}</b>${(+info.n || 0).toLocaleString('es-PE')} personas<small>Toca o arrastra otro archivo para reemplazarla.</small>` : `${ICON.upload}<b>Toca aquí o arrastra tu Excel</b><small>.xlsx, .xls, .csv · Solo se guardan nombre, estaca, barrio y programa.</small>`}</div>
+      <div id="${px}DropTxt">${info ? `<b>${esc(info.archivo || 'Lista actual')}</b>${(+info.n || 0).toLocaleString('es-PE')} personas<small>Toca o arrastra otro archivo para reemplazarla.</small>` : `${ICON.upload}<b>Toca aquí o arrastra tu Excel</b><small>.xlsx, .xls, .csv · Solo se guardan nombre, estaca, barrio, programa y género.</small>`}</div>
     </div>
     <div id="${px}Prev"></div></div>`;
 }
@@ -2957,7 +2992,7 @@ function bindBaseSelector(root, px){
       st.lista = L;
       const ok = (b, t) => `<span class="badge ${b ? 'b-ok' : 'b-ro'}">${b ? '✓' : '—'} ${t}</span>`;
       prev.innerHTML = `<div class="info-box" style="margin-top:10px"><b>${esc(L.archivo)}</b>: ${L.rows.length.toLocaleString('es-PE')} personas.<br>
-          <span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-top:6px">${ok(L.usadas.nombre, 'Nombre')}${ok(L.usadas.estaca, 'Estaca')}${ok(L.usadas.barrio, 'Barrio')}${ok(L.usadas.programa, 'Programa')}</span>
+          <span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-top:6px">${ok(L.usadas.nombre, 'Nombre')}${ok(L.usadas.estaca, 'Estaca')}${ok(L.usadas.barrio, 'Barrio')}${ok(L.usadas.programa, 'Programa')}${ok(L.usadas.genero, 'Género')}</span>
           ${L.excluidas.length ? `<div style="margin-top:8px">🔒 <b>Excluidos por privacidad</b> (no se suben): ${esc(L.excluidas.join(', '))}.</div>` : ''}
           ${L.ignoradas ? `<div class="hint" style="margin-top:4px">${L.ignoradas} columna${L.ignoradas > 1 ? 's' : ''} más no se usa${L.ignoradas > 1 ? 'n' : ''}.</div>` : ''}</div>
         <div class="field" style="margin-top:10px"><label>¿La columna de nombres es correcta?</label><select class="inp" id="${px}Col">${L.opciones.map(o => `<option value="${o.i}" ${o.tipo === 'full' || (o.tipo === 'nom' && !L.opciones.some(x => x.tipo === 'full')) ? 'selected' : ''}>${esc(o.nombre)}</option>`).join('')}</select>
@@ -3525,18 +3560,80 @@ async function paintQrCard(ev){
 function rndInt(n){ const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; }
 function barajar(a){ for(let i = a.length - 1; i > 0; i--){ const j = rndInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 const barrioDe = r => (r.data && (r.data.w || r.data.k)) || '';
-// Reparte al azar en grupos del mismo tamaño (±1). Con "mezclar", cada barrio se reparte entre todos los grupos.
-function formarGrupos(rows, nGrupos, nLideres, mezclar, nombre){
-  let orden;
-  if(mezclar){
-    const porB = {}; rows.forEach(r => { (porB[barrioDe(r)] = porB[barrioDe(r)] || []).push(r); });
-    orden = barajar(Object.values(porB)).map(barajar).sort((a, b) => b.length - a.length).flat();
-  } else orden = barajar(rows.slice());
+/* Género de un asistente, en este orden: corregido a mano en el evento, el de la base (en línea o en
+   este celular) y, si no hay, el que se deduce por el nombre. origen: 'manual' | 'base' | 'nombre' | ''. */
+function generoFila(ev, r){
+  const man = (ev.meta.gen || {})[r.id]; if(man) return { g:man, origen:'manual' };
+  const nube = (ev.generos || {})[r.id]; if(nube) return { g:nube, origen:'base' };
+  const p = r.pid && PBY.get(r.pid); if(p && p.x) return { g:p.x, origen:'base' };
+  const g = adivinarGenero(r.n); return { g, origen: g ? 'nombre' : '' };
+}
+// Trae de Supabase el género de la base para los asistentes (si la migración 0023 aún no corre, no pasa nada).
+async function cargarGenerosEvento(ev){
+  if(!eventoEnNube(ev) || !ev.remote || ev.generosAt > Date.now() - 60000) return;
+  ev.generosAt = Date.now();
+  try{
+    const list = await SB.rpc('generos_evento', { evento: ev.remote });
+    const m = {}; (list || []).forEach(x => { if(x.genero) m[x.id] = x.genero; });
+    const antes = JSON.stringify(ev.generos || {});
+    ev.generos = m; saveEvents();
+    if(JSON.stringify(m) !== antes && CUR.code === ev.code) renderGrupos();
+  }catch(e){ console.warn('generos_evento', e); }
+}
+function guardarGenero(ev, id, g){
+  ev.meta.gen = Object.assign({}, ev.meta.gen); if(g) ev.meta.gen[id] = g; else delete ev.meta.gen[id];
+  ev.metaPending = true; saveEvents(); queueSync();
+}
+// Lista para corregir a quienes no tienen género en la base (deducido por el nombre o sin saber).
+function revisarGeneros(ev, rows){
+  const fila = r => { const i = generoFila(ev, r); return `<div class="item" style="margin:6px 0 0"><span class="ii"><b>${esc(prettyName(r.n))}</b><small>${esc(barrioDe(r))}${i.origen === 'manual' ? ' · corregido' : ''}</small></span>
+    <div class="seg" data-id="${esc(r.id)}">${['H','M'].map(v => `<button data-v="${v}" class="${i.g === v ? 'on' : ''}">${GEN_LBL[v]}</button>`).join('')}</div></div>`; };
+  sheet(`${sheetHead('Revisar géneros', `${rows.length} sin dato en la base`)}
+    <p class="hint" style="margin-top:0">Se dedujeron por el primer nombre. Toca el correcto si alguno está mal; queda guardado en este evento.</p>
+    <div style="max-height:55vh;overflow:auto">${rows.map(fila).join('')}</div>
+    <div class="sh-foot"><button class="btn primary" data-close>Listo</button></div>`, {
+    onMount(el){
+      $$('.seg[data-id]', el).forEach(s => $$('button', s).forEach(b => b.onclick = () => {
+        $$('button', s).forEach(x => x.classList.toggle('on', x === b));
+        guardarGenero(ev, s.dataset.id, b.dataset.v);
+      }));
+    },
+    onClose(){ renderGrupos(); }
+  });
+}
+// Cuántos de los n grupos son de hombres al separar: el reparto con el grupo más grande lo más chico posible.
+function gruposDeHombres(n, h, m){
+  let mejor = 1, peor = Infinity;
+  for(let k = 1; k < n; k++){ const t = Math.max(Math.ceil(h / k), Math.ceil(m / (n - k))); if(t < peor){ peor = t; mejor = k; } }
+  return mejor;
+}
+// Orden para repartir: con "mezclar barrios", cada barrio queda seguido para que se reparta entre todos los grupos.
+function ordenReparto(rows, mezclar){
+  if(!mezclar) return barajar(rows.slice());
+  const porB = {}; rows.forEach(r => { (porB[barrioDe(r)] = porB[barrioDe(r)] || []).push(r); });
+  return barajar(Object.values(porB)).map(barajar).sort((a, b) => b.length - a.length).flat();
+}
+/* Reparte al azar en grupos del mismo tamaño (±1). Con "mezclar", cada barrio se reparte entre todos los grupos.
+   genero: 'mix' = cada grupo con hombres y mujeres en partes parecidas; 'sep' = grupos solo de hombres y solo de mujeres. */
+function formarGrupos(rows, nGrupos, nLideres, mezclar, nombre, genero, genDe){
   const lista = Array.from({ length:nGrupos }, (_, i) => ({ n: `${nombre} ${i + 1}`, lideres:[], miembros:[] }));
-  const off = rndInt(nGrupos);
-  orden.forEach((r, i) => lista[(i + off) % nGrupos].miembros.push(r.id));
+  const de = { H:[], M:[], '':[] }; rows.forEach(r => de[genDe ? genDe(r) : ''].push(r));
+  const repartir = (orden, grupos) => { const off = rndInt(grupos.length); orden.forEach((r, i) => grupos[(i + off) % grupos.length].miembros.push(r.id)); };
+  let sep = genero === 'sep' && nGrupos > 1 && de.H.length > 0 && de.M.length > 0;
+  if(sep){
+    const nH = gruposDeHombres(nGrupos, de.H.length, de.M.length);
+    lista.forEach((g, i) => { g.gen = i < nH ? 'H' : 'M'; });
+    repartir(ordenReparto(de.H, mezclar), lista.slice(0, nH));
+    repartir(ordenReparto(de.M, mezclar), lista.slice(nH));
+    // Sin género conocido: al grupo con menos personas.
+    barajar(de[''].slice()).forEach(r => lista.reduce((m, g) => g.miembros.length < m.miembros.length ? g : m, lista[0]).miembros.push(r.id));
+  } else if(genero === 'mix'){
+    // Hombres seguidos y luego mujeres: al repartir en ronda, cada grupo recibe de ambos en partes parecidas.
+    const bloques = barajar([de.H, de.M]);
+    repartir([...ordenReparto(bloques[0], mezclar), ...ordenReparto(bloques[1], mezclar), ...ordenReparto(de[''], mezclar)], lista);
+  } else repartir(ordenReparto(rows, mezclar), lista);
   lista.forEach(g => { g.lideres = barajar(g.miembros.slice()).slice(0, nLideres); });
-  return { nombre, lideres:nLideres, mezclar, creados: Date.now(), por: myName(), lista };
+  return { nombre, lideres:nLideres, mezclar, genero: sep ? 'sep' : genero === 'sep' ? 'mix' : genero, creados: Date.now(), por: myName(), lista };
 }
 function guardarGrupos(ev, g){
   if(g) ev.meta.grupos = g; else delete ev.meta.grupos;
@@ -3547,8 +3644,13 @@ function renderGrupos(){
   if(box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
   const g = ev.meta.grupos;
   const rows = eventRows(ev); const byId = new Map(rows.map(r => [r.id, r]));
+  cargarGenerosEvento(ev);
+  const genInfo = new Map(rows.map(r => [r.id, generoFila(ev, r)]));
+  const genDe = r => (genInfo.get(r.id) || generoFila(ev, r)).g;
   if(!g || !g.lista || !g.lista.length){
-    const prev = ST.grForm || { modo:'n', num:4, lid:1, nom:'Compañía', mix:true };
+    const prev = Object.assign({ gen:true }, ST.grForm || { modo:'n', num:4, lid:1, nom:'Compañía', mix:true });
+    const cuenta = { H:0, M:0, '':0 }, deducidos = [];
+    rows.forEach(r => { const i = genInfo.get(r.id); cuenta[i.g]++; if(i.origen === 'nombre' || !i.g) deducidos.push(r); });
     box.innerHTML = `<section class="card">
       <h2>${ICON.users} Formar grupos o compañías</h2>
       <p class="hint" style="margin-top:0">Se reparten al azar los <b>${rows.length}</b> asistentes de la lista, en grupos del mismo tamaño. Todos los que colaboran en el evento ven los mismos grupos.</p>
@@ -3557,11 +3659,13 @@ function renderGrupos(){
       <div class="field"><label>Líderes por grupo</label><div class="seg" id="grLid">${[0,1,2].map(l => `<button data-l="${l}" class="${prev.lid===l?'on':''}">${l || 'Ninguno'}</button>`).join('')}</div></div></div>
       <div class="field"><label>Nombre de cada grupo</label><input id="grNom" maxlength="30" value="${esc(prev.nom)}" placeholder="Compañía, Grupo, Equipo…"></div>
       <label class="check-row"><input type="checkbox" id="grMix" ${prev.mix?'checked':''}><span>Mezclar barrios: cada grupo con gente de distintos barrios</span></label>
+      <label class="check-row"><input type="checkbox" id="grGen" ${prev.gen?'checked':''}><span>Mezclar hombres y mujeres: cada grupo con hombres y mujeres en partes parecidas. Si lo desmarcas, se forman grupos solo de hombres y grupos solo de mujeres.</span></label>
+      ${rows.length ? `<p class="hint" style="margin-top:4px">${cuenta.H} hombre${cuenta.H === 1 ? '' : 's'} · ${cuenta.M} mujer${cuenta.M === 1 ? '' : 'es'}${cuenta[''] ? ` · ${cuenta['']} sin saber` : ''}${deducidos.length ? `. ${deducidos.length} ${deducidos.length === 1 ? 'no tiene' : 'no tienen'} género en la base: se dedujo por el nombre. <button class="link-btn" id="grRev">Revisar</button>` : ''}</p>` : ''}
       <p class="hint" id="grPrev"></p>
       <div class="btn-row"><button class="btn primary" id="grGo" ${rows.length < 2 ? 'disabled' : ''}>Formar grupos al azar</button></div>
     </section>`;
     const leer = () => {
-      const f = { modo: $('#grModo .on', box).dataset.m, num: Math.max(1, parseInt($('#grNum', box).value, 10) || 1), lid: +$('#grLid .on', box).dataset.l, nom: $('#grNom', box).value.trim() || 'Grupo', mix: $('#grMix', box).checked };
+      const f = { modo: $('#grModo .on', box).dataset.m, num: Math.max(1, parseInt($('#grNum', box).value, 10) || 1), lid: +$('#grLid .on', box).dataset.l, nom: $('#grNom', box).value.trim() || 'Grupo', mix: $('#grMix', box).checked, gen: $('#grGen', box).checked };
       ST.grForm = f;
       const n = f.modo === 'n' ? Math.min(f.num, rows.length) : Math.max(1, Math.round(rows.length / f.num));
       return Object.assign(f, { n });
@@ -3569,13 +3673,23 @@ function renderGrupos(){
     const prevw = () => {
       const f = leer(); const t = rows.length;
       const a = Math.floor(t / Math.max(1, f.n)), b = Math.ceil(t / Math.max(1, f.n));
-      $('#grPrev', box).textContent = t ? `Quedarán ${f.n} grupo${f.n > 1 ? 's' : ''} de ${a === b ? a : a + ' o ' + b} personas.` : 'Todavía no hay asistentes en la lista.';
+      let txt = t ? `Quedarán ${f.n} grupo${f.n > 1 ? 's' : ''} de ${a === b ? a : a + ' o ' + b} personas.` : 'Todavía no hay asistentes en la lista.';
+      if(t && !f.gen){
+        if(f.n < 2) txt = 'Para separar hombres y mujeres se necesitan al menos 2 grupos.';
+        else if(!cuenta.H || !cuenta.M) txt += ` Todos son ${cuenta.H ? 'hombres' : 'mujeres'}: no hay a quién separar.`;
+        else {
+          const nH = gruposDeHombres(f.n, cuenta.H, cuenta.M);
+          txt = `Quedarán ${nH} grupo${nH > 1 ? 's' : ''} de hombres y ${f.n - nH} de mujeres.`;
+        }
+      }
+      $('#grPrev', box).textContent = txt;
     };
+    const rev = $('#grRev', box); if(rev) rev.onclick = () => revisarGeneros(ev, deducidos);
     $$('#grModo button', box).forEach(b => b.onclick = () => { $$('#grModo button', box).forEach(x => x.classList.toggle('on', x === b)); $('#grNumL', box).textContent = b.dataset.m === 'n' ? '¿Cuántos grupos?' : '¿Cuántas personas por grupo?'; prevw(); });
     $$('#grLid button', box).forEach(b => b.onclick = () => { $$('#grLid button', box).forEach(x => x.classList.toggle('on', x === b)); prevw(); });
-    $('#grNum', box).oninput = prevw; $('#grMix', box).onchange = prevw;
+    $('#grNum', box).oninput = prevw; $('#grMix', box).onchange = prevw; $('#grGen', box).onchange = prevw;
     prevw();
-    $('#grGo', box).onclick = () => { const f = leer(); guardarGrupos(ev, formarGrupos(rows, f.n, f.lid, f.mix, f.nom)); toast(`✓ ${f.n} grupos formados`, 'ok'); };
+    $('#grGo', box).onclick = () => { const f = leer(); guardarGrupos(ev, formarGrupos(rows, f.n, f.lid, f.mix, f.nom, f.gen ? 'mix' : 'sep', genDe)); toast(`✓ ${f.n} grupos formados`, 'ok'); };
     return;
   }
   const asignados = new Set(g.lista.flatMap(x => x.miembros));
@@ -3588,32 +3702,43 @@ function renderGrupos(){
     </section>
     <div class="gr-grid">${g.lista.map((x, i) => {
       const miembros = x.miembros.filter(id => byId.has(id)).sort((a, b) => (x.lideres.includes(b) ? 1 : 0) - (x.lideres.includes(a) ? 1 : 0));
-      return `<section class="card gr-card"><h3>${esc(x.n)} <span class="hint">${miembros.length}</span></h3><ol>${miembros.map(id => { const r = byId.get(id), lid = x.lideres.includes(id); return `<li data-g="${i}" data-id="${esc(id)}" class="${lid ? 'lider' : ''}">${lid ? '★ ' : ''}${esc(prettyName(r.n))}${lid ? ' · líder' : ''}<small>${esc(barrioDe(r))}</small></li>`; }).join('')}</ol></section>`;
+      const h = miembros.filter(id => genDe(byId.get(id)) === 'H').length, m = miembros.filter(id => genDe(byId.get(id)) === 'M').length;
+      const etiqueta = x.gen ? (x.gen === 'H' ? 'Hombres' : 'Mujeres') + ' · ' + miembros.length : `${miembros.length} · ${h} H · ${m} M`;
+      return `<section class="card gr-card"><h3>${esc(x.n)} <span class="hint">${etiqueta}</span></h3><ol>${miembros.map(id => { const r = byId.get(id), lid = x.lideres.includes(id), gi = genInfo.get(id) || {}; return `<li data-g="${i}" data-id="${esc(id)}" class="${lid ? 'lider' : ''}">${lid ? '★ ' : ''}${esc(prettyName(r.n))}${lid ? ' · líder' : ''}<small>${esc([barrioDe(r), GEN_LBL[gi.g] ? GEN_LBL[gi.g] + (gi.origen === 'nombre' ? ' (por el nombre)' : '') : ''].filter(Boolean).join(' · '))}</small></li>`; }).join('')}</ol></section>`;
     }).join('')}</div>`;
   const sinB = $('#grSin', box); if(sinB) sinB.onclick = () => {
-    sin.forEach(r => { const menor = g.lista.reduce((m, x) => x.miembros.filter(id => byId.has(id)).length < m.miembros.filter(id => byId.has(id)).length ? x : m, g.lista[0]); menor.miembros.push(r.id); });
+    const tam = x => x.miembros.filter(id => byId.has(id)).length;
+    sin.forEach(r => {
+      // Con grupos separados por género, cada uno va a un grupo de su género (si lo hay).
+      const gr = genDe(r), propios = g.lista.filter(x => x.gen && x.gen === gr);
+      const opciones = propios.length ? propios : g.lista;
+      opciones.reduce((m, x) => tam(x) < tam(m) ? x : m, opciones[0]).miembros.push(r.id);
+    });
     guardarGrupos(ev, g);
   };
   $('#grWa', box).onclick = () => waOpen(`*Grupos · ${ev.meta.title}*\n` + g.lista.map(x => {
     const ms = x.miembros.filter(id => byId.has(id));
-    return `\n*${x.n}* (${ms.length})\n` + ms.sort((a, b) => (x.lideres.includes(b) ? 1 : 0) - (x.lideres.includes(a) ? 1 : 0)).map(id => (x.lideres.includes(id) ? '★ ' : '• ') + prettyName(byId.get(id).n) + (x.lideres.includes(id) ? ' (líder)' : '')).join('\n');
+    return `\n*${x.n}*${x.gen ? ' · ' + (x.gen === 'H' ? 'Hombres' : 'Mujeres') : ''} (${ms.length})\n` + ms.sort((a, b) => (x.lideres.includes(b) ? 1 : 0) - (x.lideres.includes(a) ? 1 : 0)).map(id => (x.lideres.includes(id) ? '★ ' : '• ') + prettyName(byId.get(id).n) + (x.lideres.includes(id) ? ' (líder)' : '')).join('\n');
   }).join('\n'));
   $('#grRe', box).onclick = async () => {
     if(!(await confirmBox('Se forman grupos nuevos con toda la lista actual. Los grupos de ahora se pierden.', { title:'Volver a sortear', ok:'Sortear' }))) return;
-    guardarGrupos(ev, formarGrupos(rows, g.lista.length, g.lideres || 0, g.mezclar !== false, g.nombre || 'Grupo'));
+    guardarGrupos(ev, formarGrupos(rows, g.lista.length, g.lideres || 0, g.mezclar !== false, g.nombre || 'Grupo', g.genero || 'off', genDe));
   };
   $('#grDel', box).onclick = async () => {
     if(!(await confirmBox('Se quitan los grupos para todos los que colaboran en el evento.', { title:'Quitar grupos', ok:'Quitar', danger:true }))) return;
     guardarGrupos(ev, null);
   };
   $$('.gr-card li', box).forEach(li => li.onclick = () => {
-    const x = g.lista[+li.dataset.g], id = li.dataset.id, r = byId.get(id), lid = x.lideres.includes(id);
+    const x = g.lista[+li.dataset.g], id = li.dataset.id, r = byId.get(id), lid = x.lideres.includes(id), gi = genInfo.get(id) || {};
     sheet(`${sheetHead(esc(prettyName(r.n)), esc(x.n))}
       <div class="btn-row"><button class="btn ${lid ? '' : 'primary'}" id="mLid">${lid ? 'Quitar como líder' : '★ Hacer líder'}</button></div>
+      <div class="field" style="margin-top:12px"><label>Género${gi.origen === 'nombre' ? ' <span class="hint">(se dedujo por el nombre)</span>' : ''}</label><div class="seg" id="mGen">${['H','M'].map(v => `<button data-v="${v}" class="${gi.g === v ? 'on' : ''}">${GEN_LBL[v]}</button>`).join('')}</div>
+        <small class="hint">Corregirlo no lo cambia de grupo; usa «Volver a sortear» o «Mover a».</small></div>
       ${g.lista.length > 1 ? `<p class="hint">Mover a:</p><div class="chips">${g.lista.map((y, j) => y === x ? '' : `<button class="chip" data-to="${j}">${esc(y.n)}</button>`).join('')}</div>` : ''}
       <div class="sh-foot"><button class="btn" data-close>Cerrar</button></div>`, {
       onMount(el, close){
         $('#mLid', el).onclick = () => { x.lideres = lid ? x.lideres.filter(v => v !== id) : [...x.lideres, id]; close(); guardarGrupos(ev, g); };
+        $$('#mGen button', el).forEach(b => b.onclick = () => { guardarGenero(ev, id, b.dataset.v); close(); renderGrupos(); toast('Género guardado', 'ok'); });
         $$('[data-to]', el).forEach(b => b.onclick = () => {
           const y = g.lista[+b.dataset.to];
           x.miembros = x.miembros.filter(v => v !== id); x.lideres = x.lideres.filter(v => v !== id); y.miembros.push(id);
@@ -5610,7 +5735,9 @@ async function handleImport(file){
       nom: col('nombres','nombre','nombres completos'), ape: col('apellidos','apellido'),
       k: col(h => h.startsWith('stake') || h.includes('estaca')), w: col(h => h.startsWith('ward') || h.includes('barrio') || h === 'rama' || h === 'unidad'),
       g: col('program name', 'program', 'programa'),
+      x: col(esColGenero),
     };
+    const genDe = lectorGenero(C.x >= 0 ? raw.slice(hi + 1).map(r => (r || [])[C.x]) : []);
     /* "Ica Peru Stake SEM (12011)" → S · "Ica Peru Stake IN (61151)" → I */
     const progDe = v => { const u = String(v||'').toUpperCase(); return /\bSEM\b|SEMINAR/.test(u) ? 'S' : /\bINS?T?\b|INSTITU/.test(u) ? 'I' : ''; };
     const rows = [];
@@ -5622,7 +5749,7 @@ async function handleImport(file){
       else if(C.ape >= 0 && C.nom >= 0){ const a = get('ape'), b = get('nom'); n = a && b ? `${a}, ${b}` : (a || b); }
       else n = get('nom');
       n = n.replace(/\s+/g,' ').trim(); if(!n) continue;
-      rows.push({ n, k: get('k'), w: get('w'), g: progDe(get('g')) });
+      rows.push({ n, k: get('k'), w: get('w'), g: progDe(get('g')), x: genDe(get('x')) });
     }
     if(!rows.length) throw new Error('El archivo no tiene filas con nombres.');
     const byId = new Map(ROSTER.people.map(p => [p.id, p]));
@@ -5630,7 +5757,7 @@ async function handleImport(file){
     let nNew = 0, nUpd = 0;
     rows.forEach(r => { const ex = byId.get(pidFor(r.n, r.w)) || byName.get(norm(r.n)); if(ex) nUpd++; else nNew++; });
     IMPORT = { rows, name: file.name };
-    const found = Object.entries({ 'Nombre': C.full >= 0 || C.nom >= 0, 'Estaca': C.k >= 0, 'Barrio': C.w >= 0, 'Programa': rows.some(r => r.g) }).map(([k, ok]) => `<span class="badge ${ok?'b-ok':'b-ro'}">${ok?'✓':'—'} ${k}</span>`).join(' ');
+    const found = Object.entries({ 'Nombre': C.full >= 0 || C.nom >= 0, 'Estaca': C.k >= 0, 'Barrio': C.w >= 0, 'Programa': rows.some(r => r.g), 'Género': rows.some(r => r.x) }).map(([k, ok]) => `<span class="badge ${ok?'b-ok':'b-ro'}">${ok?'✓':'—'} ${k}</span>`).join(' ');
     prev.innerHTML = `<div style="margin-top:14px"><div class="info-box"><b>${esc(file.name)}</b>: ${rows.length.toLocaleString('es-PE')} personas · <b>${nNew}</b> nuevas · <b>${nUpd}</b> ya existen</div>
       <div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">${found}</div>
       <div class="radio-list">
