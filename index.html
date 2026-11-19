@@ -386,7 +386,7 @@ svg{width:18px;height:18px;flex-shrink:0}
 .plan-wrap{overflow:auto;background:#fff;border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);max-height:70vh}
 table.plan{border-collapse:separate;border-spacing:0;font-size:13px;width:auto}
 /* La planilla se ajusta a su contenido (sin columna de nombre estirada) y cada fila lleva su línea fina. */
-.plan-wrap:has(> table.plan){width:fit-content;max-width:100%}
+.plan-wrap:has(> table.plan){width:fit-content;max-width:100%;margin-left:auto;margin-right:auto}
 .plan tbody td{border-bottom:1px solid #D5DFE4}
 .plan tbody tr:hover td{box-shadow:inset 0 999px 0 rgba(31,122,131,.06)}
 .plan tbody tr:hover td.sticky{background:#EEF6F7}
@@ -5705,6 +5705,7 @@ function renderPlanilla(cls, body){
   if(W) bindWiseBar(cls, body, () => renderPlanilla(cls, body));
   if(WR) bindWiseRollBar(cls, body, wFill, () => renderPlanilla(cls, body));
   if(ds.length) bindPlanGrips($('#plan', body));
+  if(ds.length) ajustarAltoPlanilla();
   if(ds.length) $('#plan tbody').onclick = e => {
     const wz = e.target.closest('.wz');
     if(wz){ toggleWise(cls, wz.closest('tr').dataset.sid, () => renderPlanilla(cls, body)); return; }
@@ -5723,6 +5724,18 @@ function renderPlanilla(cls, body){
     const ft = $(`[data-foot="${d}"]`); if(ft) ft.textContent = studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length;
     const fb = $('.fill-blank', body); if(fb){ const n = blanks().length; $('.fb-n', fb).textContent = n; fb.classList.toggle('hide', !n); }
   };
+}
+/* Encabezado de fechas siempre visible (como "Inmovilizar" en Excel): la tabla mide lo que queda libre
+   entre las pestañas fijas y la barra de guardar, así se desplaza la tabla (no la página) y la fila de fechas
+   se queda arriba. */
+function ajustarAltoPlanilla(){
+  const wrap = $('#plan') && $('#plan').parentElement; if(!wrap) return;
+  const tabs = $('#tabs'), sb = $('.savebar');
+  const arriba = tabs ? (parseFloat(getComputedStyle(tabs).top) || 0) + tabs.getBoundingClientRect().height + 10 : 80;
+  const abajo = sb ? sb.getBoundingClientRect().height + 10 : 16;
+  wrap.style.maxHeight = Math.max(240, window.innerHeight - arriba - abajo) + 'px';
+  wrap.style.scrollMarginTop = arriba + 'px';
+  if(!ajustarAltoPlanilla.on){ ajustarAltoPlanilla.on = true; window.addEventListener('resize', debounce(ajustarAltoPlanilla, 150)); }
 }
 /* Ancho de columnas de la planilla: se arrastra el borde del encabezado ("Alumno" o cualquier fecha:
    todas las fechas cambian juntas). Doble clic = ancho automático. Se recuerda en este navegador. */
