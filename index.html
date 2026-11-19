@@ -920,7 +920,8 @@ function normPhone(p){
   if(d.length === 9 && d[0] === '9') d = '51' + d;
   return d.length >= 10 ? d : '';
 }
-function waOpen(text, phone){ window.open('https://wa.me/'+(normPhone(phone)||'')+'?text='+encodeURIComponent(text), '_blank'); }
+// api.whatsapp.com conserva los emojis; wa.me los convierte en "�" al redirigir a WhatsApp Desktop.
+function waOpen(text, phone){ const p = normPhone(phone); window.open('https://api.whatsapp.com/send?' + (p ? 'phone=' + p + '&' : '') + 'text=' + encodeURIComponent(text), '_blank'); }
 function appLink(param, code){ return location.origin + location.pathname + '?' + param + '=' + code; }
 
 /* ============================================================
@@ -1848,7 +1849,7 @@ function renderSupervisor(){
       setMyName(`${v.nombres} ${v.apellidos}`);
       SB.solicitudes = await SB.rpc('mis_solicitudes').catch(() => SB.solicitudes);
       const msg = `Hola 👋 Soy *${v.nombres} ${v.apellidos}*, supervisor de Seminarios e Institutos (${stakeShort(v.estaca)} · ${v.barrio}). Cel: ${v.celular}.\nAcabo de pedir acceso en Check-in Asistencia a ${clases.length === 1 ? 'esta clase' : `estas ${clases.length} clases`}:\n${clases.map(c => `• ${prettyName(c.maestro)} · ${[progLabel(c.programa), stakeShort(c.estaca), c.horario].filter(Boolean).join(' · ')}`).join('\n')}\n\nPor favor, revisa mi solicitud en *Solicitudes de acceso*. ¡Gracias!`;
-      const wa = 'https://wa.me/' + ADMIN_WA + '?text=' + encodeURIComponent(msg);
+      const wa = 'https://api.whatsapp.com/send?phone=' + ADMIN_WA + '&text=' + encodeURIComponent(msg);
       // En el celular se abre WhatsApp en la misma pestaña (Safari bloquea ventanas abiertas después de esperar al servidor).
       if(matchMedia('(pointer:coarse)').matches) setTimeout(() => { location.href = wa; }, 900); else window.open(wa, '_blank');
       toast(`✓ Solicitud enviada al administrador${r && r.ya_tenia ? ` · ya tenías acceso a ${r.ya_tenia}` : ''}`, 'ok', { ms:5000 });
@@ -4891,7 +4892,7 @@ function textoWhatsMaestro(cls, texto, tipo){
   const code = Object.keys(CLASSES).find(k => CLASSES[k] === cls) || '';
   const r = resumenAsistencia(cls), m = cls.meta, t = MSG_TIPOS[tipo] || MSG_TIPOS.aviso;
   const dia = f => fmtDate(f).replace(/\s\d{4}$/, '');
-  const lineas = [`${t.ico} *${t.titulo}*`, '', texto, '', `📋 *${m.title || 'Tu clase'}*${m.horario ? ' · ' + m.horario : ''}`];
+  const lineas = [`${t.ico} *${t.titulo}*`, '', texto, '', `📋 *${m.title || 'Tu clase'}*${m.horario && !norm(m.title || '').includes(norm(m.horario)) ? ' · ' + m.horario : ''}`];
   lineas.push(`📅 Sesiones hasta hoy: *${r.total}*${r.hoy ? ' (incluida la de hoy)' : ''}`);
   if(!r.pasadas) lineas.push('Aún no hay sesiones anteriores a hoy.');
   else if(!r.falta.length) lineas.push(`✅ Asistencia al día: las ${r.pasadas} sesiones anteriores están marcadas. ¡Gracias!`);
