@@ -5403,7 +5403,7 @@ function WISE_PASE(){
     let d = document.getElementById('ca-wise-box');
     if(!d){ d = document.createElement('div'); d.id = 'ca-wise-box'; document.body.appendChild(d); }
     d.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;width:390px;max-width:calc(100vw - 36px);max-height:72vh;overflow:auto;background:#fff;border:2px solid ' + (ok ? '#1E8449' : '#C2591C') + ';border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.28);padding:14px 16px;font:14px/1.45 Segoe UI,system-ui,sans-serif;color:#17262E';
-    d.innerHTML = '<button type="button" id="ca-wx" style="float:right;border:0;background:none;font-size:20px;line-height:1;cursor:pointer;color:#5C7080">×</button><div style="font-weight:800;margin-bottom:6px">Pasar asistencia · Check-in</div>' + html;
+    d.innerHTML = '<button type="button" id="ca-wx" style="float:right;border:0;background:none;font-size:20px;line-height:1;cursor:pointer;color:#5C7080">×</button><div style="font-weight:800;margin-bottom:6px">Pasar asistencia · Check-in <span style="font-weight:600;color:#8A9AA5;font-size:12px">v2</span></div>' + html;
     d.querySelector('#ca-wx').onclick = () => d.remove();
   };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[c]);
@@ -5425,6 +5425,36 @@ function WISE_PASE(){
   };
   const estado = b => { const h = b.outerHTML; return ROJO.test(h) ? 'A' : VERDE.test(h) ? 'P' : ''; };
   const pausa = ms => new Promise(r => setTimeout(r, ms));
+  const btnDe = eid => document.querySelector('[data-id="' + eid + '"] [data-tour="student-attendance-button"]');
+  const props = el => { const k = el && Object.keys(el).find(x => x.startsWith('__reactProps$')); return k ? el[k] : null; };
+  const manejadores = el => { const out = []; for(let e = el, i = 0; e && i < 4; e = e.parentElement, i++){ const p = props(e); if(p) Object.keys(p).filter(x => /^on[A-Z]/.test(x) && typeof p[x] === 'function').forEach(x => out.push((i ? 'p' + i + '.' : '') + x)); } return out; };
+  const esperarVerde = async (eid, ms) => { for(let t = 0; t < ms; t += 100){ await pausa(100); const b = btnDe(eid); if(b && estado(b) === 'P') return true; } return false; };
+  const secuencia = el => {
+    const r = el.getBoundingClientRect();
+    const o = { bubbles: true, cancelable: true, composed: true, view: window, button: 0, buttons: 1, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    const P = window.PointerEvent || MouseEvent;
+    el.dispatchEvent(new P('pointerover', o)); el.dispatchEvent(new MouseEvent('mouseover', o));
+    el.dispatchEvent(new P('pointerdown', o)); el.dispatchEvent(new MouseEvent('mousedown', o));
+    try{ el.focus(); }catch(e){}
+    el.dispatchEvent(new P('pointerup', Object.assign({}, o, { buttons: 0 }))); el.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, o, { buttons: 0 })));
+    el.dispatchEvent(new MouseEvent('click', Object.assign({}, o, { buttons: 0, detail: 1 })));
+  };
+  const directo = el => {
+    for(let e = el, i = 0; e && i < 4; e = e.parentElement, i++){
+      const p = props(e); if(!p) continue;
+      const fn = p.onClick || p.onMouseUp || p.onPointerUp || p.onMouseDown || p.onPointerDown;
+      if(fn){ const ev = { type: 'click', target: el, currentTarget: e, button: 0, detail: 1, preventDefault(){}, stopPropagation(){}, persist(){}, isDefaultPrevented: () => false, isPropagationStopped: () => false, nativeEvent: new MouseEvent('click') }; try{ fn(ev); return true; }catch(err){ return false; } }
+    }
+    return false;
+  };
+  const marcar = async (eid) => {
+    let b = btnDe(eid); if(!b) return false;
+    b.scrollIntoView({ block: 'center' }); await pausa(120);
+    b = btnDe(eid); secuencia(b);
+    if(await esperarVerde(eid, 1200)) return true;
+    b = btnDe(eid); if(b && estado(b) !== 'P' && directo(b) && await esperarVerde(eid, 1200)) return true;
+    return false;
+  };
   (async () => {
     if(!/wise2?\.churchofjesuschrist\.org/i.test(location.hostname) || !document.querySelector('[data-tour="student-attendance-button"]')) return caja('Abre en Wise2 la clase → <b>Students → Attendance</b> y elige la sesión. Luego vuelve a tocar este botón.');
     let txt = '';
@@ -5442,7 +5472,7 @@ function WISE_PASE(){
     const filas = [...document.querySelectorAll('[data-id^="enrollment-"]')].map(r => {
       const nb = r.querySelector('[data-id="name-btn"]');
       const n = nb ? [...nb.childNodes].filter(x => x.nodeType === 3).map(x => x.textContent).join(' ').replace(/\s+/g, ' ').trim() : '';
-      return { r, n, b: r.querySelector('[data-tour="student-attendance-button"]'), t: tok(n) };
+      return { r, n, eid: r.getAttribute('data-id'), b: r.querySelector('[data-tour="student-attendance-button"]'), t: tok(n) };
     }).filter(x => x.n && x.b);
     const P = pres.map(n => ({ n, t: tok(n) })), pares = [];
     P.forEach((a, i) => filas.forEach((w, j) => { const c = comunes(a.t, w.t); if(c >= 2 && c >= Math.min(a.t.length, w.t.length) - 1) pares.push({ i, j, c, r: c / Math.max(a.t.length, w.t.length) }); }));
@@ -5452,20 +5482,23 @@ function WISE_PASE(){
     const faltan = P.filter((_, i) => !pi.has(i)).map(x => x.n);
     if(P.length >= 3 && pi.size < P.length / 2 && !confirm('Solo encontré ' + pi.size + ' de ' + P.length + ' presentes en esta lista de Wise.\n¿Es la clase correcta (' + (data.t || '') + ')?\n\nAceptar = continuar igual')) return caja('No se marcó nada. Revisa que la clase de Wise sea la misma que copiaste.');
     let hechos = 0, ya = 0; const rojos = [], fallo = [];
-    for(const [i, j] of pi){
-      const w = filas[j], st = estado(w.b);
+    const orden = [...pi].sort((x, y) => x[1] - y[1]);
+    for(let k = 0; k < orden.length; k++){
+      const w = filas[orden[k][1]], b = btnDe(w.eid) || w.b, st = estado(b);
+      caja('Marcando… ' + (k + 1) + ' de ' + orden.length + '<br><small>' + esc(w.n) + '</small>', true);
       if(st === 'P'){ ya++; continue; }
-      if(st === 'A'){ rojos.push(w.n); w.r.style.outline = '3px solid #E8692A'; continue; }
-      w.b.click(); await pausa(160);
-      if(estado(w.b) === 'P'){ hechos++; w.r.style.outline = '2px solid #1E8449'; } else fallo.push(w.n);
+      const eraRojo = st === 'A';
+      if(await marcar(w.eid)){ hechos++; if(eraRojo) rojos.push(w.n); const r = document.querySelector('[data-id="' + w.eid + '"]'); if(r) r.style.outline = '2px solid #1E8449'; }
+      else { fallo.push(w.n); const r = document.querySelector('[data-id="' + w.eid + '"]'); if(r) r.style.outline = '3px solid #E8692A'; }
     }
     const lista = (t, a, c) => a.length ? '<div style="margin-top:8px;color:' + c + ';font-weight:700">' + t + ' (' + a.length + ')</div><div style="font-size:13px">' + a.map(esc).join('<br>') + '</div>' : '';
+    const diag = fallo.length ? '<div style="margin-top:8px;font-size:11.5px;color:#5C7080">Diagnóstico: ' + esc(manejadores(btnDe(filas[orden[0][1]].eid) || filas[0].b).join(', ') || 'sin manejadores React') + '</div>' : '';
     caja('<div>Sesión <b>' + fl + '</b> · ' + esc(data.t || '') + '</div>'
       + '<div style="margin-top:6px;font-size:15px"><b style="color:#1E8449">✓ ' + hechos + ' marcados en verde</b>' + (ya ? ' · ' + ya + ' ya estaban' : '') + '</div>'
-      + lista('En rojo en Wise pero asistieron (no se cambió)', rojos, '#C2591C')
+      + lista('Estaban en rojo y se pasaron a verde', rojos, '#1E5F8C')
       + lista('No están en esta lista de Wise (enrólalos)', faltan, '#C0392B')
-      + lista('No se pudieron marcar', fallo, '#C0392B')
-      + '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #E1E8EB">Ahora completa los ausentes (<i>Mark All Unmarked</i> en rojo) y presiona <b>Save</b>.</div>', !rojos.length && !faltan.length && !fallo.length);
+      + lista('No se pudieron marcar', fallo, '#C0392B') + diag
+      + '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #E1E8EB">Revisa los verdes, completa los ausentes (<i>Mark All Unmarked</i> en rojo) y presiona <b>Save</b>.</div>', !faltan.length && !fallo.length);
   })();
 }
 function renderClassShare(cls, body){
