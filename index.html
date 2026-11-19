@@ -476,6 +476,10 @@ button.wz:hover{filter:brightness(1.12)}
 .msg-tipo.on.t-recordatorio{border-color:var(--amber);background:var(--amber-50);color:var(--amber)}
 .msg-tipo.on.t-aviso{border-color:var(--teal);background:var(--teal-50);color:var(--teal-2)}
 .msg-h .mh-ico{font-size:18px}
+.msg-res{margin:2px 0 4px;font-size:13px}
+.msg-res summary{cursor:pointer;color:var(--teal-2);font-weight:600}
+.msg-res pre{margin:8px 0 0;padding:10px 12px;background:#E9F7EF;border:1px solid #CDEBD8;border-radius:10px;white-space:pre-wrap;word-break:break-word;font:13px/1.45 inherit;color:var(--text)}
+#msgWa:not(:disabled){background:#1E8449;border-color:#1E8449;color:#fff}
 .msg-h .wn{white-space:pre-wrap;word-break:break-word}
 .mh-ok{color:var(--green);font-weight:600}.mh-no{color:var(--amber);font-weight:600}
 .msg-ov{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(19,44,62,.5);opacity:0;transition:opacity .2s}
@@ -4821,14 +4825,30 @@ function openMensajeMaestro(cls){
     <div class="msg-tipos">${Object.entries(MSG_TIPOS).map(([k, t]) => `<button type="button" class="msg-tipo t-${k}" data-tipo="${k}"><span>${t.ico}</span>${t.label}</button>`).join('')}</div>
     <div class="field"><label>Mensaje</label><textarea id="msgT" rows="4" maxlength="2000" placeholder="Ej. ¡Gracias por tener la asistencia al día! Sigue así."></textarea></div>
     <button type="button" class="link-btn" id="msgPrev" style="font-size:13px">👁 Ver cómo lo verá el maestro</button>
+    <div class="field" style="margin-top:12px"><label>Celular del maestro (WhatsApp)</label><input id="msgCel" type="tel" inputmode="tel" placeholder="Ej. 987 654 321" autocomplete="off"><small class="hint" id="msgCelH" style="display:block;margin-top:4px">Se guarda para esta clase.</small></div>
+    <details class="msg-res"><summary>Resumen que va por WhatsApp</summary><pre id="msgRes"></pre></details>
     <div class="wc-sec" id="msgHist"></div>
-    <div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="msgSend" disabled>Enviar mensaje</button></div>`, {
+    <div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn" id="msgWa" disabled title="Lo deja en la app y abre WhatsApp con el mensaje, el resumen y el enlace de la clase">${ICON.chat} Enviar + WhatsApp</button><button class="btn primary" id="msgSend" disabled>Enviar mensaje</button></div>`, {
     onMount(el){
-      const ta = $('#msgT', el), send = $('#msgSend', el), box = $('#msgHist', el);
+      const ta = $('#msgT', el), send = $('#msgSend', el), box = $('#msgHist', el), wa = $('#msgWa', el), cel = $('#msgCel', el), celH = $('#msgCelH', el), res = $('#msgRes', el);
+      let celGuardado = '';
+      const pintarRes = () => { res.textContent = textoWhatsMaestro(cls, ta.value.trim() || '(tu mensaje)', tipo); };
+      const pintarBtns = () => { send.disabled = !ta.value.trim(); wa.disabled = !ta.value.trim() || !normPhone(cel.value); };
+      SB.rpc('celular_maestro', { clase: cls.dbId }).then(v => { if(v && !cel.value){ cel.value = v; celGuardado = v; pintarBtns(); } })
+        .catch(e => { console.warn(e); if(/celular_maestro|PGRST202|function/i.test(e.message || '')) celH.textContent = 'Falta aplicar la migración 0028 en Supabase.'; });
+      const guardarCel = async () => {
+        const v = cel.value.trim(); if(v === celGuardado) return;
+        if(v && !normPhone(v)){ celH.textContent = 'Revisa el número: 9 dígitos (Perú) o con código de país.'; return; }
+        try{ await SB.rpc('guardar_celular_maestro', { clase: cls.dbId, celular: v }); celGuardado = v; celH.textContent = v ? '✓ Guardado para esta clase.' : 'Se quitó el número.'; }
+        catch(e){ console.error(e); celH.textContent = 'No se pudo guardar: ' + errMsg(e); }
+      };
+      cel.oninput = () => { celH.textContent = 'Se guarda para esta clase.'; pintarBtns(); };
+      cel.onchange = guardarCel;
+      pintarRes();
       const pintarTipo = () => $$('[data-tipo]', el).forEach(b => b.classList.toggle('on', b.dataset.tipo === tipo));
-      $$('[data-tipo]', el).forEach(b => b.onclick = () => { tipo = b.dataset.tipo; pintarTipo(); });
+      $$('[data-tipo]', el).forEach(b => b.onclick = () => { tipo = b.dataset.tipo; pintarTipo(); pintarRes(); });
       pintarTipo();
-      ta.oninput = () => { send.disabled = !ta.value.trim(); };
+      ta.oninput = () => { pintarBtns(); pintarRes(); };
       setTimeout(() => ta.focus(), 120);
       $('#msgPrev', el).onclick = () => { if(!ta.value.trim()){ toast('Escribe el mensaje primero'); return; } popupMensaje({ tipo, texto: ta.value.trim(), creado_en: new Date().toISOString() }, { vista:true }); };
       const pintarHist = async () => {
@@ -4840,17 +4860,48 @@ function openMensajeMaestro(cls){
           try{ await SB.rpc('borrar_mensaje_clase', { mensaje: b.dataset.del }); pintarHist(); }catch(e){ toast(errMsg(e), 'error'); }
         });
       };
-      send.onclick = async () => {
+      const enviar = async conWa => {
         const texto = ta.value.trim(); if(!texto) return;
-        send.disabled = true;
+        // WhatsApp se abre en el mismo clic (si se espera al servidor, el navegador bloquea la ventana).
+        if(conWa){ waOpen(textoWhatsMaestro(cls, texto, tipo), cel.value); guardarCel(); }
+        send.disabled = wa.disabled = true;
         try{
           await SB.rpc('dejar_mensaje_clase', { clase: cls.dbId, texto, tipo });
-          ta.value = ''; toast(`✓ Mensaje dejado para ${teacher}`, 'ok'); pintarHist();
-        }catch(e){ console.error(e); send.disabled = false; toast(/dejar_mensaje_clase|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0027 en Supabase' : errMsg(e), 'error', {ms:4200}); }
+          ta.value = ''; pintarRes(); toast(`✓ Mensaje dejado para ${teacher}${conWa ? ' · revisa WhatsApp y presiona Enviar' : ''}`, 'ok', {ms:3600}); pintarHist();
+        }catch(e){ console.error(e); toast(/dejar_mensaje_clase|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0027 en Supabase' : errMsg(e), 'error', {ms:4200}); }
+        pintarBtns();
       };
+      send.onclick = () => enviar(false);
+      wa.onclick = () => enviar(true);
       pintarHist();
     }
   });
+}
+// Texto para WhatsApp: el mensaje, el estado de la asistencia hasta hoy y el enlace directo a la clase.
+function resumenAsistencia(cls){
+  const t = todayISO(), studs = classStudents(cls), fechas = classDates(cls);
+  const marcada = f => studs.some(s => (cls.att[f] || {})[s.id]);
+  const pasadas = fechas.filter(f => f < t), hoy = fechas.includes(t);
+  const falta = pasadas.filter(f => !marcada(f));
+  let ultima = ''; pasadas.forEach(f => { if(marcada(f)) ultima = f; });
+  const cola = pasadas.filter(f => f > ultima && !marcada(f));
+  return { total: fechas.length, pasadas: pasadas.length, hoy, falta, desde: cola[0] || '', huecos: falta.filter(f => !cola.includes(f)), ultima };
+}
+function textoWhatsMaestro(cls, texto, tipo){
+  const code = Object.keys(CLASSES).find(k => CLASSES[k] === cls) || '';
+  const r = resumenAsistencia(cls), m = cls.meta, t = MSG_TIPOS[tipo] || MSG_TIPOS.aviso;
+  const dia = f => fmtDate(f).replace(/\s\d{4}$/, '');
+  const lineas = [`${t.ico} *${t.titulo}*`, '', texto, '', `📋 *${m.title || 'Tu clase'}*${m.horario ? ' · ' + m.horario : ''}`];
+  lineas.push(`📅 Sesiones hasta hoy: *${r.total}*${r.hoy ? ' (incluida la de hoy)' : ''}`);
+  if(!r.pasadas) lineas.push('Aún no hay sesiones anteriores a hoy.');
+  else if(!r.falta.length) lineas.push(`✅ Asistencia al día: las ${r.pasadas} sesiones anteriores están marcadas. ¡Gracias!`);
+  else {
+    lineas.push(`✅ Marcadas: ${r.pasadas - r.falta.length} de ${r.pasadas}`);
+    if(r.desde) lineas.push(`⚠️ Sin marcar desde el *${dia(r.desde)}*` + (r.ultima ? ` (la última marcada fue el ${dia(r.ultima)})` : ' (aún no se marcó ninguna)'));
+    lineas.push(`⚠️ Falta marcar *${r.falta.length}* sesi${r.falta.length === 1 ? 'ón' : 'ones'}: ${r.falta.slice(0, 12).map(fmtShort).join(', ')}${r.falta.length > 12 ? '…' : ''}`);
+  }
+  if(code) lineas.push('', '👉 Entra directo a tu clase:', location.origin + location.pathname + '#/clase/' + code);
+  return lineas.join('\n');
 }
 const MSG_VISTOS = new Set();
 let MSG_BUSY = false;
