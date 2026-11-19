@@ -481,6 +481,14 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .rt-tag.r{background:var(--amber-50);color:var(--amber)}
 .rt-tag.d{background:var(--line);color:var(--text)}
 .rt-row small.rt-st{margin-top:2px}
+.rt-sum{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 2px}
+.mv-op{display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0;cursor:pointer}
+.mv-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;margin-bottom:5px;background:#fff}
+.mv-row .ii{flex:1;min-width:0}
+.mv-row .ii small{display:block;color:var(--muted);font-size:12px}
+.mv-row input{width:130px;font-size:13px;padding:6px 8px}
+.mv-row.ok{background:#F1F9F4;border-color:#CBE8D6}
+.mv-st{color:var(--green);font-weight:700;font-size:12.5px;white-space:nowrap}
 .rt-st.ok{color:var(--green)!important}.rt-st.warn{color:var(--red)!important}.rt-st.no{color:var(--faint)!important}
 .wr-bar{border:1px solid var(--border);background:#fff;border-radius:12px;padding:8px 12px;margin:0 0 10px}
 .wr-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13.5px}
@@ -2611,7 +2619,7 @@ async function renderRetrasos(){
         <div class="rt-f"><label>Fuente</label><select class="inp" data-f="src"><option value="">Audit + Class Roll</option><option value="audit" ${F.src === 'audit' ? 'selected' : ''}>Solo Audit</option><option value="roll" ${F.src === 'roll' ? 'selected' : ''}>Solo Class Roll (fuera del Audit)</option></select></div>
         <div class="rt-f"><label>Class Roll: retraso desde</label><span class="rt-dias"><input class="inp" type="number" min="1" max="60" data-f="dias" value="${F.dias}"> días</span></div>
       </section>
-      <p class="hint" style="margin:8px 2px">${esc(fa)} · <b>${list.length}</b> clase${list.length === 1 ? '' : 's'} con retraso (${nA} del Audit, ${list.length - nA} detectadas con el Class Roll) · <a href="#/wiseroll">Sincronizar</a></p>
+      <div class="rt-sum"><p class="hint" style="margin:0;flex:1">${esc(fa)} · <b>${list.length}</b> clase${list.length === 1 ? '' : 's'} con retraso (${nA} del Audit, ${list.length - nA} detectadas con el Class Roll) · <a href="#/wiseroll">Sincronizar</a></p>${list.some(it => it.app) ? `<button class="btn sm primary" id="rtTodos" style="background:#1E8449;border-color:#1E8449">📣 Enviar mensaje a todos</button>` : ''}</div>
       ${list.map(it => `<div class="rt-row" data-key="${esc(it.key)}"><span class="av">${esc(initials(it.maestro))}</span><div class="ii">
           <b>${esc(/unassigned/i.test(it.maestro) ? 'Sin maestro asignado' : prettyName(it.maestro))}</b>
           <small>${esc([progLabel(it.programa), stakeShort(it.estaca), it.det].filter(Boolean).join(' · '))}</small>
@@ -2619,6 +2627,7 @@ async function renderRetrasos(){
           ${appEstado(it)}</div>
         <div class="wr-acts">${it.app ? `<button class="btn sm" data-abrir>Abrir</button><button class="btn sm primary" data-msg>💬 Mensaje</button>` : ''}</div></div>`).join('') || '<div class="empty">✓ No hay clases con retraso con estos filtros.</div>'}`;
     $$('[data-f]', body).forEach(s => s.onchange = () => { F[s.dataset.f] = s.dataset.f === 'dias' ? Math.max(1, +s.value || 8) : s.value; LS.set('ca_rt_filtro', F); paint(); });
+    const tb = $('#rtTodos'); if(tb) tb.onclick = () => envioMasivo(list.filter(it => it.app));
     $$('.rt-row', body).forEach(row => {
       const it = list.find(x => x.key === row.dataset.key); if(!it || !it.app) return;
       $('[data-abrir]', row).onclick = () => go('#/clase/' + it.app.codigo);
@@ -2631,6 +2640,81 @@ async function renderRetrasos(){
   };
   paint();
 }
+/* ---------- Envío masivo guiado (estilo Wapi): un WhatsApp personalizado por maestro ----------
+   El navegador no puede enviar solo: cada "Enviar siguiente" abre el chat con el texto listo y el
+   administrador presiona Enviar en WhatsApp. Opcionalmente también deja el mensaje en la app. */
+const MASIVO_TPL = 'Hola {nombre} 👋\n\nSegún el reporte de Wise, tu clase *{clase}* tiene *{sesiones}* sin marcar desde el *{desde}* ({dias} días).\n\nPor favor actualiza la asistencia lo antes posible. ¡Gracias por tu servicio! 🙏\n\n👉 Entra directo a tu clase:\n{enlace}';
+function textoMasivo(tpl, it){
+  const n = it.audit ? it.audit.sesiones : it.roll ? it.roll.sesiones : 0;
+  const nom = /unassigned/i.test(it.maestro) ? '' : prettyName(it.maestro).split(/\s+/)[0];
+  const clase = [it.w ? it.w.curso : it.audit.curso, it.w ? (it.programa === 'S' ? it.w.horario : '') : it.audit.hora].filter(Boolean).join(' · ');
+  const v = { nombre: nom, clase, sesiones: `${n} sesi${n === 1 ? 'ón' : 'ones'}`, desde: it.desde ? fmtDate(it.desde).replace(/\s\d{4}$/, '') : '', dias: it.dias,
+    enlace: location.origin + location.pathname + '#/clase/' + it.app.codigo, estaca: stakeShort(it.estaca), maestro: prettyName(it.maestro) };
+  return tpl.replace(/\{(\w+)\}/g, (m, k) => v[k] != null ? v[k] : m).replace(/Hola\s+👋/, 'Hola 👋');
+}
+async function envioMasivo(items){
+  const enviados = LS.get('ca_masivo_env', {}), hoy = todayISO();
+  let tipo = 'urgente', tpl = LS.get('ca_masivo_tpl', MASIVO_TPL), conApp = true;
+  let soloPendientes = !items.every(it => it.app.ultima_fecha && it.desde && it.app.ultima_fecha >= it.desde);
+  const cel = {};
+  sheet(`${sheetHead('Enviar mensaje a todos', `${items.length} clase${items.length === 1 ? '' : 's'} de la lista filtrada`)}
+    <div class="msg-tipos">${Object.entries(MSG_TIPOS).map(([k, t]) => `<button type="button" class="msg-tipo t-${k}" data-tipo="${k}"><span>${t.ico}</span>${t.label}</button>`).join('')}</div>
+    <div class="field"><label>Mensaje (se personaliza para cada maestro)</label><textarea id="mvT" rows="8"></textarea>
+      <small class="hint" style="display:block;margin-top:4px">Variables: {nombre} {clase} {sesiones} {desde} {dias} {enlace} {estaca} · <button type="button" class="link-btn" id="mvReset" style="font-size:12px">restaurar texto</button></small></div>
+    <label class="mv-op"><input type="checkbox" id="mvSolo"> Solo a quienes <b>tampoco</b> están al día en la app (omitir “falta pasarla a Wise”)</label>
+    <label class="mv-op"><input type="checkbox" id="mvApp" checked> También dejar el mensaje en la app (le saldrá al abrir su clase)</label>
+    <div id="mvList">${loadingHTML('Buscando celulares…', true)}</div>
+    <div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="mvNext" disabled style="background:#1E8449;border-color:#1E8449">${ICON.chat} Enviar siguiente</button></div>`, {
+    wide:true,
+    onMount(el){
+      const ta = $('#mvT', el), box = $('#mvList', el), next = $('#mvNext', el);
+      ta.value = tpl; $('#mvSolo', el).checked = soloPendientes;
+      const pintarTipo = () => $$('[data-tipo]', el).forEach(b => b.classList.toggle('on', b.dataset.tipo === tipo));
+      $$('[data-tipo]', el).forEach(b => b.onclick = () => { tipo = b.dataset.tipo; pintarTipo(); });
+      pintarTipo();
+      const visibles = () => items.filter(it => !soloPendientes || !(it.app.ultima_fecha && it.desde && it.app.ultima_fecha >= it.desde));
+      const yaEnviado = it => enviados[it.app.id] === hoy;
+      const pend = () => visibles().filter(it => normPhone(cel[it.app.id]) && !yaEnviado(it));
+      const pintar = () => {
+        const vs = visibles(), p = pend(), conCel = vs.filter(it => normPhone(cel[it.app.id])).length;
+        box.innerHTML = `<p class="hint" style="margin:10px 2px 6px"><b>${conCel}</b> de ${vs.length} con celular · <b>${vs.filter(yaEnviado).length}</b> enviados hoy · <b>${p.length}</b> por enviar</p>
+          ${vs.map(it => { const c = cel[it.app.id] || '', ok = yaEnviado(it); return `<div class="mv-row${ok ? ' ok' : ''}" data-id="${it.app.id}"><div class="ii"><b>${esc(prettyName(it.maestro))}</b><small>${esc([stakeShort(it.estaca), it.det].filter(Boolean).join(' · '))} · ${it.dias} días</small></div>
+            <input class="inp" type="tel" data-cel placeholder="Celular" value="${esc(c)}">
+            ${ok ? '<span class="mv-st">✓ Enviado</span>' : `<button class="btn sm" data-uno ${normPhone(c) ? '' : 'disabled'}>${ICON.chat}</button>`}
+            <button class="link-btn" data-ver style="font-size:12px">Ver</button></div>`; }).join('')}`;
+        next.disabled = !p.length;
+        next.innerHTML = p.length ? `${ICON.chat} Enviar siguiente (${vs.filter(yaEnviado).length + 1} de ${vs.filter(it => normPhone(cel[it.app.id])).length})` : '✓ No quedan pendientes';
+        $$('.mv-row', box).forEach(row => {
+          const it = items.find(x => x.app.id === row.dataset.id);
+          const inp = $('[data-cel]', row);
+          inp.onchange = async () => {
+            const v = inp.value.trim();
+            if(v && !normPhone(v)){ toast('Revisa el número: 9 dígitos o con código de país', 'warn'); return; }
+            cel[it.app.id] = v;
+            try{ await SB.rpc('guardar_celular_maestro', { clase: it.app.id, celular: v }); toast('✓ Celular guardado para este maestro', 'ok'); }catch(e){ toast(errMsg(e), 'error'); }
+            pintar();
+          };
+          const u = $('[data-uno]', row); if(u) u.onclick = () => enviar(it);
+          $('[data-ver]', row).onclick = () => popupMensaje({ tipo, texto: textoMasivo(ta.value, it), creado_en: new Date().toISOString() }, { vista:true });
+        });
+      };
+      const enviar = it => {
+        const texto = textoMasivo(ta.value, it);
+        waOpen(`${MSG_TIPOS[tipo].ico} *${MSG_TIPOS[tipo].titulo}*\n\n${texto}`, cel[it.app.id]);
+        enviados[it.app.id] = hoy; LS.set('ca_masivo_env', enviados); LS.set('ca_masivo_tpl', ta.value);
+        if($('#mvApp', el).checked) SB.rpc('dejar_mensaje_clase', { clase: it.app.id, texto, tipo }).catch(e => console.warn(e));
+        pintar();
+      };
+      next.onclick = () => { const it = pend()[0]; if(it) enviar(it); };
+      $('#mvSolo', el).onchange = e => { soloPendientes = e.target.checked; pintar(); };
+      $('#mvReset', el).onclick = () => { ta.value = MASIVO_TPL; };
+      // Celulares guardados (por maestro) de cada clase.
+      Promise.all(items.map(it => SB.rpc('celular_maestro', { clase: it.app.id }).then(v => { cel[it.app.id] = v || celLocalPorNombre(it.maestro) || ''; }).catch(() => { cel[it.app.id] = celLocalPorNombre(it.maestro) || ''; })))
+        .then(pintar);
+    }
+  });
+}
+function celLocalPorNombre(maestro){ try{ const d = JSON.parse(localStorage.getItem('ca_cel_maestro') || '{}') || {}; return d['m:' + norm(maestro)] || ''; }catch(e){ return ''; } }
 // Sincronización automática (administrador, mientras la app está abierta). Modos:
 //  "cambios": al abrir la app y cada 15 min revisa si algún Excel cambió (lee solo los nuevos).
 //  "9am": una vez al día, la primera vez que la app está abierta desde las 9:00.
