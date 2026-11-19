@@ -442,6 +442,28 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .plan td.cell:hover{background:#F2F7F8}
 .plan td.cell.p{background:var(--green-50);color:var(--green)}
 .plan td.cell.f{background:var(--red-50);color:var(--red)}
+/* Comparación con el Class Roll de Wise */
+.plan.cmp td.cell.p.wn,.wr-leg .lg.p.wn{background:#1E8449;color:#fff}
+.plan.cmp td.cell.f.wn,.wr-leg .lg.f.wn{background:#C0392B;color:#fff}
+.plan.cmp td.cell.p.wq,.wr-leg .lg.p.wq{background:#DDF1E4;color:#2E8B57}
+.plan.cmp td.cell.f.wq,.wr-leg .lg.f.wq{background:#F9E1DE;color:#C0574A}
+.plan.cmp td.cell.wp,.wr-leg .lg.wp{background:#F1F9F4;color:#8CC9A3;box-shadow:inset 0 0 0 1px #CBE8D6}
+.plan.cmp td.cell.wf,.wr-leg .lg.wf{background:#FDF4F3;color:#E3A9A1;box-shadow:inset 0 0 0 1px #F2D3CF}
+.plan.cmp td.cell.wd,.wr-leg .lg.wd{background:var(--purple-50);color:var(--purple);box-shadow:inset 0 0 0 2px var(--purple)}
+.plan.cmp th.wcol{background:#F4F1FB}
+.plan.cmp th.wcol::after{content:'W';display:block;font-size:9px;color:var(--purple);font-weight:800}
+.wr-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:6px}
+.wr-row .ii{flex:1;min-width:180px}
+.wr-row .ii small{display:block;color:var(--muted);font-size:12.5px}
+.wr-acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.wr-acts select{max-width:240px;font-size:13px;padding:6px 8px}
+.wr-det summary{cursor:pointer;padding:6px 2px}
+.wr-bar{border:1px solid var(--border);background:#fff;border-radius:12px;padding:8px 12px;margin:0 0 10px}
+.wr-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13.5px}
+.wr-leg{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:6px;font-size:12px;color:var(--muted)}
+.wr-leg span{display:inline-flex;align-items:center;gap:5px}
+.wr-leg .lg{display:inline-grid;place-items:center;width:20px;height:18px;border-radius:5px;font-style:normal;font-weight:800;font-size:11px}
+.wr-sob{margin-top:6px;font-size:12.5px;color:var(--amber)}
 .plan.ro td.cell{cursor:default}
 .plan td.pct{font-weight:800;padding:0 12px;min-width:52px;color:var(--navy)}
 .plan tfoot td{background:#F6F9FA;font-weight:700;color:var(--muted);padding:8px 4px;position:sticky;bottom:0}
@@ -1546,6 +1568,10 @@ async function pullRemoteClass(cls){
   // Estado de las fichas de inscripción de los alumnos nuevos (naranja: pendiente; dorado: completa).
   try{ const f = await SB.rpc('fichas_de_clase', { clase: cls.dbId }); cls.fichas = {}; (f || []).forEach(x => cls.fichas[x.alumno_id] = x); }
   catch(e){ console.warn('fichas_de_clase', e); }
+  // Lo que dice el Class Roll de Wise de esta clase (se muestra al lado, no reemplaza nada).
+  try{ const w = await SB.rpc('wise_de_clase', { clase: cls.dbId }); const r = (w || [])[0]; if(r){ if(!cls.wroll || cls.wroll.actualizado_en !== r.actualizado_en){ cls.wroll = r; delete cls._wmap; } } else { delete cls.wroll; delete cls._wmap; } }
+  catch(e){ console.warn('wise_de_clase', e); }
+  if(SB.admin) autoWiseMarcas(cls);
   const ratt = {}; marcas.forEach(m => { (ratt[m.fecha] = ratt[m.fecha] || {})[m.alumno_id] = m.estado; });
   const dates = new Set([...Object.keys(ratt), ...Object.keys(cls.att||{})]);
   dates.forEach(d => {
@@ -1908,6 +1934,7 @@ function homeOnlineHTML(){
       <button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b><small>Personas que piden entrar a una clase ya adoptada</small></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button>
       <button class="item" data-go="#/inscripciones"><span class="ico g">${ICON.userPlus}</span><span class="ii"><b>Inscritos para Wise</b><small>Por Seminario e Instituto · enlace y QR de inscripción para compartir</small></span><span class="num-badge alert-badge hide" data-badge="inscripciones" title="Por inscribir"></span>${ICON.next}</button>
       <button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b><small>Alumnos sin coincidencia con la base de personas</small></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button>
+      <button class="item" data-go="#/wiseroll"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Class Roll de Wise</b><small>Lee la carpeta DEL DÍA · crea las clases de Wise · compara la asistencia</small></span>${ICON.next}</button>
       <button class="item" data-go="#/admin"><span class="ico t">${ICON.db}</span><span class="ii"><b>Base de personas y periodos</b><small>Subir la base actualizada, feriados y periodos</small></span>${ICON.next}</button>
     </section>` : ''}`;
 }
@@ -1917,6 +1944,7 @@ function elegirOtroRol(){
   });
 }
 function bindHomeOnline(){
+  if(SB.admin) rollAuto();
   $$('[data-rol]').forEach(b => b.onclick = () => elegirRol(b.dataset.rol));
   const rc = $('#rolChg'); if(rc) rc.onclick = elegirOtroRol;
   const tc = $('#toColab'); if(tc) tc.onclick = () => resaltar('#colabZona');
@@ -2227,12 +2255,15 @@ function parseRollWorkbook(wb, progDefault){
   const clases = [], avisos = [];
   wb.SheetNames.forEach(sn => {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, raw:false, defval:'' });
+    // Valores crudos: los Class Roll de Power BI traen las fechas como número de serie de Excel.
+    const crudo = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, raw:true, defval:'' });
+    const serial = v => typeof v === 'number' && v > 30000 && v < 80000 ? new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 864e5).toISOString().slice(0, 10) : null;
     const titulo = rows.slice(0,3).map(r => rollClean(r && r[0])).join(' ');
     const mT = titulo.match(/Class Roll\s*(.*?)\s*\(\d+\)/i);
     const unidad = mT ? mT[1] : titulo;
     const periodo = (rows.slice(0,5).map(r => rollClean(r && r[0])).join(' ').match(/T[ée]rmino:\s*(.*?)(?:\s*Fecha|\s*$)/i) || [])[1] || '';
     let cur = null, cols = [], enLista = false, halladas = 0;
-    rows.forEach(r => {
+    rows.forEach((r, ri) => {
       const head = r.map(rollClean).find(c => / - .+ - /.test(c));
       if(head){
         const p = head.split(' - ');
@@ -2244,7 +2275,7 @@ function parseRollWorkbook(wb, progDefault){
         clases.push(cur); halladas++; cols = []; enLista = false; return;
       }
       if(!cur) return;
-      if(rollClean(r[0]) === 'Nombre'){ enLista = true; cols = []; r.forEach((c, j) => { const d = rollDate(c); if(d) cols.push([j, d]); }); cur.fechas = cols.map(x => x[1]); return; }
+      if(rollClean(r[0]) === 'Nombre'){ enLista = true; cols = []; r.forEach((c, j) => { const d = rollDate(c) || serial((crudo[ri] || [])[j]); if(d) cols.push([j, d]); }); cur.fechas = cols.map(x => x[1]); return; }
       if(!enLista) return;
       const n = rollClean(r[0]); if(!n || !n.includes(',')) return;
       const marcas = {};
@@ -2326,6 +2357,221 @@ async function importRollClases(lista, onStep){
     }catch(e){ console.error(e); res.errores.push(`${c.maestro}: ${errMsg(e)}`); }
   }
   return res;
+}
+
+/* ---------- Class Roll de Wise: lectura diaria de la carpeta "DEL DÍA" ----------
+   El administrador vincula una vez la carpeta (Edge/Chrome recuerdan el permiso). Cada vez que abre la app
+   se leen solo los Excel que cambiaron; cada clase de Wise se guarda en la nube y se vincula con su clase de
+   la app. Lo de Wise no reemplaza la asistencia de la app: se muestra al lado en la Planilla. */
+function fsdb(){ return new Promise((res, rej) => { const q = indexedDB.open('ca_fs', 1); q.onupgradeneeded = () => q.result.createObjectStore('kv'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+async function fsGet(k){ const db = await fsdb(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+async function fsSet(k, v){ const db = await fsdb(); return new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+async function rollArchivos(dir, ruta, out, prof){
+  for await (const [name, h] of dir.entries()){
+    const p = ruta + '/' + name;
+    if(h.kind === 'directory'){ if(prof < 3) await rollArchivos(h, p, out, prof + 1); }
+    else if(/\.xlsx$/i.test(name) && !/^~\$/.test(name) && /class roll/i.test(p)) out.push({ path:p, handle:h });
+  }
+  return out;
+}
+const rollClave = c => [c.programa, norm(c.estaca), norm(c.maestro), norm(c.horario), norm(c.curso)].join('|');
+const horaDe = h => { const m = String(h || '').match(/(\d{1,2}):(\d{2})\s*([ap])\.?\s*m/i); if(!m) return ''; let hh = +m[1] % 12; if(/p/i.test(m[3])) hh += 12; return hh + ':' + m[2]; };
+let ROLL_BUSY = false;
+async function leerClassRoll({ interactive=false, force=false, archivos=null, onEstado }={}){
+  if(ROLL_BUSY) return { ocupado:true };
+  ROLL_BUSY = true;
+  const est = m => onEstado && onEstado(m);
+  try{
+    let lista = [];
+    if(archivos) lista = archivos.map(f => ({ file:f, path:f.webkitRelativePath || ('Class Roll/' + f.name) }));
+    else {
+      const dir = await fsGet('rollDir').catch(() => null);
+      if(!dir) return { sinCarpeta:true };
+      let perm = await dir.queryPermission({ mode:'read' });
+      if(perm !== 'granted' && interactive) perm = await dir.requestPermission({ mode:'read' });
+      if(perm !== 'granted') return { sinPermiso:true };
+      est('Buscando los Excel del Class Roll…');
+      for(const h of await rollArchivos(dir, dir.name, [], 0)) lista.push({ file: await h.handle.getFile(), path:h.path });
+    }
+    if(!lista.length) return { vacia:true };
+    const vistos = LS.get('ca_roll_files', {});
+    const cambiados = force || archivos ? lista : lista.filter(x => vistos[x.path] !== x.file.lastModified);
+    if(!cambiados.length) return { sinCambios:true, total:lista.length, ultimo:Math.max(...lista.map(x => x.file.lastModified)) };
+    est(`Leyendo ${cambiados.length} Excel…`);
+    await loadScript(SHEETJS_URL);
+    const nuevas = [], avisos = [];
+    for(const x of cambiados){
+      const prog = /seminario|\bsem\b/i.test(x.path) ? 'S' : 'I';
+      const wb = XLSX.read(await x.file.arrayBuffer(), { type:'array', raw:false });
+      const r = parseRollWorkbook(wb, prog);
+      r.clases.forEach(c => { c.archivo = x.file.name; c.archivo_en = new Date(x.file.lastModified).toISOString(); nuevas.push(c); });
+      avisos.push(...r.avisos.filter(a => !/no trae fechas/.test(a)).map(a => `${x.file.name} · ${a}`));
+    }
+    est('Guardando en la nube…');
+    const prev = await SB.rpc('wise_clases_admin') || [];
+    const porClave = new Map(prev.map(w => [w.clave, w])), usadas = new Map();
+    // Fusión: las fechas del Excel nuevo mandan; las fechas anteriores (que ya no trae) se conservan.
+    const filas = nuevas.filter(c => c.estaca).map(c => {
+      let clave = rollClave(c); const k = (usadas.get(clave) || 0) + 1; usadas.set(clave, k); if(k > 1) clave += '#' + k;
+      const old = porClave.get(clave), nf = new Set(c.fechas);
+      const oldAl = new Map(((old && old.alumnos) || []).map(a => [norm(a.n), a.m || {}]));
+      const alumnos = c.alumnos.map(a => { const m = {}; Object.entries(oldAl.get(norm(a.nombre)) || {}).forEach(([d, v]) => { if(!nf.has(d)) m[d] = v; }); Object.assign(m, a.marcas); return { n:a.nombre, m }; });
+      return { clave, programa:c.programa, estaca:c.estaca, maestro:c.maestro, horario:c.horario, curso:c.curso, titulo:c.titulo, unidad:c.unidad, periodo:c.periodo,
+        total:c.total, fechas:[...new Set([...((old && old.fechas) || []), ...c.fechas])].sort(), alumnos, archivo:c.archivo, archivo_en:c.archivo_en };
+    });
+    for(let i = 0; i < filas.length; i += 25) await SB.rpc('cargar_class_roll', { filas: filas.slice(i, i + 25) });
+    cambiados.forEach(x => { vistos[x.path] = x.file.lastModified; }); LS.set('ca_roll_files', vistos);
+    est('Vinculando con las clases de la app…');
+    const vinc = await autoVincularWise();
+    LS.set('ca_roll_ultima', Date.now());
+    return { leidos:cambiados.length, total:lista.length, clases:filas.length, avisos, vinculadas:vinc.n, pendientes:vinc.pendientes };
+  } finally { ROLL_BUSY = false; }
+}
+// Empareja cada clase de Wise sin vínculo con la clase de la app más parecida (mismo programa y estaca;
+// maestro con 2+ palabras en común; desempata horario y curso). Si hay empate, se deja para decidir a mano.
+async function autoVincularWise(){
+  const wises = await SB.rpc('wise_clases_admin') || [];
+  const apps = SB.resumen = await SB.rpc('resumen_clases') || [];
+  const tomadas = new Set(wises.filter(w => w.clase_id).map(w => w.clase_id));
+  const libres = wises.filter(w => !w.clase_id && !w.ignorada);
+  const pares = [];
+  libres.forEach(w => apps.forEach(c => {
+    if(c.programa !== w.programa || c.estaca !== w.estaca || tomadas.has(c.id)) return;
+    const s = puntajeWiseApp(w, c); if(s) pares.push({ w, c, s });
+  }));
+  pares.sort((a, b) => b.s - a.s);
+  const usadoW = new Set(), usadoC = new Set(); let n = 0;
+  for(const p of pares){
+    if(usadoW.has(p.w.clave) || usadoC.has(p.c.id)) continue;
+    // Empate con otra clase para la misma clase de Wise: no se adivina.
+    if(pares.some(q => q !== p && q.w === p.w && q.s === p.s && !usadoC.has(q.c.id))) { usadoW.add(p.w.clave); continue; }
+    usadoW.add(p.w.clave); usadoC.add(p.c.id);
+    try{ await SB.rpc('vincular_wise_clase', { wise:p.w.clave, clase:p.c.id, modo:'auto', ignorar:false }); p.w.clase_id = p.c.id; n++; }catch(e){ console.warn(e); }
+  }
+  return { n, pendientes: libres.filter(w => !w.clase_id).length };
+}
+function puntajeWiseApp(w, c){
+  if(norm(c.maestro) === norm(w.maestro) && norm(c.horario) === norm(w.horario) && norm(c.curso) === norm(w.curso)) return 100;
+  const com = wiseComunes(wiseTokens(w.maestro), wiseTokens(c.maestro));
+  if(com < 2) return 0;
+  let s = com * 10;
+  if(norm(c.horario) && norm(c.horario) === norm(w.horario)) s += 8; else if(horaDe(c.horario) && horaDe(c.horario) === horaDe(w.horario)) s += 6;
+  if(norm(c.curso) && norm(c.curso) === norm(w.curso)) s += 4;
+  return s;
+}
+async function crearDesdeWise(w){
+  const p = currentPeriod(w.programa), f = (w.fechas || []).slice().sort();
+  let dias = [...new Set(f.map(d => parseISO(d).getDay()))].filter(d => d !== 0);
+  if(!dias.length && w.programa === 'S') dias = [1, 2, 3, 4, 5];
+  const r = await SB.rpc('importar_clase', { datos:{ titulo:w.titulo, programa:w.programa, estaca:w.estaca, maestro:w.maestro, horario:w.horario, curso:w.curso, unidad:w.unidad, periodo:w.periodo,
+    dias, inicio:(p && p.s) || f[0] || todayISO(), fin:(p && p.e) || '', alumnos:(w.alumnos || []).map(a => ({ nombre:a.n })) } });
+  await SB.rpc('vincular_wise_clase', { wise:w.clave, clase:r.clase, modo:'creada', ignorar:false });
+  return r;
+}
+// Sincronización automática (administrador, mientras la app está abierta). Modos:
+//  "cambios": al abrir la app y cada 15 min revisa si algún Excel cambió (lee solo los nuevos).
+//  "9am": una vez al día, la primera vez que la app está abierta desde las 9:00.
+//  "manual": solo con el botón "Sincronizar ahora".
+const ROLL_MODOS = { cambios:'Cuando cambie algún archivo', '9am':'Una vez al día desde las 9:00', manual:'Solo manual' };
+const rollModo = () => LS.get('ca_roll_modo', 'cambios');
+function rollAutoIniciar(){
+  if(rollAutoIniciar.on || !window.showDirectoryPicker) return;
+  rollAutoIniciar.on = true;
+  setInterval(() => { if(SB.admin) rollAuto(); }, 5 * 60e3);
+}
+async function rollAuto(){
+  if(!SB.admin || !window.showDirectoryPicker) return;
+  rollAutoIniciar();
+  const modo = rollModo(), ahora = new Date();
+  if(modo === 'manual') return;
+  if(modo === '9am'){
+    const nueve = new Date(ahora); nueve.setHours(9, 0, 0, 0);
+    if(ahora < nueve || LS.get('ca_roll_ultima', 0) >= +nueve) return;
+  } else if(Date.now() - (rollAuto.t || 0) < 15 * 60e3) return;
+  rollAuto.t = Date.now();
+  try{
+    const r = await leerClassRoll();
+    if(r.sinCambios) LS.set('ca_roll_ultima', Date.now());
+    if(r.leidos) toast(`Class Roll de Wise actualizado · ${r.clases} clases${r.pendientes ? ` · ${r.pendientes} por crear o vincular` : ''}`, r.pendientes ? 'warn' : 'ok', { ms:4500, action: r.pendientes ? 'Ver' : undefined, onAction: () => go('#/wiseroll') });
+  }catch(e){ console.warn('Class Roll automático', e); }
+}
+async function renderWiseRoll(){
+  CUR = { type:'wiseroll', code:null };
+  app.innerHTML = topbar({ back:'#/', title:'Class Roll de Wise', sub:'Administración' }) + `<main class="wrap"><section class="card" id="wrEst"></section><div id="wrBody">${loadingHTML()}</div></main>`;
+  bindTop();
+  const est = $('#wrEst'), body = $('#wrBody');
+  const puedeCarpeta = !!window.showDirectoryPicker;
+  let dir = await fsGet('rollDir').catch(() => null);
+  const pintarEst = (msg, tipo) => {
+    const u = LS.get('ca_roll_ultima', 0);
+    est.innerHTML = `<h2 style="margin:0 0 4px">Carpeta “DEL DÍA”</h2>
+      <p class="meta" style="margin:0 0 10px">${dir ? `Vinculada: <b>${esc(dir.name)}</b>` : 'Vincula la carpeta que contiene <b>Class Roll</b> (Institutos y Seminarios). Se lee sola cada vez que abres la app.'}${u ? ` · última lectura ${esc(fmtShort(fechaLocal(u)))} ${esc(fmtTime(u))}` : ''}</p>
+      <div class="btn-row" style="flex-wrap:wrap">${puedeCarpeta ? `${dir ? `<button class="btn primary" id="wrLeer">${ICON.check} Sincronizar ahora</button>` : ''}<button class="btn ${dir ? '' : 'primary'}" id="wrVin">${ICON.upload} ${dir ? 'Vincular otra carpeta' : 'Vincular carpeta'}</button>` : ''}<label class="btn">${ICON.upload} Elegir Excel<input type="file" id="wrF" accept=".xlsx" multiple class="sr"></label></div>
+      ${puedeCarpeta && dir ? `<div class="field" style="margin:12px 0 0"><label>Sincronización automática</label><select class="inp" id="wrModo" style="width:auto">${Object.entries(ROLL_MODOS).map(([k, t]) => `<option value="${k}" ${rollModo() === k ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <small class="hint" style="display:block;margin-top:4px">${{ cambios:'Al abrir la app y cada 15 minutos revisa si algún Excel de la carpeta se actualizó, y lee solo los nuevos.', '9am':'Se sincroniza una vez al día, la primera vez que la app esté abierta desde las 9:00.', manual:'Solo cuando toques “Sincronizar ahora”.' }[rollModo()]} Funciona mientras la app esté abierta en esta computadora.</small></div>` : ''}
+      ${msg ?`<div class="${tipo === 'warn' ? 'warn-box' : 'info-box'}" style="margin-top:10px">${msg}</div>` : ''}`;
+    const v = $('#wrVin'); if(v) v.onclick = async () => {
+      try{ dir = await window.showDirectoryPicker({ id:'sei-del-dia', mode:'read' }); await fsSet('rollDir', dir); LS.set('ca_roll_files', {}); leer({ interactive:true, force:true }); }
+      catch(e){ if(e.name !== 'AbortError') pintarEst('No se pudo vincular: ' + esc(e.message || e), 'warn'); }
+    };
+    const l = $('#wrLeer'); if(l) l.onclick = () => leer({ interactive:true, force:true });
+    const mo = $('#wrModo'); if(mo) mo.onchange = () => { LS.set('ca_roll_modo', mo.value); toast('✓ ' + ROLL_MODOS[mo.value], 'ok'); pintarEst(); };
+    $('#wrF').onchange = e => { const fs = [...e.target.files]; if(fs.length) leer({ archivos:fs }); };
+  };
+  const leer = async opts => {
+    pintarEst(loadingHTML('Leyendo…', true));
+    try{
+      const r = await leerClassRoll(Object.assign({ onEstado: m => { const b = $('.info-box', est); if(b) b.innerHTML = loadingHTML(m, true); } }, opts));
+      if(r.ocupado) return pintarEst('Ya se está leyendo; espera un momento.');
+      if(r.sinCarpeta) return pintarEst('Primero vincula la carpeta.', 'warn');
+      if(r.sinPermiso) return pintarEst('El navegador pide permiso para leer la carpeta: toca <b>Leer ahora</b> y elige <b>Permitir en cada visita</b>.', 'warn');
+      if(r.vacia) return pintarEst('No encontré Excel dentro de una carpeta “Class Roll”. Vincula la carpeta <b>DEL DÍA</b> (o la misma <b>Class Roll</b>).', 'warn');
+      if(r.sinCambios) pintarEst(`Todo al día: ${r.total} Excel sin cambios (el más reciente es del ${esc(fmtShort(fechaLocal(r.ultimo)))}).`);
+      else pintarEst(`✓ ${r.leidos} Excel leídos · ${r.clases} clases de Wise guardadas · ${r.vinculadas} vinculadas solas${r.avisos.length ? `<details style="margin-top:6px"><summary>${r.avisos.length} aviso${r.avisos.length === 1 ? '' : 's'}</summary>${r.avisos.slice(0, 30).map(esc).join('<br>')}</details>` : ''}`);
+    }catch(e){ console.error(e); pintarEst((/wise_clases|cargar_class_roll|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0030 en Supabase.' : esc(errMsg(e))), 'warn'); }
+    pintarLista();
+  };
+  const pintarLista = async () => {
+    let wises, apps;
+    try{ [wises, apps] = await Promise.all([SB.rpc('wise_clases_admin'), SB.rpc('resumen_clases')]); SB.resumen = apps; }
+    catch(e){ body.innerHTML = `<div class="warn-box">${/wise_clases|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0030 en Supabase.' : esc(errMsg(e))}</div>`; return; }
+    wises = wises || []; apps = apps || [];
+    const appPorId = new Map(apps.map(c => [c.id, c])), tomadas = new Set(wises.filter(w => w.clase_id).map(w => w.clase_id));
+    const pend = wises.filter(w => !w.clase_id && !w.ignorada), vinc = wises.filter(w => w.clase_id && appPorId.has(w.clase_id)), ign = wises.filter(w => w.ignorada && !w.clase_id);
+    const sub = w => esc([progLabel(w.programa), stakeShort(w.estaca), w.horario, w.curso].filter(Boolean).join(' · ')) + ` · ${(w.alumnos || []).length} alumnos`;
+    const opciones = w => apps.filter(c => c.programa === w.programa && c.estaca === w.estaca && !tomadas.has(c.id))
+      .map(c => ({ c, s: puntajeWiseApp(w, c) })).sort((a, b) => b.s - a.s || a.c.maestro.localeCompare(b.c.maestro, 'es'))
+      .map(({ c, s }) => `<option value="${c.id}">${s ? '★ ' : ''}${esc(prettyName(c.maestro))} · ${esc([c.horario, c.curso].filter(Boolean).join(' · '))}</option>`).join('');
+    if(!wises.length){ body.innerHTML = '<div class="empty">Aún no se ha leído ningún Class Roll.</div>'; return; }
+    body.innerHTML = `${pend.length ? `<section class="section"><div class="section-h"><h2>En Wise y no en la app (${pend.length})</h2><button class="btn sm primary" id="wrTodas">Crear las ${pend.length}</button></div>
+        <p class="hint" style="margin:0 2px 8px">Crea la clase con los alumnos de Wise, o vincúlala con una clase que el maestro ya creó (★ = la más parecida).</p>
+        ${pend.map(w => `<div class="wr-row" data-k="${esc(w.clave)}"><span class="av">${esc(initials(w.maestro))}</span><div class="ii"><b>${esc(prettyName(w.maestro))}</b><small>${sub(w)}</small></div>
+          <div class="wr-acts"><select class="inp" data-vin><option value="">Vincular con…</option>${opciones(w)}</select><button class="btn sm primary" data-crear>Crear</button><button class="btn sm ghost" data-ign title="No es una clase que se lleve en la app">Ignorar</button></div></div>`).join('')}</section>`
+      : '<div class="info-box">✓ Todas las clases de Wise ya están en la app.</div>'}
+      ${vinc.length ? `<details class="section wr-det"><summary><b>Vinculadas (${vinc.length})</b></summary>${vinc.map(w => { const c = appPorId.get(w.clase_id); return `<div class="wr-row" data-k="${esc(w.clave)}"><div class="ii"><b>${esc(prettyName(w.maestro))}</b><small>${sub(w)}</small><small>→ App: ${esc(prettyName(c.maestro))} · ${esc([c.horario, c.curso].filter(Boolean).join(' · '))} · <i>${{ auto:'automático', manual:'a mano', creada:'creada desde Wise' }[w.vinculo] || ''}</i></small></div><div class="wr-acts"><button class="btn sm" data-go="#/clase/${esc(c.codigo)}">Abrir</button><button class="btn sm ghost" data-desv>Desvincular</button></div></div>`; }).join('')}</details>` : ''}
+      ${ign.length ? `<details class="section wr-det"><summary><b>Ignoradas (${ign.length})</b></summary>${ign.map(w => `<div class="wr-row" data-k="${esc(w.clave)}"><div class="ii"><b>${esc(prettyName(w.maestro))}</b><small>${sub(w)}</small></div><div class="wr-acts"><button class="btn sm" data-rest>Restaurar</button></div></div>`).join('')}</details>` : ''}`;
+    const W = k => wises.find(w => w.clave === k);
+    const accion = async (btn, fn, ok) => { btn.disabled = true; try{ await fn(); if(ok) toast(ok, 'ok'); }catch(e){ console.error(e); toast(errMsg(e), 'error'); } pintarLista(); };
+    $$('.wr-row', body).forEach(row => {
+      const w = W(row.dataset.k); if(!w) return;
+      const cr = $('[data-crear]', row); if(cr) cr.onclick = () => accion(cr, () => crearDesdeWise(w), `✓ Clase creada: ${prettyName(w.maestro)}`);
+      const ig = $('[data-ign]', row); if(ig) ig.onclick = () => accion(ig, () => SB.rpc('vincular_wise_clase', { wise:w.clave, clase:null, modo:'', ignorar:true }));
+      const re = $('[data-rest]', row); if(re) re.onclick = () => accion(re, () => SB.rpc('vincular_wise_clase', { wise:w.clave, clase:null, modo:'', ignorar:false }));
+      const de = $('[data-desv]', row); if(de) de.onclick = () => accion(de, () => SB.rpc('vincular_wise_clase', { wise:w.clave, clase:null, modo:'', ignorar:false }));
+      const vi = $('[data-vin]', row); if(vi) vi.onchange = () => { if(vi.value) accion(vi, () => SB.rpc('vincular_wise_clase', { wise:w.clave, clase:vi.value, modo:'manual', ignorar:false }), '✓ Vinculada'); };
+    });
+    const todas = $('#wrTodas'); if(todas) todas.onclick = async () => {
+      if(!await confirmBox(`Se crearán <b>${pend.length}</b> clases en la app con los alumnos que trae Wise. Revisa antes si alguna ya existe con otro nombre (usa “Vincular con…”).`, { title:'Crear clases de Wise', ok:'Crear' })) return;
+      todas.disabled = true; let ok = 0; const err = [];
+      for(let i = 0; i < pend.length; i++){ todas.textContent = `Creando ${i + 1} de ${pend.length}…`; try{ await crearDesdeWise(pend[i]); ok++; }catch(e){ console.error(e); err.push(`${pend[i].maestro}: ${errMsg(e)}`); } }
+      toast(`✓ ${ok} clases creadas${err.length ? ` · ${err.length} con error` : ''}`, err.length ? 'warn' : 'ok', { ms:4500 });
+      pintarLista();
+    };
+    $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
+  };
+  pintarEst();
+  pintarLista();
+  if(dir && rollModo() !== 'manual' && (await dir.queryPermission({ mode:'read' }).catch(() => '')) === 'granted') leer({});
 }
 
 /* ---------- Solicitudes de acceso ---------- */
@@ -2771,8 +3017,9 @@ function route(){
   if(parts[0] === 'terminos' || parts[0] === 'privacidad') return renderLegal(parts[0]);
   if(parts[0] === 'entrar') return renderEntrar();
   if(parts[0] === 'supervisor') return renderSupervisor();
-  if(['todas','solicitudes','alertas','seguimiento','inscripciones'].includes(parts[0])){
+  if(['todas','solicitudes','alertas','seguimiento','inscripciones','wiseroll'].includes(parts[0])){
     if(!SB.admin){ go('#/'); return; }
+    if(parts[0] === 'wiseroll') return renderWiseRoll();
     if(parts[0] === 'inscripciones') return renderInscripciones();
     if(parts[0] === 'solicitudes') return renderSolicitudes();
     if(parts[0] === 'alertas') return renderAlertas();
@@ -5426,7 +5673,14 @@ function pedirFicha(cls, s){
 }
 function renderPlanilla(cls, body){
   const ro = !cls.canEdit;
-  const studs = classStudents(cls); const all = classDates(cls);
+  const studs = classStudents(cls); const base = classDates(cls);
+  // Con Class Roll de Wise: también las fechas que solo trae Wise (dentro del periodo de la clase).
+  const WR = wiseRollOn(cls), wm = WR ? wiseMapa(cls) : null;
+  const wcols = new Set();
+  if(WR){ const t0 = todayISO(), s0 = classRange(cls).s || ''; (cls.wroll.fechas || []).forEach(f => { if(f <= t0 && f >= s0 && !base.includes(f)) wcols.add(f); }); }
+  const all = wcols.size ? [...base, ...wcols].sort() : base;
+  const wv = (sid, d) => { const m = wm && wm.get(sid); return m ? (m[d] || '') : ''; };
+  const celda = (sid, d) => celdaCmp((cls.att[d]||{})[sid] || '', wv(sid, d), WR, !!(wm && wm.has(sid)));
   const months = [...new Set(all.map(d => d.slice(0,7)))];
   const curM = todayISO().slice(0,7);
   if(ST.planMonth == null || (ST.planMonth !== 'all' && !months.includes(ST.planMonth))) ST.planMonth = months.includes(curM) ? curM : (months[months.length-1] || 'all');
@@ -5438,16 +5692,18 @@ function renderPlanilla(cls, body){
   const blanks = () => ds.flatMap(d => studs.filter(s => !(cls.att[d]||{})[s.id]).map(s => [d, s.id]));
   const W = wiseOn(cls);
   const rows = W && ST.wiseSolo ? studs.filter(s => !enWise(cls, s)) : studs;
-  body.innerHTML = `${W ? wiseBarHTML(cls, studs) : ''}<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}<span class="only-fine"> · Arrastra el borde de un encabezado para cambiar el ancho</span></span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
+  const wFill = () => WR && !ro ? ds.flatMap(d => studs.filter(s => !(cls.att[d]||{})[s.id] && wv(s.id, d)).map(s => [d, s.id, wv(s.id, d)])) : [];
+  body.innerHTML = `${W ? wiseBarHTML(cls, studs) : ''}${WR ? wiseRollBarHTML(cls, wm, wFill().length, W) : ''}<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}<span class="only-fine"> · Arrastra el borde de un encabezado para cambiar el ancho</span></span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
     ${ro || !ds.length ? '' : fillBlankHTML(blanks().length)}
-    ${ds.length ? `<div class="plan-wrap"><table class="plan ${ro?'ro':''}${planColsAttr()}" id="plan"><thead><tr><th class="sticky">Alumno${GRIP('n')}</th>${ds.map(d => `<th class="dc${d===t?' today':''}${wks.has(d)?' wk':''}"><span>${DOW[parseISO(d).getDay()]}</span>${fmtShort(d)}${GRIP('c')}</th>`).join('')}<th>%</th></tr></thead>
-      <tbody>${rows.length ? '' : `<tr><td class="sticky" colspan="${ds.length + 2}" style="color:var(--green);cursor:default">✓ Todos los alumnos de esta clase ya están en Wise.</td></tr>`}${rows.map(s => { const st = studentStats(cls, s.id, ds); const w = W && enWise(cls, s); return `<tr data-sid="${s.id}"${W && !w ? ' class="wise-no"' : ''}><td class="sticky" title="${esc(prettyName(s.n))}">${W ? wiseBadge(w) : ''}${esc(prettyName(s.n))}</td>${ds.map(d => { const v = (cls.att[d]||{})[s.id] || ''; return `<td class="cell ${ATT_OK(v)?'p':v==='F'?'f':''}${wks.has(d)?' wk':''}" data-d="${d}">${ATT_TXT[v]||''}</td>`; }).join('')}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')}</tbody>
+    ${ds.length ? `<div class="plan-wrap"><table class="plan ${ro?'ro':''}${WR?' cmp':''}${planColsAttr()}" id="plan"><thead><tr><th class="sticky">Alumno${GRIP('n')}</th>${ds.map(d => `<th class="dc${d===t?' today':''}${wks.has(d)?' wk':''}${wcols.has(d)?' wcol':''}"${wcols.has(d)?' title="Fecha que solo está en Wise (no está en el calendario de la clase)"':''}><span>${DOW[parseISO(d).getDay()]}</span>${fmtShort(d)}${GRIP('c')}</th>`).join('')}<th>%</th></tr></thead>
+      <tbody>${rows.length ? '' : `<tr><td class="sticky" colspan="${ds.length + 2}" style="color:var(--green);cursor:default">✓ Todos los alumnos de esta clase ya están en Wise.</td></tr>`}${rows.map(s => { const st = studentStats(cls, s.id, ds); const w = W && enWise(cls, s); return `<tr data-sid="${s.id}"${W && !w ? ' class="wise-no"' : ''}><td class="sticky" title="${esc(prettyName(s.n))}">${W ? wiseBadge(w) : ''}${esc(prettyName(s.n))}</td>${ds.map(d => { const c = celda(s.id, d); return `<td class="cell ${c.cls}${wks.has(d)?' wk':''}" data-d="${d}"${c.tit ? ` title="${esc(c.tit)}"` : ''}>${c.txt}</td>`; }).join('')}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')}</tbody>
       <tfoot><tr><td class="sticky">Asistentes</td>${ds.map(d => `<td data-foot="${d}" class="dc${wks.has(d)?' wk':''}">${studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length}</td>`).join('')}<td></td></tr></tfoot></table></div>` : '<div class="empty">No hay sesiones en este periodo.</div>'}`;
   $('#pm').onchange = e => { ST.planMonth = e.target.value; renderPlanilla(cls, body); };
   $('#pX').onclick = () => exportClass(cls, false);
   $('#pP').onclick = () => exportClassHtml(cls, true);
   if(!ro) bindFillBlank(body, cls, blanks, () => { if(body.isConnected && $('#plan', body)) renderPlanilla(cls, body); });
   if(W) bindWiseBar(cls, body, () => renderPlanilla(cls, body));
+  if(WR) bindWiseRollBar(cls, body, wFill, () => renderPlanilla(cls, body));
   if(ds.length) bindPlanGrips($('#plan', body));
   if(ds.length) $('#plan tbody').onclick = e => {
     const wz = e.target.closest('.wz');
@@ -5461,7 +5717,8 @@ function renderPlanilla(cls, body){
     const cur = (cls.att[d]||{})[sid] || '';
     const nv = cur === '' ? 'P' : ATT_OK(cur) ? 'F' : '';
     setAtt(cls, d, sid, nv);
-    td.classList.toggle('p', ATT_OK(nv)); td.classList.toggle('f', nv==='F'); td.textContent = ATT_TXT[nv]||'';
+    const c = celda(sid, d);
+    td.className = `cell ${c.cls}${wks.has(d)?' wk':''}`; td.textContent = c.txt; if(c.tit) td.title = c.tit; else td.removeAttribute('title');
     const st = studentStats(cls, sid, ds); $('td.pct', td.parentElement).textContent = st.pct === '' ? '—' : st.pct+'%';
     const ft = $(`[data-foot="${d}"]`); if(ft) ft.textContent = studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length;
     const fb = $('.fill-blank', body); if(fb){ const n = blanks().length; $('.fb-n', fb).textContent = n; fb.classList.toggle('hide', !n); }
@@ -5493,6 +5750,62 @@ function bindPlanGrips(tbl){
     };
     g.ondblclick = e => { e.stopPropagation(); tbl.classList.remove(k + 'w'); tbl.style.removeProperty(`--${k}w`); savePlanCols({ [k]: null }); };
   });
+}
+/* ============================================================
+   CLASS ROLL DE WISE EN LA PLANILLA (maestro y administrador)
+   Colores: fuerte = lo marcó el maestro y no está en Wise · suave = está en Wise (igual o solo en Wise)
+   · morado = la app y Wise dicen distinto. Nada de Wise reemplaza lo de la app.
+   ============================================================ */
+const WMAP = new WeakMap(), WAUTO = new Set();
+// Administrador: los alumnos que aparecen en el Class Roll quedan con su "W" (en Wise) solos.
+function autoWiseMarcas(cls){
+  if(!wiseRollOn(cls) || !cls.dbId || WAUTO.has(cls.dbId)) return;
+  const wm = wiseMapa(cls), ids = classStudents(cls).filter(s => wm.has(s.id) && !s.wise).map(s => s.id);
+  if(!ids.length) return;
+  WAUTO.add(cls.dbId);
+  guardarWise(cls, ids, []).then(() => { if(CUR.type === 'class' && CLASSES[CUR.code] === cls) renderClassTab(); })
+    .catch(e => console.warn('W automática', e)).finally(() => WAUTO.delete(cls.dbId));
+}
+function wiseRollOn(cls){ return !!(cls && cls.wroll && (cls.wroll.alumnos || []).length); }
+function wiseMapa(cls){
+  const studs = classStudents(cls), key = (cls.wroll.actualizado_en || '') + '|' + studs.map(s => s.id + ':' + s.n).join(',');
+  const c = WMAP.get(cls); if(c && c.key === key) return c.map;
+  const lista = (cls.wroll.alumnos || []).map(a => { const n = String(a.n || ''), i = n.indexOf(','); return { ap: i > 0 ? n.slice(0, i).trim() : '', no: i > 0 ? n.slice(i + 1).trim() : n, n, m: a.m || {} }; });
+  const R = cruzarWise(studs, lista);
+  const map = new Map(R.match.map(x => [x.s.id, x.w.m]));
+  map.sobran = R.sobran;
+  WMAP.set(cls, { key, map });
+  return map;
+}
+function celdaCmp(v, w, WR, enRoll){
+  const txt = ATT_TXT[v] || '';
+  const a = ATT_OK(v) ? 'p' : v === 'F' ? 'f' : '';
+  if(!WR) return { cls:a, txt, tit:'' };
+  const b = ATT_OK(w) ? 'p' : w === 'F' ? 'f' : '';
+  const L = { p:'asistió', f:'falta', '':'sin marcar' };
+  const tit = `App: ${L[a]}${v === 'T' ? ' (tarde)' : ''} · Wise: ${enRoll ? L[b] : 'no está en el Class Roll'}`;
+  if(a && b && a !== b) return { cls:a + ' wd', txt, tit: tit + ' · ¡distinto!' };
+  if(a && b) return { cls:a + ' wq', txt, tit };
+  if(a) return { cls:a + ' wn', txt, tit: tit + (a === 'p' ? ' · falta pasarlo a Wise' : '') };
+  if(b) return { cls:'w' + b, txt: b === 'p' ? '✓' : '✗', tit };
+  return { cls:'', txt:'', tit:'' };
+}
+function wiseRollBarHTML(cls, wm, nFill, admin){
+  const r = cls.wroll, f = r.archivo_en || r.actualizado_en;
+  const sob = (wm.sobran || []).length;
+  return `<div class="wr-bar"><div class="wr-top"><b>Comparado con Wise</b><span class="hint">Class Roll del ${f ? esc(fmtShort(fechaLocal(f))) : '—'}</span><span style="flex:1"></span>${nFill ? `<button class="btn sm" data-wrfill title="Copia a la app las marcas de Wise solo donde la app está vacía">Completar ${nFill} vacío${nFill === 1 ? '' : 's'} con Wise</button>` : ''}</div>
+    <div class="wr-leg"><span><i class="lg p wn">✓</i>Maestro, falta en Wise</span><span><i class="lg p wq">✓</i>Igual en Wise</span><span><i class="lg wp">✓</i>Solo en Wise</span><span><i class="lg f wn">✗</i>Falta (maestro)</span><span><i class="lg f wq">✗</i>Falta igual en Wise</span><span><i class="lg wf">✗</i>Falta solo en Wise</span><span><i class="lg p wd">✓</i>Distinto</span></div>
+    ${admin && sob ? `<div class="wr-sob">${sob} alumno${sob === 1 ? '' : 's'} del Class Roll no ${sob === 1 ? 'está' : 'están'} en la planilla · <button class="link-btn" data-wcmp>Ver y agregar</button></div>` : ''}</div>`;
+}
+function bindWiseRollBar(cls, root, wFill, rerender){
+  const b = $('[data-wrfill]', root);
+  if(b) b.onclick = async () => {
+    const list = wFill(); if(!list.length) return;
+    if(!await confirmBox(`Se copiarán <b>${list.length}</b> marca${list.length === 1 ? '' : 's'} de Wise a la app, solo en casillas vacías. Lo que ya marcó el maestro no cambia.`, { title:'Completar con Wise', ok:'Completar' })) return;
+    list.forEach(([d, sid, v]) => setAtt(cls, d, sid, ATT_OK(v) ? 'P' : 'F', true));
+    saveClasses(); queueSync(); toast(`✓ ${list.length} marca${list.length === 1 ? '' : 's'} copiadas de Wise`, 'ok'); rerender();
+  };
+  const c = $('.wr-sob [data-wcmp]', root); if(c) c.onclick = () => openWiseCompare(cls, rerender);
 }
 /* ============================================================
    CRUCE CON WISE2 (solo administrador)
@@ -5670,7 +5983,8 @@ function openWiseCompare(cls, rerender){
         pintar(); rerender();
       };
       ta.oninput = pintar;
-      setTimeout(() => ta.focus(), 50);
+      if(wiseRollOn(cls)){ ta.value = cls.wroll.alumnos.map(a => a.n).join('\n'); pintar(); toast('Lista tomada del Class Roll de Wise (puedes pegar otra)'); }
+      else setTimeout(() => ta.focus(), 50);
       save.onclick = async () => {
         if(!R) return;
         const si = [...$$('[data-ok]:checked, [data-ya]:checked', out)].map(x => x.dataset.ok || x.dataset.ya);
