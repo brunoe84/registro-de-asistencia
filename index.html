@@ -467,6 +467,47 @@ button.wz:hover{filter:brightness(1.12)}
 .wc-row .wn{flex:1;min-width:0}
 .wc-row .wn small{display:block;color:var(--muted);font-size:12px}
 .wc-row label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap;cursor:pointer}
+/* ---------- Mensajes al maestro ---------- */
+.msg-tipos{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.msg-tipo{display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 4px;border:1.5px solid var(--border);border-radius:12px;background:#fff;font:600 12.5px/1.2 inherit;color:var(--muted);cursor:pointer}
+.msg-tipo span{font-size:22px}
+.msg-tipo.on.t-felicitacion{border-color:var(--gold);background:var(--gold-50);color:#7A5410}
+.msg-tipo.on.t-urgente{border-color:var(--red);background:var(--red-50);color:var(--red)}
+.msg-tipo.on.t-recordatorio{border-color:var(--amber);background:var(--amber-50);color:var(--amber)}
+.msg-tipo.on.t-aviso{border-color:var(--teal);background:var(--teal-50);color:var(--teal-2)}
+.msg-h .mh-ico{font-size:18px}
+.msg-h .wn{white-space:pre-wrap;word-break:break-word}
+.mh-ok{color:var(--green);font-weight:600}.mh-no{color:var(--amber);font-weight:600}
+.msg-ov{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(19,44,62,.5);opacity:0;transition:opacity .2s}
+.msg-ov.in{opacity:1}
+.msg-confeti{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:3}
+.msg-card{position:relative;z-index:2;width:100%;max-width:440px;max-height:calc(100vh - 32px);overflow:auto;background:#fff;border-radius:20px;box-shadow:0 24px 60px rgba(0,0,0,.3);transform:scale(.9) translateY(14px);transition:transform .28s cubic-bezier(.2,1.3,.4,1)}
+.msg-ov.in .msg-card{transform:none}
+.msg-x{position:absolute;top:10px;right:10px;width:34px;height:34px;border:0;border-radius:50%;background:rgba(255,255,255,.75);color:var(--text);display:grid;place-items:center;cursor:pointer}
+.msg-x:hover{background:#fff}
+.msg-x svg{width:18px;height:18px}
+.msg-top{padding:26px 22px 18px;text-align:center;border-radius:20px 20px 0 0;background:var(--teal-50);color:var(--teal-2)}
+.msg-top h3{margin:6px 0 2px;font-size:20px}
+.msg-top small{opacity:.8;font-size:12.5px}
+.msg-ico{font-size:46px;line-height:1;display:inline-block}
+.msg-body{padding:18px 22px 6px;font-size:16px;line-height:1.55;color:var(--text);word-break:break-word}
+.msg-foot{padding:14px 22px 20px;display:flex;justify-content:center}
+.msg-foot .btn{min-width:180px;justify-content:center}
+.msg-ov.t-felicitacion .msg-top{background:linear-gradient(160deg,#FFF6DD,#FBE7B5);color:#7A5410}
+.msg-ov.t-felicitacion .msg-ico{animation:msgPop .7s cubic-bezier(.2,1.6,.4,1) .15s both}
+.msg-ov.t-urgente .msg-top{background:var(--red);color:#fff}
+.msg-ov.t-urgente .msg-card{box-shadow:0 0 0 4px rgba(192,57,43,.35),0 24px 60px rgba(0,0,0,.3)}
+.msg-ov.t-urgente.in .msg-card{animation:msgShake .5s .25s both,msgRing 1.6s 1s ease-out 3}
+.msg-ov.t-urgente .msg-foot .btn{background:var(--red);border-color:var(--red)}
+.msg-ov.t-recordatorio .msg-top{background:var(--amber-50);color:var(--amber)}
+.msg-ov.t-recordatorio .msg-ico{transform-origin:50% 8%;animation:msgBell 1.2s ease-in-out .2s 2}
+.msg-ov.t-aviso .msg-ico{animation:msgPop .5s ease-out .1s both}
+@keyframes msgPop{0%{transform:scale(0) rotate(-20deg)}100%{transform:scale(1) rotate(0)}}
+@keyframes msgShake{0%,100%{transform:none}20%{transform:translateX(-9px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(4px)}}
+@keyframes msgRing{0%{box-shadow:0 0 0 0 rgba(192,57,43,.55),0 24px 60px rgba(0,0,0,.3)}100%{box-shadow:0 0 0 22px rgba(192,57,43,0),0 24px 60px rgba(0,0,0,.3)}}
+@keyframes msgBell{0%,100%{transform:rotate(0)}15%{transform:rotate(16deg)}30%{transform:rotate(-14deg)}45%{transform:rotate(10deg)}60%{transform:rotate(-6deg)}75%{transform:rotate(3deg)}}
+@media (prefers-reduced-motion: reduce){.msg-card,.msg-ico,.msg-ov.in .msg-card{animation:none!important;transition:none!important}}
+@media (max-width:480px){.msg-tipos{grid-template-columns:repeat(2,1fr)}}
 .wc-addbar{display:flex;align-items:center;gap:10px;margin-top:4px}
 .wc-addbar[hidden]{display:none}
 .wc-warn{background:#FFF4E0;border:1px solid #F2D49A;color:#7A4F06;border-radius:10px;padding:8px 10px;font-size:13px;margin-top:8px}
@@ -4736,7 +4777,7 @@ function renderClass(code){
       <div class="eh-main"><div style="min-width:0"><span class="badge ${m.program==='S'?'b-sem':'b-inst'}">${progLabel(m.program)}</span> ${cls.canEdit ? '' : '<span class="badge b-ro">'+ICON.lock.replace('<svg','<svg style="width:12px;height:12px"')+' Solo lectura</span>'}
         <h1 style="margin-top:6px">${esc(m.title)}</h1><p class="meta">Maestro: <b>${esc(cls.remote ? prettyName(m.teacher) : m.teacher)}</b>${m.stake ? ' · '+esc(m.ward || (cls.remote ? stakeShort(m.stake) : m.stake)) : ''} · ${esc(daysTxt)}</p></div>
       <div class="counter"><b id="clCount">0</b><span>alumnos</span></div></div>
-      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button>${cls.remote ? '<span class="hint">Los cambios se guardan en línea.</span>' : cls.canEdit ? '<span class="hint">Código para encontrar la clase y descargar la asistencia.</span>' : `<button class="btn sm" id="unlock">${ICON.lock} Soy el maestro · ingresar PIN</button>`}<button class="btn sm" id="guiaBtn" style="margin-left:auto">❔ Guía</button>${puedeEditarDatos(cls) ? `<button class="btn sm" data-go="#/clase/${code}/editar">${ICON.edit} Editar datos</button>` : ''}</div>
+      <div class="code-row"><button class="code-chip" id="codeChip">${ICON.copy}<span>${code}</span></button>${cls.remote ? '<span class="hint">Los cambios se guardan en línea.</span>' : cls.canEdit ? '<span class="hint">Código para encontrar la clase y descargar la asistencia.</span>' : `<button class="btn sm" id="unlock">${ICON.lock} Soy el maestro · ingresar PIN</button>`}<button class="btn sm" id="guiaBtn" style="margin-left:auto">❔ Guía</button>${cls.remote && cls.dbId && SB.admin ? `<button class="btn sm" id="msgBtn" title="Dejar un mensaje que el maestro verá al abrir su clase">💬 Mensaje al maestro</button>` : ''}${puedeEditarDatos(cls) ? `<button class="btn sm" data-go="#/clase/${code}/editar">${ICON.edit} Editar datos</button>` : ''}</div>
       ${cls.remote && SB.admin ? '<div id="accBox"></div>' : ''}
     </section>
     ${cls.remote ? '<div id="aprobBox"></div>' : ''}
@@ -4747,7 +4788,9 @@ function renderClass(code){
   $('#codeChip').onclick = () => copyText(code, 'Código copiado');
   const ul = $('#unlock'); if(ul) ul.onclick = () => unlockClass(cls);
   $('#guiaBtn').onclick = () => openGuia('clase');
+  const mb = $('#msgBtn'); if(mb) mb.onclick = () => openMensajeMaestro(cls);
   if(cls.remote && cls.canEdit && !SB.admin) guiaPrimeraVez('clase');
+  if(cls.remote && cls.dbId && !SB.admin) mostrarMensajesMaestro(cls);
   $$('#tabs [data-tab]').forEach(b => b.onclick = () => { ST.ctab = b.dataset.tab; $$('#tabs [data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderClassTab(); });
   $('#saveBtn').onclick = () => classOnline(cls) ? syncClass(code) : exportClassHtml(cls, true);
   renderClassTab();
@@ -4760,6 +4803,114 @@ function renderClass(code){
       SB.watch('asistencia_qr', 'clase_id=eq.'+cls.dbId, () => paintQrAprob(cls, true));
     }
   }
+}
+/* ---------- Mensajes del administrador al maestro ----------
+   El administrador deja un mensaje con un tono (felicitación, urgente, recordatorio o aviso).
+   El maestro lo ve en una ventana emergente al abrir su clase; al cerrarla queda como visto. */
+const MSG_TIPOS = {
+  felicitacion: { ico:'🎉', label:'Felicitación', titulo:'¡Felicitaciones!' },
+  urgente:      { ico:'🚨', label:'Urgente',      titulo:'Atención: pedido urgente' },
+  recordatorio: { ico:'🔔', label:'Recordatorio', titulo:'Recordatorio' },
+  aviso:        { ico:'💬', label:'Aviso',        titulo:'Mensaje del administrador' }
+};
+const fechaCorta = t => { try{ return new Date(t).toLocaleString('es-PE', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }); }catch(e){ return ''; } };
+function openMensajeMaestro(cls){
+  let tipo = 'felicitacion', hist = null;
+  const teacher = prettyName(cls.meta.teacher || 'el maestro');
+  sheet(`${sheetHead('Mensaje al maestro', `${esc(teacher)} lo verá al abrir su clase`)}
+    <div class="msg-tipos">${Object.entries(MSG_TIPOS).map(([k, t]) => `<button type="button" class="msg-tipo t-${k}" data-tipo="${k}"><span>${t.ico}</span>${t.label}</button>`).join('')}</div>
+    <div class="field"><label>Mensaje</label><textarea id="msgT" rows="4" maxlength="2000" placeholder="Ej. ¡Gracias por tener la asistencia al día! Sigue así."></textarea></div>
+    <button type="button" class="link-btn" id="msgPrev" style="font-size:13px">👁 Ver cómo lo verá el maestro</button>
+    <div class="wc-sec" id="msgHist"></div>
+    <div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="msgSend" disabled>Enviar mensaje</button></div>`, {
+    onMount(el){
+      const ta = $('#msgT', el), send = $('#msgSend', el), box = $('#msgHist', el);
+      const pintarTipo = () => $$('[data-tipo]', el).forEach(b => b.classList.toggle('on', b.dataset.tipo === tipo));
+      $$('[data-tipo]', el).forEach(b => b.onclick = () => { tipo = b.dataset.tipo; pintarTipo(); });
+      pintarTipo();
+      ta.oninput = () => { send.disabled = !ta.value.trim(); };
+      setTimeout(() => ta.focus(), 120);
+      $('#msgPrev', el).onclick = () => { if(!ta.value.trim()){ toast('Escribe el mensaje primero'); return; } popupMensaje({ tipo, texto: ta.value.trim(), creado_en: new Date().toISOString() }, { vista:true }); };
+      const pintarHist = async () => {
+        try{ hist = await SB.rpc('mensajes_de_clase', { clase: cls.dbId }) || []; }
+        catch(e){ console.error(e); box.innerHTML = `<div class="wc-warn">${/mensajes_de_clase|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0027 en Supabase.' : esc(errMsg(e))}</div>`; return; }
+        box.innerHTML = hist.length ? `<h4>Mensajes enviados</h4>${hist.map(m => `<div class="wc-row msg-h t-${m.tipo}"><span class="mh-ico">${(MSG_TIPOS[m.tipo] || MSG_TIPOS.aviso).ico}</span><div class="wn">${esc(m.texto)}<small>${fechaCorta(m.creado_en)} · ${m.visto_en ? `<b class="mh-ok">✓ Visto ${fechaCorta(m.visto_en)}</b>` : '<b class="mh-no">Aún no lo ve</b>'}</small></div><button class="icon-btn" data-del="${m.id}" title="Borrar mensaje" aria-label="Borrar">${ICON.x}</button></div>`).join('')}` : '';
+        $$('[data-del]', box).forEach(b => b.onclick = async () => {
+          if(!await confirmBox('¿Borrar este mensaje? Si el maestro aún no lo vio, ya no le aparecerá.', { title:'Borrar mensaje', ok:'Borrar', danger:true })) return;
+          try{ await SB.rpc('borrar_mensaje_clase', { mensaje: b.dataset.del }); pintarHist(); }catch(e){ toast(errMsg(e), 'error'); }
+        });
+      };
+      send.onclick = async () => {
+        const texto = ta.value.trim(); if(!texto) return;
+        send.disabled = true;
+        try{
+          await SB.rpc('dejar_mensaje_clase', { clase: cls.dbId, texto, tipo });
+          ta.value = ''; toast(`✓ Mensaje dejado para ${teacher}`, 'ok'); pintarHist();
+        }catch(e){ console.error(e); send.disabled = false; toast(/dejar_mensaje_clase|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0027 en Supabase' : errMsg(e), 'error', {ms:4200}); }
+      };
+      pintarHist();
+    }
+  });
+}
+const MSG_VISTOS = new Set();
+let MSG_BUSY = false;
+async function mostrarMensajesMaestro(cls){
+  if(MSG_BUSY) return; MSG_BUSY = true;
+  try{
+    let list;
+    try{ list = await SB.rpc('mensajes_pendientes', { clase: cls.dbId }) || []; }catch(e){ console.warn('mensajes_pendientes', e); return; }
+    for(const m of list.filter(m => !MSG_VISTOS.has(m.id))){
+      if(CUR.type !== 'class' || CLASSES[CUR.code] !== cls) return;
+      MSG_VISTOS.add(m.id);
+      await popupMensaje(m);
+      SB.rpc('mensaje_visto', { mensaje: m.id }).catch(e => console.warn('mensaje_visto', e));
+    }
+  }finally{ MSG_BUSY = false; }
+}
+function popupMensaje(m, { vista=false }={}){
+  return new Promise(res => {
+    const t = MSG_TIPOS[m.tipo] || MSG_TIPOS.aviso;
+    const ov = document.createElement('div');
+    ov.className = 'msg-ov t-' + (MSG_TIPOS[m.tipo] ? m.tipo : 'aviso');
+    ov.innerHTML = `<div class="msg-card" role="alertdialog" aria-modal="true" aria-labelledby="msgTit">
+      <button class="msg-x" aria-label="Cerrar">${ICON.x}</button>
+      <div class="msg-top"><span class="msg-ico">${t.ico}</span><h3 id="msgTit">${t.titulo}</h3><small>${vista ? 'Vista previa' : 'Del administrador · ' + fechaCorta(m.creado_en)}</small></div>
+      <div class="msg-body">${esc(m.texto).replace(/\n/g, '<br>')}</div>
+      <div class="msg-foot"><button class="btn primary msg-ok">${m.tipo === 'urgente' ? 'Entendido, lo atiendo' : m.tipo === 'felicitacion' ? '¡Gracias!' : 'Entendido'}</button></div>
+    </div>`;
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => ov.classList.add('in'));
+    let fx = null;
+    if(m.tipo === 'felicitacion') fx = confeti(ov);
+    const close = () => { ov.classList.remove('in'); document.removeEventListener('keydown', onKey); if(fx) fx(); setTimeout(() => ov.remove(), 220); res(); };
+    const onKey = e => { if(e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    ov.querySelector('.msg-x').onclick = close;
+    ov.querySelector('.msg-ok').onclick = close;
+    ov.addEventListener('mousedown', e => { if(e.target === ov) close(); });
+    setTimeout(() => { const b = ov.querySelector('.msg-ok'); if(b) b.focus(); }, 60);
+  });
+}
+// Lluvia de confeti en un canvas sobre la ventana (se detiene sola o al cerrar).
+function confeti(host){
+  if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
+  const cv = document.createElement('canvas'); cv.className = 'msg-confeti'; host.appendChild(cv);
+  const ctx = cv.getContext('2d'), dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = cv.width = innerWidth * dpr, H = cv.height = innerHeight * dpr;
+  const colores = ['#0E7C86', '#F2B705', '#E4572E', '#2E86DE', '#27AE60', '#9B59B6'];
+  const P = [];
+  const rafaga = (x, n) => { for(let i = 0; i < n; i++){ const a = -Math.PI / 2 + (Math.random() - .5) * 1.6, v = (9 + Math.random() * 9) * dpr; P.push({ x, y: H * .62, vx: Math.cos(a) * v, vy: Math.sin(a) * v, s: (5 + Math.random() * 6) * dpr, r: Math.random() * 6, vr: (Math.random() - .5) * .35, c: colores[i % colores.length], t: 0 }); } };
+  rafaga(W * .25, 90); rafaga(W * .75, 90);
+  setTimeout(() => rafaga(W * .5, 110), 350);
+  let run = true, t0 = performance.now();
+  const step = now => {
+    if(!run) return;
+    ctx.clearRect(0, 0, W, H);
+    P.forEach(p => { p.vy += .32 * dpr; p.vx *= .99; p.vy *= .99; p.x += p.vx; p.y += p.vy; p.r += p.vr; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.c; ctx.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); ctx.restore(); });
+    if(now - t0 < 4200) requestAnimationFrame(step); else cv.remove();
+  };
+  requestAnimationFrame(step);
+  return () => { run = false; cv.remove(); };
 }
 /* ---------- Asistencia por QR de la clase: el maestro la aprueba ---------- */
 async function paintQrAprob(cls, avisar){
