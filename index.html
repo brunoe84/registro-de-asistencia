@@ -4826,25 +4826,33 @@ function openMensajeMaestro(cls){
     <div class="msg-tipos">${Object.entries(MSG_TIPOS).map(([k, t]) => `<button type="button" class="msg-tipo t-${k}" data-tipo="${k}"><span>${t.ico}</span>${t.label}</button>`).join('')}</div>
     <div class="field"><label>Mensaje</label><textarea id="msgT" rows="4" maxlength="2000" placeholder="Ej. ¡Gracias por tener la asistencia al día! Sigue así."></textarea></div>
     <button type="button" class="link-btn" id="msgPrev" style="font-size:13px">👁 Ver cómo lo verá el maestro</button>
-    <div class="field" style="margin-top:12px"><label>Celular del maestro (WhatsApp)</label><input id="msgCel" type="tel" inputmode="tel" placeholder="Ej. 987 654 321" autocomplete="off"><small class="hint" id="msgCelH" style="display:block;margin-top:4px">Se guarda para esta clase.</small></div>
+    <div class="field" style="margin-top:12px"><label>Celular del maestro (WhatsApp)</label><input id="msgCel" type="tel" inputmode="tel" placeholder="Ej. 987 654 321" autocomplete="off"><small class="hint" id="msgCelH" style="display:block;margin-top:4px">Se guarda solo y se recuerda para este maestro.</small></div>
     <details class="msg-res"><summary>Resumen que va por WhatsApp</summary><pre id="msgRes"></pre></details>
     <div class="wc-sec" id="msgHist"></div>
     <div class="sh-foot"><button class="btn" data-close>Cerrar</button><button class="btn" id="msgWa" disabled title="Lo deja en la app y abre WhatsApp con el mensaje, el resumen y el enlace de la clase">${ICON.chat} Enviar + WhatsApp</button><button class="btn primary" id="msgSend" disabled>Enviar mensaje</button></div>`, {
     onMount(el){
       const ta = $('#msgT', el), send = $('#msgSend', el), box = $('#msgHist', el), wa = $('#msgWa', el), cel = $('#msgCel', el), celH = $('#msgCelH', el), res = $('#msgRes', el);
-      let celGuardado = '';
+      let celGuardado = '', tocado = false;
       const pintarRes = () => { res.textContent = textoWhatsMaestro(cls, ta.value.trim() || '(tu mensaje)', tipo); };
       const pintarBtns = () => { send.disabled = !ta.value.trim(); wa.disabled = !ta.value.trim() || !normPhone(cel.value); };
-      SB.rpc('celular_maestro', { clase: cls.dbId }).then(v => { if(v && !cel.value){ cel.value = v; celGuardado = v; pintarBtns(); } })
-        .catch(e => { console.warn(e); if(/celular_maestro|PGRST202|function/i.test(e.message || '')) celH.textContent = 'Falta aplicar la migración 0028 en Supabase.'; });
-      const guardarCel = async () => {
-        const v = cel.value.trim(); if(v === celGuardado) return;
+      // Primero lo que recuerda este dispositivo (al instante); luego el de la nube (el último guardado para este maestro).
+      const local = celLocal(cls);
+      if(local){ cel.value = local; celGuardado = local; celH.textContent = '✓ Número recordado.'; pintarBtns(); }
+      SB.rpc('celular_maestro', { clase: cls.dbId }).then(v => {
+        if(tocado) return;
+        if(v){ cel.value = v; celGuardado = v; celLocal(cls, v); celH.textContent = '✓ Número recordado para este maestro.'; pintarBtns(); }
+        else if(local) guardarCel(true); // estaba solo en este dispositivo: se sube a la nube
+      }).catch(e => { console.warn(e); if(/celular_maestro|PGRST202|function/i.test(e.message || '')) celH.textContent = 'Falta aplicar la migración en Supabase.'; });
+      const guardarCel = async forzar => {
+        const v = cel.value.trim(); if(v === celGuardado && !forzar) return;
         if(v && !normPhone(v)){ celH.textContent = 'Revisa el número: 9 dígitos (Perú) o con código de país.'; return; }
-        try{ await SB.rpc('guardar_celular_maestro', { clase: cls.dbId, celular: v }); celGuardado = v; celH.textContent = v ? '✓ Guardado para esta clase.' : 'Se quitó el número.'; }
-        catch(e){ console.error(e); celH.textContent = 'No se pudo guardar: ' + errMsg(e); }
+        celLocal(cls, v);
+        try{ await SB.rpc('guardar_celular_maestro', { clase: cls.dbId, celular: v }); celGuardado = v; celH.textContent = v ? '✓ Guardado: se recordará para este maestro.' : 'Se quitó el número.'; }
+        catch(e){ console.error(e); celH.textContent = 'Guardado en este dispositivo; no se pudo subir: ' + errMsg(e); }
       };
-      cel.oninput = () => { celH.textContent = 'Se guarda para esta clase.'; pintarBtns(); };
-      cel.onchange = guardarCel;
+      const guardarPronto = debounce(() => guardarCel(), 900);
+      cel.oninput = () => { tocado = true; celH.textContent = 'Guardando…'; pintarBtns(); guardarPronto(); };
+      cel.onchange = () => guardarCel();
       pintarRes();
       const pintarTipo = () => $$('[data-tipo]', el).forEach(b => b.classList.toggle('on', b.dataset.tipo === tipo));
       $$('[data-tipo]', el).forEach(b => b.onclick = () => { tipo = b.dataset.tipo; pintarTipo(); pintarRes(); });
@@ -4877,6 +4885,15 @@ function openMensajeMaestro(cls){
       pintarHist();
     }
   });
+}
+// Celular del maestro recordado en este dispositivo, por clase y por nombre del maestro (respaldo de la nube).
+function celLocal(cls, v){
+  const code = Object.keys(CLASSES).find(k => CLASSES[k] === cls) || '', tn = 'm:' + norm(cls.meta.teacher || '');
+  let d = {}; try{ d = JSON.parse(localStorage.getItem('ca_cel_maestro') || '{}') || {}; }catch(e){}
+  if(v === undefined) return d[code] || (tn !== 'm:' ? d[tn] : '') || '';
+  if(code) d[code] = v; if(tn !== 'm:') d[tn] = v;
+  try{ localStorage.setItem('ca_cel_maestro', JSON.stringify(d)); }catch(e){}
+  return v;
 }
 // Texto para WhatsApp: el mensaje, el estado de la asistencia hasta hoy y el enlace directo a la clase.
 function resumenAsistencia(cls){
