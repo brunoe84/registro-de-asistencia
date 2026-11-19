@@ -15,7 +15,7 @@ Asistencia de Seminarios e Institutos para las estacas Cañete, Chincha, Ica, Na
 
 ## Regla de datos personales
 
-De cada persona solo se guarda nombre, estaca y barrio. El programa (Seminario o Instituto) pertenece a la clase.
+De cada persona solo se guarda nombre, estaca, barrio y género (si la base lo trae en una columna Género, Sexo o Gender). El programa (Seminario o Instituto) pertenece a la clase. El género solo sirve para formar los grupos de un evento.
 
 Excepción: quien se registra con el QR de una clase sin estar en su lista deja su cédula de la Iglesia, usuario de la Iglesia, fecha de nacimiento y celular para inscribirlo en Wise2. Esos datos están en la tabla `inscripciones` y **solo el administrador** los puede ver.
 
@@ -41,7 +41,7 @@ Los eventos se guardan en línea: el organizador y quienes entran con el código
 
 En **Compartir → QR de asistencia** el organizador crea un QR. El asistente lo escanea, busca su nombre (o escribe sus datos si no está en la base) y puede anotar a quienes vinieron con él. Su celular lo recuerda para los siguientes eventos. Los acompañantes quedan **por aprobar** hasta que un colaborador confirma que vinieron, o hasta que ellos mismos escanean el QR. El QR solo funciona desde el día antes hasta el día después del evento, y para buscar en la base hay que escribir nombre y apellido.
 
-En la pestaña **Grupos** se reparte la lista al azar en grupos del mismo tamaño, con 0, 1 o 2 líderes por grupo.
+En la pestaña **Grupos** se reparte la lista al azar en grupos del mismo tamaño, con 0, 1 o 2 líderes por grupo. Se puede mezclar barrios y mezclar hombres y mujeres; si se desmarca esto último, se forman grupos solo de hombres y grupos solo de mujeres. El género sale de la base; a quien no lo tiene, la app se lo deduce por el primer nombre, y el organizador puede corregirlo en **Revisar** o tocando a la persona (queda guardado solo en ese evento).
 
 ## Base de personas
 
