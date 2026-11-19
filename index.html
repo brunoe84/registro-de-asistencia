@@ -379,6 +379,15 @@ table.plan{border-collapse:separate;border-spacing:0;font-size:13px;width:auto}
 .plan tbody td{border-bottom:1px solid #D5DFE4}
 .plan tbody tr:hover td{box-shadow:inset 0 999px 0 rgba(31,122,131,.06)}
 .plan tbody tr:hover td.sticky{background:#EEF6F7}
+/* Columnas con ancho ajustable */
+.plan thead th{position:sticky}
+.col-grip{position:absolute;top:0;right:-5px;width:10px;height:100%;cursor:col-resize;z-index:5;touch-action:none;font-style:normal}
+.col-grip::after{content:'';position:absolute;top:22%;bottom:22%;left:4px;width:2px;border-radius:2px;background:rgba(255,255,255,.45)}
+.col-grip:hover::after,.col-grip.on::after{background:#8FDDE4;top:6%;bottom:6%}
+body.col-resizing,body.col-resizing *{cursor:col-resize!important;user-select:none!important}
+table.plan.nw .sticky{width:var(--nw);min-width:var(--nw);max-width:var(--nw)}
+table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-width:var(--cw);overflow:hidden}
+@media (pointer:coarse){.only-fine{display:none}.col-grip{right:-8px;width:16px}}
 .plan th,.plan td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:0;text-align:center;white-space:nowrap}
 .plan thead th{position:sticky;top:0;background:var(--navy);color:#fff;font-weight:700;font-size:11.5px;padding:7px 4px;z-index:2;min-width:44px;line-height:1.2}
 .plan thead th span{display:block;font-weight:500;color:#B9CCD8;font-size:10.5px}
@@ -5173,16 +5182,17 @@ function renderPlanilla(cls, body){
   const blanks = () => ds.flatMap(d => studs.filter(s => !(cls.att[d]||{})[s.id]).map(s => [d, s.id]));
   const W = wiseOn(cls);
   const rows = W && ST.wiseSolo ? studs.filter(s => !enWise(cls, s)) : studs;
-  body.innerHTML = `${W ? wiseBarHTML(cls, studs) : ''}<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}</span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
+  body.innerHTML = `${W ? wiseBarHTML(cls, studs) : ''}<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}<span class="only-fine"> · Arrastra el borde de un encabezado para cambiar el ancho</span></span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
     ${ro || !ds.length ? '' : fillBlankHTML(blanks().length)}
-    ${ds.length ? `<div class="plan-wrap"><table class="plan ${ro?'ro':''}" id="plan"><thead><tr><th class="sticky">Alumno</th>${ds.map(d => `<th class="${d===t?'today':''}${wks.has(d)?' wk':''}"><span>${DOW[parseISO(d).getDay()]}</span>${fmtShort(d)}</th>`).join('')}<th>%</th></tr></thead>
+    ${ds.length ? `<div class="plan-wrap"><table class="plan ${ro?'ro':''}${planColsAttr()}" id="plan"><thead><tr><th class="sticky">Alumno${GRIP('n')}</th>${ds.map(d => `<th class="dc${d===t?' today':''}${wks.has(d)?' wk':''}"><span>${DOW[parseISO(d).getDay()]}</span>${fmtShort(d)}${GRIP('c')}</th>`).join('')}<th>%</th></tr></thead>
       <tbody>${rows.length ? '' : `<tr><td class="sticky" colspan="${ds.length + 2}" style="color:var(--green);cursor:default">✓ Todos los alumnos de esta clase ya están en Wise.</td></tr>`}${rows.map(s => { const st = studentStats(cls, s.id, ds); const w = W && enWise(cls, s); return `<tr data-sid="${s.id}"${W && !w ? ' class="wise-no"' : ''}><td class="sticky" title="${esc(prettyName(s.n))}">${W ? wiseBadge(w) : ''}${esc(prettyName(s.n))}</td>${ds.map(d => { const v = (cls.att[d]||{})[s.id] || ''; return `<td class="cell ${ATT_OK(v)?'p':v==='F'?'f':''}${wks.has(d)?' wk':''}" data-d="${d}">${ATT_TXT[v]||''}</td>`; }).join('')}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')}</tbody>
-      <tfoot><tr><td class="sticky">Asistentes</td>${ds.map(d => `<td data-foot="${d}"${wks.has(d)?' class="wk"':''}>${studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length}</td>`).join('')}<td></td></tr></tfoot></table></div>` : '<div class="empty">No hay sesiones en este periodo.</div>'}`;
+      <tfoot><tr><td class="sticky">Asistentes</td>${ds.map(d => `<td data-foot="${d}" class="dc${wks.has(d)?' wk':''}">${studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length}</td>`).join('')}<td></td></tr></tfoot></table></div>` : '<div class="empty">No hay sesiones en este periodo.</div>'}`;
   $('#pm').onchange = e => { ST.planMonth = e.target.value; renderPlanilla(cls, body); };
   $('#pX').onclick = () => exportClass(cls, false);
   $('#pP').onclick = () => exportClassHtml(cls, true);
   if(!ro) bindFillBlank(body, cls, blanks, () => { if(body.isConnected && $('#plan', body)) renderPlanilla(cls, body); });
   if(W) bindWiseBar(cls, body, () => renderPlanilla(cls, body));
+  if(ds.length) bindPlanGrips($('#plan', body));
   if(ds.length) $('#plan tbody').onclick = e => {
     const wz = e.target.closest('.wz');
     if(wz){ toggleWise(cls, wz.closest('tr').dataset.sid, () => renderPlanilla(cls, body)); return; }
@@ -5200,6 +5210,33 @@ function renderPlanilla(cls, body){
     const ft = $(`[data-foot="${d}"]`); if(ft) ft.textContent = studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length;
     const fb = $('.fill-blank', body); if(fb){ const n = blanks().length; $('.fb-n', fb).textContent = n; fb.classList.toggle('hide', !n); }
   };
+}
+/* Ancho de columnas de la planilla: se arrastra el borde del encabezado ("Alumno" o cualquier fecha:
+   todas las fechas cambian juntas). Doble clic = ancho automático. Se recuerda en este navegador. */
+const GRIP = k => `<i class="col-grip" data-g="${k}" title="Arrastra para cambiar el ancho · doble clic: automático"></i>`;
+function planCols(){ try{ return JSON.parse(localStorage.getItem('ca_plan_cols') || '{}') || {}; }catch(e){ return {}; } }
+function savePlanCols(p){ const o = Object.assign(planCols(), p); Object.keys(o).forEach(k => { if(!o[k]) delete o[k]; }); try{ localStorage.setItem('ca_plan_cols', JSON.stringify(o)); }catch(e){} }
+function planColsAttr(){ const o = planCols(); let c = ''; const st = []; ['n','c'].forEach(k => { if(o[k]){ c += ` ${k}w`; st.push(`--${k}w:${o[k]}px`); } }); return c + (st.length ? `" style="${st.join(';')}` : ''); }
+function bindPlanGrips(tbl){
+  if(!tbl) return;
+  $$('.col-grip', tbl).forEach(g => {
+    const k = g.dataset.g, [min, max] = k === 'n' ? [90, 420] : [40, 120];
+    g.onclick = e => e.stopPropagation();
+    g.onpointerdown = e => {
+      e.preventDefault(); e.stopPropagation();
+      const x0 = e.clientX, w0 = g.parentElement.getBoundingClientRect().width;
+      try{ g.setPointerCapture(e.pointerId); }catch(_){}
+      g.classList.add('on'); document.body.classList.add('col-resizing');
+      const mv = ev => { const w = Math.round(Math.max(min, Math.min(max, w0 + ev.clientX - x0))); tbl.style.setProperty(`--${k}w`, w + 'px'); tbl.classList.add(k + 'w'); };
+      const up = () => {
+        g.classList.remove('on'); document.body.classList.remove('col-resizing');
+        g.removeEventListener('pointermove', mv); g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up);
+        const v = parseInt(tbl.style.getPropertyValue(`--${k}w`), 10); if(v) savePlanCols({ [k]: v });
+      };
+      g.addEventListener('pointermove', mv); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+    };
+    g.ondblclick = e => { e.stopPropagation(); tbl.classList.remove(k + 'w'); tbl.style.removeProperty(`--${k}w`); savePlanCols({ [k]: null }); };
+  });
 }
 /* ============================================================
    CRUCE CON WISE2 (solo administrador)
