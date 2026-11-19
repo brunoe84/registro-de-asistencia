@@ -466,6 +466,22 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .wr-acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .wr-acts select{max-width:240px;font-size:13px;padding:6px 8px}
 .wr-det summary{cursor:pointer;padding:6px 2px}
+.rt-filtros{display:flex;flex-wrap:wrap;gap:10px 14px;padding:12px 14px}
+.rt-f{display:flex;flex-direction:column;gap:4px;min-width:140px}
+.rt-f label{font-size:12px;font-weight:700;color:var(--muted)}
+.rt-f select,.rt-f input{font-size:13.5px;padding:7px 9px}
+.rt-dias{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.rt-dias input{width:70px}
+.rt-row{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;padding:11px 12px;border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:6px}
+.rt-row .ii{flex:1;min-width:200px}
+.rt-row .ii small{display:block;color:var(--muted);font-size:12.5px}
+.rt-tags{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0 3px}
+.rt-tag{font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px}
+.rt-tag.a{background:var(--red-50);color:var(--red)}
+.rt-tag.r{background:var(--amber-50);color:var(--amber)}
+.rt-tag.d{background:var(--line);color:var(--text)}
+.rt-row small.rt-st{margin-top:2px}
+.rt-st.ok{color:var(--green)!important}.rt-st.warn{color:var(--red)!important}.rt-st.no{color:var(--faint)!important}
 .wr-bar{border:1px solid var(--border);background:#fff;border-radius:12px;padding:8px 12px;margin:0 0 10px}
 .wr-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13.5px}
 .wr-leg{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:6px;font-size:12px;color:var(--muted)}
@@ -1942,6 +1958,7 @@ function homeOnlineHTML(){
       <button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b><small>Personas que piden entrar a una clase ya adoptada</small></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button>
       <button class="item" data-go="#/inscripciones"><span class="ico g">${ICON.userPlus}</span><span class="ii"><b>Inscritos para Wise</b><small>Por Seminario e Instituto · enlace y QR de inscripción para compartir</small></span><span class="num-badge alert-badge hide" data-badge="inscripciones" title="Por inscribir"></span>${ICON.next}</button>
       <button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b><small>Alumnos sin coincidencia con la base de personas</small></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button>
+      <button class="item" data-go="#/retrasos"><span class="ico g">${ICON.eye}</span><span class="ii"><b>Audit · Clases con retraso</b><small>Lo que reporta Wise + retrasos de 8 días o más · filtra y escribe al maestro</small></span>${ICON.next}</button>
       <button class="item" data-go="#/wiseroll"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Class Roll de Wise</b><small>Lee la carpeta DEL DÍA · crea las clases de Wise · compara la asistencia</small></span>${ICON.next}</button>
       <button class="item" data-go="#/admin"><span class="ico t">${ICON.db}</span><span class="ii"><b>Base de personas y periodos</b><small>Subir la base actualizada, feriados y periodos</small></span>${ICON.next}</button>
     </section>` : ''}`;
@@ -2378,7 +2395,7 @@ async function rollArchivos(dir, ruta, out, prof){
   for await (const [name, h] of dir.entries()){
     const p = ruta + '/' + name;
     if(h.kind === 'directory'){ if(prof < 3) await rollArchivos(h, p, out, prof + 1); }
-    else if(/\.xlsx$/i.test(name) && !/^~\$/.test(name) && /class roll/i.test(p)) out.push({ path:p, handle:h });
+    else if(/\.xlsx$/i.test(name) && !/^~\$/.test(name) && /class roll|audit/i.test(p)) out.push({ path:p, handle:h });
   }
   return out;
 }
@@ -2401,12 +2418,25 @@ async function leerClassRoll({ interactive=false, force=false, archivos=null, on
       est('Buscando los Excel del Class Roll…');
       for(const h of await rollArchivos(dir, dir.name, [], 0)) lista.push({ file: await h.handle.getFile(), path:h.path });
     }
-    if(!lista.length) return { vacia:true };
+    // El Audit (clases con retraso) va aparte: solo cuenta la versión más reciente.
+    const esAudit = x => /audit/i.test(x.path);
+    const audit = lista.filter(esAudit).sort((a, b) => b.file.lastModified - a.file.lastModified)[0] || null;
+    lista = lista.filter(x => !esAudit(x));
+    if(!lista.length && !audit) return { vacia:true };
     const vistos = LS.get('ca_roll_files', {});
     const cambiados = force || archivos ? lista : lista.filter(x => vistos[x.path] !== x.file.lastModified);
-    if(!cambiados.length) return { sinCambios:true, total:lista.length, ultimo:Math.max(...lista.map(x => x.file.lastModified)) };
-    est(`Leyendo ${cambiados.length} Excel…`);
+    const auditCambio = !!audit && (force || !!archivos || vistos[audit.path] !== audit.file.lastModified);
+    if(!cambiados.length && !auditCambio) return { sinCambios:true, total:lista.length + (audit ? 1 : 0), ultimo:Math.max(0, ...lista.map(x => x.file.lastModified), audit ? audit.file.lastModified : 0) };
     await loadScript(SHEETJS_URL);
+    let nAudit = null;
+    if(auditCambio){
+      est('Leyendo el Audit…');
+      const filasA = parseAuditWorkbook(XLSX.read(await audit.file.arrayBuffer(), { type:'array', raw:true }));
+      nAudit = await SB.rpc('cargar_audit', { filas:filasA, archivo:audit.file.name, archivo_en:new Date(audit.file.lastModified).toISOString() });
+      vistos[audit.path] = audit.file.lastModified; LS.set('ca_roll_files', vistos);
+    }
+    if(!cambiados.length){ LS.set('ca_roll_ultima', Date.now()); return { leidos:0, total:lista.length + 1, clases:0, avisos:[], vinculadas:0, pendientes:0, audit:nAudit }; }
+    est(`Leyendo ${cambiados.length} Excel…`);
     const nuevas = [], avisos = [];
     for(const x of cambiados){
       const prog = /seminario|\bsem\b/i.test(x.path) ? 'S' : 'I';
@@ -2432,7 +2462,7 @@ async function leerClassRoll({ interactive=false, force=false, archivos=null, on
     est('Vinculando con las clases de la app…');
     const vinc = await autoVincularWise();
     LS.set('ca_roll_ultima', Date.now());
-    return { leidos:cambiados.length, total:lista.length, clases:filas.length, avisos, vinculadas:vinc.n, pendientes:vinc.pendientes };
+    return { leidos:cambiados.length, total:lista.length, clases:filas.length, avisos, vinculadas:vinc.n, pendientes:vinc.pendientes, audit:nAudit };
   } finally { ROLL_BUSY = false; }
 }
 // Empareja cada clase de Wise sin vínculo con la clase de la app más parecida (mismo programa y estaca;
@@ -2475,6 +2505,131 @@ async function crearDesdeWise(w){
     dias, inicio:(p && p.s) || f[0] || todayISO(), fin:(p && p.e) || '', alumnos:(w.alumnos || []).map(a => ({ nombre:a.n })) } });
   await SB.rpc('vincular_wise_clase', { wise:w.clave, clase:r.clase, modo:'creada', ignorar:false });
   return r;
+}
+/* ---------- Audit de Wise: clases con retraso en marcar ----------
+   Excel "Audit - Marking Attendance": una fila de estaca ("Ica Peru Stake SEM (12011)") y debajo sus clases:
+   maestro · término · nº · curso (OT, 381A) · sección ("(PV) 06:00 am") · fecha/hora · sesión sin marcar más antigua · nº de sesiones. */
+const xlSerial = v => typeof v === 'number' && v > 30000 && v < 80000 ? new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 864e5).toISOString().slice(0, 10) : '';
+function parseAuditWorkbook(wb){
+  const out = [];
+  wb.SheetNames.forEach(sn => {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, raw:true, defval:'' });
+    let cur = null;
+    rows.forEach(r => {
+      const vals = r.filter(v => String(v).trim() !== '');
+      if(!vals.length) return;
+      const st = String(vals[0]).match(/^(.+?)\s+(Stake|District)\s+(IN|SEM)\s*\((\d+)\)/i);
+      if(st && vals.length <= 2){ cur = { programa: /SEM/i.test(st[3]) ? 'S' : 'I', estaca: rollStake(st[1]) }; return; }
+      if(!cur || vals.length < 8) return;
+      const [maestro, , , curso, seccion, cuando, desde, sesiones] = vals;
+      const d = xlSerial(desde); if(!d || isNaN(+sesiones)) return;
+      const fr = typeof cuando === 'number' ? cuando % 1 : 0, min = Math.round(fr * 1440);
+      const hora = fr ? `${pad2(((Math.floor(min / 60) + 11) % 12) + 1)}:${pad2(min % 60)} ${min >= 720 ? 'pm' : 'am'}` : '';
+      out.push({ programa:cur.programa, estaca:cur.estaca, maestro:rollClean(maestro), curso:rollClean(curso), seccion:rollClean(seccion), hora, desde:d, sesiones:+sesiones });
+    });
+  });
+  return out;
+}
+// Clase de Wise (Class Roll) que corresponde a una fila del Audit.
+function wiseDeAudit(a, wises, usados){
+  const cod = norm(a.curso + '-' + a.seccion), hA = horaDe(a.seccion) || horaDe(a.hora);
+  let best = null, bs = 0;
+  wises.forEach(w => {
+    if(w.programa !== a.programa || w.estaca !== a.estaca || (usados && usados.has(w.clave))) return;
+    let s = 0;
+    const com = /unassigned/i.test(a.maestro) ? 0 : wiseComunes(wiseTokens(a.maestro), wiseTokens(w.maestro));
+    if(a.programa === 'I'){ if(norm(w.horario) === cod) s += 20; else if(norm(w.horario).startsWith(norm(a.curso))) s += 3; }
+    else if(hA && horaDe(w.horario) === hA) s += 5;
+    if(com >= 2) s += 10 + com;
+    if(s >= 12 && s > bs){ best = w; bs = s; }
+  });
+  return best;
+}
+// Retraso según el Class Roll: sesiones pasadas incompletas en Wise (como el Audit): a algún alumno ya
+// activo en esa fecha (con alguna marca en esa fecha o antes) le falta la marca, o nadie tiene marca.
+function retrasoRoll(w, hoy){
+  const al = w.alumnos || []; if(!al.length) return null;
+  const primera = al.map(a => Object.keys(a.m || {}).sort()[0] || '');
+  const sin = (w.fechas || []).filter(d => d < hoy && (!al.some(a => (a.m || {})[d]) || al.some((a, i) => primera[i] && primera[i] <= d && !(a.m || {})[d])));
+  if(!sin.length) return null;
+  const desde = sin[0];
+  return { desde, sesiones: sin.length, dias: Math.round((parseISO(hoy) - parseISO(desde)) / 864e5) };
+}
+let ABRIR_MSG = null;
+async function renderRetrasos(){
+  CUR = { type:'retrasos', code:null };
+  app.innerHTML = topbar({ back:'#/', title:'Audit · Clases con retraso', sub:'Administración' }) + `<main class="wrap"><div id="rtBody">${loadingHTML()}</div></main>`;
+  bindTop();
+  const body = $('#rtBody');
+  let audit, wises, apps;
+  try{ [audit, wises, apps] = await Promise.all([SB.rpc('audit_admin'), SB.rpc('wise_clases_admin'), SB.rpc('resumen_clases')]); SB.resumen = apps; }
+  catch(e){ body.innerHTML = `<div class="warn-box">${/audit_admin|wise_clases|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración en Supabase.' : esc(errMsg(e))}</div>`; return; }
+  const A = (audit || [])[0] || { filas:[] }; wises = wises || []; apps = apps || [];
+  const appPorId = new Map(apps.map(c => [c.id, c])), hoy = todayISO();
+  const F = Object.assign({ p:'', k:'', src:'', dias:8 }, LS.get('ca_rt_filtro', {}));
+  const armar = () => {
+    const items = new Map(), usados = new Set();
+    (A.filas || []).forEach((a, i) => {
+      const w = wiseDeAudit(a, wises, usados), key = w ? w.clave : 'a' + i;
+      if(w) usados.add(w.clave);
+      const it = items.get(key) || { key, w, audit:null };
+      it.audit = a; items.set(key, it);
+    });
+    wises.forEach(w => {
+      if(w.ignorada) return;
+      const r = retrasoRoll(w, hoy); if(!r) return;
+      const it = items.get(w.clave) || { key:w.clave, w, audit:null };
+      it.roll = r; items.set(w.clave, it);
+    });
+    return [...items.values()].map(it => {
+      const w = it.w, a = it.audit;
+      it.programa = (a || w).programa; it.estaca = (a || w).estaca;
+      it.maestro = w ? w.maestro : a.maestro;
+      it.det = w ? [w.horario, w.curso].filter(Boolean).join(' · ') : a.curso + '-' + a.seccion;
+      it.app = w && w.clase_id ? appPorId.get(w.clase_id) : null;
+      it.desde = a ? a.desde : it.roll ? it.roll.desde : '';
+      it.dias = it.desde ? Math.round((parseISO(hoy) - parseISO(it.desde)) / 864e5) : 0;
+      it.enRango = !!a || (it.roll && it.roll.dias >= F.dias);
+      return it;
+    }).filter(it => it.enRango);
+  };
+  const paint = () => {
+    const todos = armar();
+    const list = todos.filter(it => (!F.p || it.programa === F.p) && (!F.k || it.estaca === F.k) && (!F.src || (F.src === 'audit' ? it.audit : !it.audit)))
+      .sort((x, y) => y.dias - x.dias || x.maestro.localeCompare(y.maestro, 'es'));
+    const nA = list.filter(it => it.audit).length;
+    const fa = A.archivo_en ? `Audit del ${fmtShort(fechaLocal(A.archivo_en))}` : 'Aún no se leyó el Audit';
+    const appEstado = it => {
+      if(!it.app) return `<small class="rt-st no">No está vinculada a una clase de la app · <a href="#/wiseroll">revisar</a></small>`;
+      const u = it.app.ultima_fecha;
+      if(u && it.desde && u >= it.desde) return `<small class="rt-st ok">✓ En la app está marcada hasta el ${esc(fmtShort(u))}: falta <b>pasarla a Wise</b></small>`;
+      return `<small class="rt-st warn">✗ En la app tampoco está al día${u ? ` (última marca ${esc(fmtShort(u))})` : ' (sin marcas)'}: <b>pedir al maestro</b></small>`;
+    };
+    body.innerHTML = `<section class="card rt-filtros">
+        <div class="rt-f"><label>Programa</label><select class="inp" data-f="p"><option value="">Todos</option><option value="S" ${F.p === 'S' ? 'selected' : ''}>Seminarios</option><option value="I" ${F.p === 'I' ? 'selected' : ''}>Institutos</option></select></div>
+        <div class="rt-f"><label>Estaca</label><select class="inp" data-f="k"><option value="">Todas</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${F.k === s ? 'selected' : ''}>${esc(stakeShort(s))}</option>`).join('')}</select></div>
+        <div class="rt-f"><label>Fuente</label><select class="inp" data-f="src"><option value="">Audit + Class Roll</option><option value="audit" ${F.src === 'audit' ? 'selected' : ''}>Solo Audit</option><option value="roll" ${F.src === 'roll' ? 'selected' : ''}>Solo Class Roll (fuera del Audit)</option></select></div>
+        <div class="rt-f"><label>Class Roll: retraso desde</label><span class="rt-dias"><input class="inp" type="number" min="1" max="60" data-f="dias" value="${F.dias}"> días</span></div>
+      </section>
+      <p class="hint" style="margin:8px 2px">${esc(fa)} · <b>${list.length}</b> clase${list.length === 1 ? '' : 's'} con retraso (${nA} del Audit, ${list.length - nA} detectadas con el Class Roll) · <a href="#/wiseroll">Sincronizar</a></p>
+      ${list.map(it => `<div class="rt-row" data-key="${esc(it.key)}"><span class="av">${esc(initials(it.maestro))}</span><div class="ii">
+          <b>${esc(/unassigned/i.test(it.maestro) ? 'Sin maestro asignado' : prettyName(it.maestro))}</b>
+          <small>${esc([progLabel(it.programa), stakeShort(it.estaca), it.det].filter(Boolean).join(' · '))}</small>
+          <div class="rt-tags">${it.audit ? `<span class="rt-tag a">Audit: ${it.audit.sesiones} sesi${it.audit.sesiones === 1 ? 'ón' : 'ones'} sin marcar desde ${esc(fmtShort(it.audit.desde))}</span>` : ''}${it.roll ? `<span class="rt-tag r">Class Roll: ${it.roll.sesiones} sin marcar desde ${esc(fmtShort(it.roll.desde))}</span>` : ''}<span class="rt-tag d">${it.dias} días</span></div>
+          ${appEstado(it)}</div>
+        <div class="wr-acts">${it.app ? `<button class="btn sm" data-abrir>Abrir</button><button class="btn sm primary" data-msg>💬 Mensaje</button>` : ''}</div></div>`).join('') || '<div class="empty">✓ No hay clases con retraso con estos filtros.</div>'}`;
+    $$('[data-f]', body).forEach(s => s.onchange = () => { F[s.dataset.f] = s.dataset.f === 'dias' ? Math.max(1, +s.value || 8) : s.value; LS.set('ca_rt_filtro', F); paint(); });
+    $$('.rt-row', body).forEach(row => {
+      const it = list.find(x => x.key === row.dataset.key); if(!it || !it.app) return;
+      $('[data-abrir]', row).onclick = () => go('#/clase/' + it.app.codigo);
+      $('[data-msg]', row).onclick = () => {
+        const n = it.audit ? it.audit.sesiones : it.roll.sesiones;
+        ABRIR_MSG = { code: it.app.codigo, tipo:'urgente', texto:`Hola, según el reporte de Wise tu clase tiene ${n} sesi${n === 1 ? 'ón' : 'ones'} sin marcar desde el ${fmtDate(it.desde).replace(/\s\d{4}$/, '')}. Por favor actualiza la asistencia de tu clase lo antes posible. ¡Gracias!` };
+        go('#/clase/' + it.app.codigo);
+      };
+    });
+  };
+  paint();
 }
 // Sincronización automática (administrador, mientras la app está abierta). Modos:
 //  "cambios": al abrir la app y cada 15 min revisa si algún Excel cambió (lee solo los nuevos).
@@ -2535,7 +2690,7 @@ async function renderWiseRoll(){
       if(r.sinPermiso) return pintarEst('El navegador pide permiso para leer la carpeta: toca <b>Leer ahora</b> y elige <b>Permitir en cada visita</b>.', 'warn');
       if(r.vacia) return pintarEst('No encontré Excel dentro de una carpeta “Class Roll”. Vincula la carpeta <b>DEL DÍA</b> (o la misma <b>Class Roll</b>).', 'warn');
       if(r.sinCambios) pintarEst(`Todo al día: ${r.total} Excel sin cambios (el más reciente es del ${esc(fmtShort(fechaLocal(r.ultimo)))}).`);
-      else pintarEst(`✓ ${r.leidos} Excel leídos · ${r.clases} clases de Wise guardadas · ${r.vinculadas} vinculadas solas${r.avisos.length ? `<details style="margin-top:6px"><summary>${r.avisos.length} aviso${r.avisos.length === 1 ? '' : 's'}</summary>${r.avisos.slice(0, 30).map(esc).join('<br>')}</details>` : ''}`);
+      else pintarEst(`✓ ${r.leidos} Excel leídos · ${r.clases} clases de Wise guardadas · ${r.vinculadas} vinculadas solas${r.audit != null ? ` · Audit: ${r.audit} clases con retraso` : ''}${r.avisos.length ? `<details style="margin-top:6px"><summary>${r.avisos.length} aviso${r.avisos.length === 1 ? '' : 's'}</summary>${r.avisos.slice(0, 30).map(esc).join('<br>')}</details>` : ''}`);
     }catch(e){ console.error(e); pintarEst((/wise_clases|cargar_class_roll|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0030 en Supabase.' : esc(errMsg(e))), 'warn'); }
     pintarLista();
   };
@@ -3026,9 +3181,10 @@ function route(){
   if(parts[0] === 'terminos' || parts[0] === 'privacidad') return renderLegal(parts[0]);
   if(parts[0] === 'entrar') return renderEntrar();
   if(parts[0] === 'supervisor') return renderSupervisor();
-  if(['todas','solicitudes','alertas','seguimiento','inscripciones','wiseroll'].includes(parts[0])){
+  if(['todas','solicitudes','alertas','seguimiento','inscripciones','wiseroll','retrasos'].includes(parts[0])){
     if(!SB.admin){ go('#/'); return; }
     if(parts[0] === 'wiseroll') return renderWiseRoll();
+    if(parts[0] === 'retrasos') return renderRetrasos();
     if(parts[0] === 'inscripciones') return renderInscripciones();
     if(parts[0] === 'solicitudes') return renderSolicitudes();
     if(parts[0] === 'alertas') return renderAlertas();
@@ -5052,6 +5208,8 @@ function renderClass(code){
   const mb = $('#msgBtn'); if(mb) mb.onclick = () => openMensajeMaestro(cls);
   if(cls.remote && cls.canEdit && !SB.admin) guiaPrimeraVez('clase');
   if(cls.remote && cls.dbId && !SB.admin) mostrarMensajesMaestro(cls);
+  // Desde "Audit · Clases con retraso": abre el mensaje al maestro ya escrito.
+  if(ABRIR_MSG && ABRIR_MSG.code === code && cls.remote && cls.dbId && SB.admin){ const o = ABRIR_MSG; ABRIR_MSG = null; setTimeout(() => openMensajeMaestro(cls, o), 250); }
   $$('#tabs [data-tab]').forEach(b => b.onclick = () => { ST.ctab = b.dataset.tab; $$('#tabs [data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderClassTab(); });
   const tp = $('#tabs [data-tab="planilla"]'); if(tp){ tp.title = 'Doble clic: ver la planilla en grande'; tp.ondblclick = () => { if(ST.ctab !== 'planilla') tp.click(); planillaGrande(true); }; }
   $('#saveBtn').onclick = () => classOnline(cls) ? syncClass(code) : exportClassHtml(cls, true);
@@ -5076,8 +5234,8 @@ const MSG_TIPOS = {
   aviso:        { ico:'💬', label:'Aviso',        titulo:'Mensaje del administrador' }
 };
 const fechaCorta = t => { try{ return new Date(t).toLocaleString('es-PE', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }); }catch(e){ return ''; } };
-function openMensajeMaestro(cls){
-  let tipo = 'felicitacion', hist = null;
+function openMensajeMaestro(cls, pre){
+  let tipo = (pre && pre.tipo) || 'felicitacion', hist = null;
   const teacher = prettyName(cls.meta.teacher || 'el maestro');
   sheet(`${sheetHead('Mensaje al maestro', `${esc(teacher)} lo verá al abrir su clase`)}
     <div class="msg-tipos">${Object.entries(MSG_TIPOS).map(([k, t]) => `<button type="button" class="msg-tipo t-${k}" data-tipo="${k}"><span>${t.ico}</span>${t.label}</button>`).join('')}</div>
@@ -5115,6 +5273,7 @@ function openMensajeMaestro(cls){
       $$('[data-tipo]', el).forEach(b => b.onclick = () => { tipo = b.dataset.tipo; pintarTipo(); pintarRes(); });
       pintarTipo();
       ta.oninput = () => { pintarBtns(); pintarRes(); };
+      if(pre && pre.texto){ ta.value = pre.texto; pintarBtns(); pintarRes(); }
       setTimeout(() => ta.focus(), 120);
       $('#msgPrev', el).onclick = () => { if(!ta.value.trim()){ toast('Escribe el mensaje primero'); return; } popupMensaje({ tipo, texto: ta.value.trim(), creado_en: new Date().toISOString() }, { vista:true }); };
       const pintarHist = async () => {
