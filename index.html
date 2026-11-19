@@ -167,6 +167,17 @@ svg{width:18px;height:18px;flex-shrink:0}
 .item small{display:block;color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item .num-badge{background:var(--teal-50);color:var(--teal-2);font-weight:800;border-radius:10px;padding:5px 10px;font-size:13px;white-space:nowrap}
 .item .ico{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex-shrink:0}
+/* Seguimiento: casilla "Al día en Wise" a la izquierda de cada clase */
+.seg-row{display:flex;align-items:stretch;gap:8px;margin-bottom:8px}
+.seg-row .item{margin-bottom:0;flex:1;min-width:0}
+.wchk{flex:none;width:30px;height:30px;align-self:center;border-radius:9px;border:2px solid #B8C6CE;background:#fff;display:grid;place-items:center;cursor:pointer;padding:0;color:#fff;transition:background .15s,border-color .15s}
+.wchk:hover{border-color:var(--green)}
+.wchk.on{background:var(--green);border-color:var(--green)}
+.wchk svg{width:18px;height:18px}
+.seg-row.al-dia .item{background:#F7FAF8;opacity:.72}
+.seg-row.al-dia .item:hover{opacity:1}
+.item small.wd-ok{color:var(--green);font-weight:700}
+.item small.wd-new{color:#C2591C;font-weight:700}
 .ico.t{background:var(--teal-50);color:var(--teal)}
 .ico.g{background:var(--gold-50);color:#9A6A12}
 .empty{border:1.5px dashed #CFDADF;border-radius:14px;padding:18px;text-align:center;color:var(--muted);font-size:13.5px;background:rgba(255,255,255,.5)}
@@ -1573,19 +1584,42 @@ async function renderSeguimiento(filtro='adoptadas'){
   CUR = { type:'seguimiento', code:null };
   app.innerHTML = topbar({ back:'#/todas', title:'Seguimiento de clases', sub:'Administración' }) + `<main class="wrap"><div id="segBody">${loadingHTML()}</div></main>`;
   bindTop();
+  // "Al día en Wise": marca del administrador; se anula sola si el maestro cambia algo después.
+  let alDia = {};
+  const ms = t => { const v = Date.parse(t); return isNaN(v) ? 0 : v; };
+  const estaAlDia = c => { const t = alDia[c.id]; return !!t && (!c.ultimo_cambio || ms(t) >= ms(c.ultimo_cambio)); };
+  const paint = () => {
+    const body = $('#segBody'); if(!body || !SB.resumen) return;
+    const all = SB.resumen;
+    const grupos = { adoptadas:all.filter(c => c.titular), cambios:all.filter(c => c.ultimo_cambio), atrasadas:all.filter(c => retrasoDe(c)), sin:all.filter(c => !c.titular) };
+    const nombres = { adoptadas:'Adoptadas', cambios:'Con cambios', atrasadas:'Atrasadas', sin:'Sin adoptar' };
+    const list = grupos[filtro].slice().sort((a,b) => (estaAlDia(a) - estaAlDia(b)) || String(b.ultimo_cambio||'').localeCompare(String(a.ultimo_cambio||'')) || String(b.adoptada_en||'').localeCompare(String(a.adoptada_en||'')));
+    const nOk = list.filter(estaAlDia).length;
+    body.innerHTML = `<div class="seg" id="segTabs" style="margin-bottom:12px">${Object.keys(nombres).map(k => `<button data-f="${k}" class="${k===filtro?'on':''}">${nombres[k]} (${grupos[k].length})</button>`).join('')}</div>
+      <p class="hint" style="margin:0 2px 10px"><span class="live-dot"></span> En vivo · las clases con cambios recientes aparecen primero, para revisarlas en Wise. Marca la casilla cuando ya la pasaste a Wise: baja al final y vuelve arriba si el maestro hace cambios.${nOk ? ` <b style="color:var(--green)">${nOk} al día</b>` : ''}</p>
+      ${list.map(c => { const ok = estaAlDia(c), viejo = alDia[c.id] && !ok; return `<div class="seg-row${ok ? ' al-dia' : ''}"><button class="wchk${ok ? ' on' : ''}" data-chk="${c.id}" aria-pressed="${ok}" title="${ok ? 'Al día en Wise · toca para desmarcar' : 'Marcar: ya la actualicé en Wise'}">${ok ? ICON.check : ''}</button><button class="item" data-go="#/clase/${c.codigo}"><span class="av">${esc(initials(c.maestro))}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario].filter(Boolean).join(' · '))}</small>${seguimientoHTML(c)}${ok ? `<small class="wd-ok">✓ Al día en Wise desde ${esc(fechaHora(alDia[c.id]))}</small>` : viejo ? `<small class="wd-new">● Cambios nuevos después de tu revisión del ${esc(fechaHora(alDia[c.id]))}</small>` : ''}</span>${ICON.next}</button></div>`; }).join('') || '<div class="empty">No hay clases en este grupo.</div>'}`;
+    $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
+    $$('#segTabs button', body).forEach(b => b.onclick = () => renderSeguimiento(b.dataset.f));
+    $$('[data-chk]', body).forEach(b => b.onclick = async () => {
+      const id = b.dataset.chk, c = all.find(x => x.id === id); const marcar = !(c && estaAlDia(c));
+      const antes = alDia[id];
+      if(marcar) alDia[id] = new Date().toISOString(); else delete alDia[id];
+      paint();
+      if(marcar && c) toast(`✓ ${prettyName(c.maestro)}: al día en Wise`, 'ok', { action:'Deshacer', onAction: () => quitar(id, antes) });
+      try{ const t = await SB.rpc('marcar_clase_wise', { clase:id, al_dia:marcar }); if(marcar && t) alDia[id] = t; }
+      catch(e){ console.error(e); if(antes) alDia[id] = antes; else delete alDia[id]; paint(); toast(/marcar_clase_wise|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0026 en Supabase' : errMsg(e), 'error', {ms:4200}); }
+    });
+  };
+  const quitar = async (id, antes) => {
+    if(antes) alDia[id] = antes; else delete alDia[id]; paint();
+    try{ await SB.rpc('marcar_clase_wise', { clase:id, al_dia:!!antes }); }catch(e){ console.error(e); }
+  };
   const load = async () => {
     const body = $('#segBody'); if(!body) return;
     try{
       SB.resumen = await SB.rpc('resumen_clases');
-      const all = SB.resumen;
-      const grupos = { adoptadas:all.filter(c => c.titular), cambios:all.filter(c => c.ultimo_cambio), atrasadas:all.filter(c => retrasoDe(c)), sin:all.filter(c => !c.titular) };
-      const nombres = { adoptadas:'Adoptadas', cambios:'Con cambios', atrasadas:'Atrasadas', sin:'Sin adoptar' };
-      const list = grupos[filtro].slice().sort((a,b) => String(b.ultimo_cambio||'').localeCompare(String(a.ultimo_cambio||'')) || String(b.adoptada_en||'').localeCompare(String(a.adoptada_en||'')));
-      body.innerHTML = `<div class="seg" id="segTabs" style="margin-bottom:12px">${Object.keys(nombres).map(k => `<button data-f="${k}" class="${k===filtro?'on':''}">${nombres[k]} (${grupos[k].length})</button>`).join('')}</div>
-        <p class="hint" style="margin:0 2px 10px"><span class="live-dot"></span> En vivo · las clases con cambios recientes aparecen primero, para revisarlas en Wise.</p>
-        ${list.map(c => `<button class="item" data-go="#/clase/${c.codigo}"><span class="av">${esc(initials(c.maestro))}</span><span class="ii"><b>${esc(prettyName(c.maestro))}</b><small>${esc([progLabel(c.programa), stakeShort(c.estaca), c.horario].filter(Boolean).join(' · '))}</small>${seguimientoHTML(c)}</span>${ICON.next}</button>`).join('') || '<div class="empty">No hay clases en este grupo.</div>'}`;
-      $$('[data-go]', body).forEach(b => b.onclick = () => go(b.dataset.go));
-      $$('#segTabs button', body).forEach(b => b.onclick = () => renderSeguimiento(b.dataset.f));
+      try{ const r = await SB.rpc('clases_wise_al_dia'); alDia = {}; (r || []).forEach(x => { alDia[x.id] = x.al_dia_en; }); }catch(e){ console.warn('clases_wise_al_dia', e); }
+      paint();
     }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
   };
   await load();
