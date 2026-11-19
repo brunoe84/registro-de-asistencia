@@ -421,6 +421,28 @@ table.plan{border-collapse:separate;border-spacing:0;font-size:13px;min-width:10
 .plan td.pct{font-weight:800;padding:0 10px;color:var(--navy)}
 .plan tfoot td{background:#F6F9FA;font-weight:700;color:var(--muted);padding:8px 4px;position:sticky;bottom:0}
 .plan tfoot td.sticky{background:#F6F9FA}
+/* Marca "ya está en Wise2" (solo administrador) */
+.wz{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:6px;font-size:11px;font-weight:800;line-height:1;margin-right:7px;vertical-align:-4px;border:1.5px solid #1E5F8C;background:#1E5F8C;color:#fff;cursor:pointer;flex:none;font-style:normal;padding:0}
+.wz.no{background:#fff;color:#C2591C;border:1.5px dashed #E8692A}
+button.wz:hover{filter:brightness(1.12)}
+.plan tr.wise-no td.sticky{background:#FFF7F1}
+.wise-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#EEF4F9;border:1px solid #D3E2ED;border-radius:12px;padding:8px 12px;margin-bottom:10px;font-size:13.5px;color:var(--text)}
+.wise-bar .wb-falta{color:#C2591C;font-weight:800}
+.wise-bar .wb-ok{color:#1E5F8C;font-weight:800}
+.wise-bar .seg-chip{border:1px solid #C9D9E5;background:#fff;border-radius:999px;padding:5px 11px;font-size:12.5px;font-weight:700;color:#1E5F8C;cursor:pointer}
+.wise-bar .seg-chip.on{background:#1E5F8C;color:#fff;border-color:#1E5F8C}
+.wc-ta{width:100%;min-height:110px;font:13px/1.4 ui-monospace,Consolas,monospace;border:1px solid var(--border);border-radius:10px;padding:10px;resize:vertical}
+.wc-sum{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 6px}
+.wc-sum span{border-radius:999px;padding:4px 11px;font-size:12.5px;font-weight:800}
+.wc-sum .s-ok{background:#E3EEF6;color:#1E5F8C}.wc-sum .s-no{background:#FDEBDD;color:#B4501A}.wc-sum .s-ex{background:#EEF1F3;color:var(--muted)}
+.wc-sec{margin-top:12px}
+.wc-sec h4{margin:0 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+.wc-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--line);border-radius:10px;margin-bottom:5px;font-size:13.5px}
+.wc-row.no{border-color:#F6D3BC;background:#FFF7F1}
+.wc-row .wn{flex:1;min-width:0}
+.wc-row .wn small{display:block;color:var(--muted);font-size:12px}
+.wc-row label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap;cursor:pointer}
+.wc-warn{background:#FFF4E0;border:1px solid #F2D49A;color:#7A4F06;border-radius:10px;padding:8px 10px;font-size:13px;margin-top:8px}
 
 /* ---------- Savebar ---------- */
 .savebar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(255,255,255,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--border);padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
@@ -1397,7 +1419,7 @@ function loadingHTML(txt, sm){ return `<div class="loading${sm ? ' sm' : ''}" ro
 
 /* ---------- Sincronización de una clase en línea ---------- */
 function studentFromRow(a){
-  return { id:a.id, pid:a.persona_id, n:a.nombre, src: a.origen === 'maestro' && a.vinculo !== 'vinculado' ? 'nuevo' : 'base', vinculo:a.vinculo, data:{ k:a.estaca, w:a.barrio }, addedAt: Date.parse(a.agregado_en) || 0, ...(a.retirado_en ? { del:true } : {}) };
+  return { id:a.id, pid:a.persona_id, n:a.nombre, src: a.origen === 'maestro' && a.vinculo !== 'vinculado' ? 'nuevo' : 'base', vinculo:a.vinculo, data:{ k:a.estaca, w:a.barrio }, addedAt: Date.parse(a.agregado_en) || 0, ...(a.retirado_en ? { del:true } : {}), ...(a.en_wise_en ? { wise:1 } : {}) };
 }
 function metaFromRow(c){
   return { title:c.titulo, teacher:c.maestro_nombre, program:c.programa, stake:c.estaca, ward:c.barrio, days:c.dias || [], start:c.inicio || '', end:c.fin || '', extraDates:c.fechas_extra || [], skipDates:c.fechas_omitidas || [], horario:c.horario, curso:c.curso, createdAt: Date.parse(c.creado_en) || 0 };
@@ -4934,13 +4956,18 @@ function renderStuList(){
   const studs = classStudents(cls); const dates = classDates(cls);
   const n = $('#stuN'); if(n) n.textContent = studs.length;
   if(!studs.length){ el.innerHTML = '<div class="empty">Aún no hay alumnos.</div>'; return; }
-  el.innerHTML = studs.map((s, i) => {
+  const W = wiseOn(cls);
+  el.innerHTML = (W ? wiseBarHTML(cls, studs, true) : '') + studs.map((s, i) => {
     const st = studentStats(cls, s.id, dates);
     const f = cls.remote ? fichaDe(cls, s) : null;
     // Alumno nuevo en clase en línea: botón para enviar (o reenviar) su ficha mientras esté pendiente.
     const envia = cls.remote && cls.canEdit && SB.on() && (f ? f.st === 'pend' : s.src === 'nuevo');
-    return `<div class="att-item${f ? (f.st === 'ok' ? ' ficha-ok' : ' ficha-pend') : ''}" data-sid="${s.id}"><span class="n">${i+1}</span><div class="ai"><b>${esc(prettyName(s.n))} ${f ? fichaBadge(f) : s.src==='nuevo'?'<span class="badge b-new">Nuevo</span>':''}</b><small>${esc(stuSub(s)) || '&nbsp;'}${f && f.st === 'pend' && f.enviado_en ? ' · enlace enviado ' + esc(haceCuanto(f.enviado_en)) : ''}</small></div><div class="at"><b>${st.pct === '' ? '—' : st.pct+'%'}</b><br>${st.P}/${st.T}</div>${envia ? `<button class="icon-btn sm wa" data-fe="${s.id}" aria-label="${f ? 'Reenviar' : 'Enviar'} enlace de inscripción" title="${f ? 'Reenviar' : 'Enviar'} enlace de inscripción">${ICON.chat}</button>` : ''}${cls.canEdit ? `<button class="icon-btn sm danger" data-del="${s.id}" aria-label="Quitar">${ICON.trash}</button>` : ''}</div>`;
+    return `<div class="att-item${f ? (f.st === 'ok' ? ' ficha-ok' : ' ficha-pend') : ''}" data-sid="${s.id}"><span class="n">${i+1}</span><div class="ai"><b>${W ? wiseBadge(enWise(cls, s)) : ''}${esc(prettyName(s.n))} ${f ? fichaBadge(f) : s.src==='nuevo'?'<span class="badge b-new">Nuevo</span>':''}</b><small>${esc(stuSub(s)) || '&nbsp;'}${f && f.st === 'pend' && f.enviado_en ? ' · enlace enviado ' + esc(haceCuanto(f.enviado_en)) : ''}</small></div><div class="at"><b>${st.pct === '' ? '—' : st.pct+'%'}</b><br>${st.P}/${st.T}</div>${envia ? `<button class="icon-btn sm wa" data-fe="${s.id}" aria-label="${f ? 'Reenviar' : 'Enviar'} enlace de inscripción" title="${f ? 'Reenviar' : 'Enviar'} enlace de inscripción">${ICON.chat}</button>` : ''}${cls.canEdit ? `<button class="icon-btn sm danger" data-del="${s.id}" aria-label="Quitar">${ICON.trash}</button>` : ''}</div>`;
   }).join('');
+  if(W){
+    bindWiseBar(cls, el, renderStuList);
+    $$('.att-item .wz', el).forEach(b => b.onclick = e => { e.stopPropagation(); toggleWise(cls, b.closest('.att-item').dataset.sid, renderStuList); });
+  }
   $$('[data-fe]', el).forEach(b => b.onclick = e => { e.stopPropagation(); pedirFicha(cls, cls.students[b.dataset.fe]); });
   $$('[data-del]', el).forEach(b => b.onclick = async e => { e.stopPropagation(); const s = cls.students[b.dataset.del]; if(await confirmBox(`¿Quitar a <b>${esc(prettyName(s.n))}</b> de la clase? Sus marcas se conservan en el backup.`, {title:'Quitar alumno', ok:'Quitar', danger:true})) removeStudent(cls, s.id); });
   $$('.att-item', el).forEach(it => it.onclick = () => openStudentCal(cls, it.dataset.sid, () => { renderStuList(); }));
@@ -5139,17 +5166,23 @@ function renderPlanilla(cls, body){
   if(!studs.length){ body.innerHTML = '<div class="empty">Agrega alumnos para ver la planilla.</div>'; return; }
   const t = todayISO();
   const blanks = () => ds.flatMap(d => studs.filter(s => !(cls.att[d]||{})[s.id]).map(s => [d, s.id]));
-  body.innerHTML = `<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}</span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
+  const W = wiseOn(cls);
+  const rows = W && ST.wiseSolo ? studs.filter(s => !enWise(cls, s)) : studs;
+  body.innerHTML = `${W ? wiseBarHTML(cls, studs) : ''}<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}</span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
     ${ro || !ds.length ? '' : fillBlankHTML(blanks().length)}
     ${ds.length ? `<div class="plan-wrap"><table class="plan ${ro?'ro':''}" id="plan"><thead><tr><th class="sticky">Alumno</th>${ds.map(d => `<th class="${d===t?'today':''}${wks.has(d)?' wk':''}"><span>${DOW[parseISO(d).getDay()]}</span>${fmtShort(d)}</th>`).join('')}<th>%</th></tr></thead>
-      <tbody>${studs.map(s => { const st = studentStats(cls, s.id, ds); return `<tr data-sid="${s.id}"><td class="sticky" title="${esc(prettyName(s.n))}">${esc(prettyName(s.n))}</td>${ds.map(d => { const v = (cls.att[d]||{})[s.id] || ''; return `<td class="cell ${ATT_OK(v)?'p':v==='F'?'f':''}${wks.has(d)?' wk':''}" data-d="${d}">${ATT_TXT[v]||''}</td>`; }).join('')}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')}</tbody>
+      <tbody>${rows.length ? '' : `<tr><td class="sticky" colspan="${ds.length + 2}" style="color:var(--green);cursor:default">✓ Todos los alumnos de esta clase ya están en Wise.</td></tr>`}${rows.map(s => { const st = studentStats(cls, s.id, ds); const w = W && enWise(cls, s); return `<tr data-sid="${s.id}"${W && !w ? ' class="wise-no"' : ''}><td class="sticky" title="${esc(prettyName(s.n))}">${W ? wiseBadge(w) : ''}${esc(prettyName(s.n))}</td>${ds.map(d => { const v = (cls.att[d]||{})[s.id] || ''; return `<td class="cell ${ATT_OK(v)?'p':v==='F'?'f':''}${wks.has(d)?' wk':''}" data-d="${d}">${ATT_TXT[v]||''}</td>`; }).join('')}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')}</tbody>
       <tfoot><tr><td class="sticky">Asistentes</td>${ds.map(d => `<td data-foot="${d}"${wks.has(d)?' class="wk"':''}>${studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length}</td>`).join('')}<td></td></tr></tfoot></table></div>` : '<div class="empty">No hay sesiones en este periodo.</div>'}`;
   $('#pm').onchange = e => { ST.planMonth = e.target.value; renderPlanilla(cls, body); };
   $('#pX').onclick = () => exportClass(cls, false);
   $('#pP').onclick = () => exportClassHtml(cls, true);
   if(!ro) bindFillBlank(body, cls, blanks, () => { if(body.isConnected && $('#plan', body)) renderPlanilla(cls, body); });
+  if(W) bindWiseBar(cls, body, () => renderPlanilla(cls, body));
   if(ds.length) $('#plan tbody').onclick = e => {
+    const wz = e.target.closest('.wz');
+    if(wz){ toggleWise(cls, wz.closest('tr').dataset.sid, () => renderPlanilla(cls, body)); return; }
     const nm = e.target.closest('td.sticky');
+    if(nm && !nm.parentElement.dataset.sid) return;
     if(nm){ openStudentCal(cls, nm.parentElement.dataset.sid, () => renderPlanilla(cls, body)); return; }
     if(ro) return;
     const td = e.target.closest('td.cell'); if(!td) return;
@@ -5162,6 +5195,131 @@ function renderPlanilla(cls, body){
     const ft = $(`[data-foot="${d}"]`); if(ft) ft.textContent = studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length;
     const fb = $('.fill-blank', body); if(fb){ const n = blanks().length; $('.fb-n', fb).textContent = n; fb.classList.toggle('hide', !n); }
   };
+}
+/* ============================================================
+   CRUCE CON WISE2 (solo administrador)
+   La "W" azul = ya está en Wise; la "W" naranja punteada = falta inscribirlo.
+   Se marca pegando la lista "Scheduled Students" de Wise2 o tocando la W.
+   ============================================================ */
+function wiseOn(cls){ return !!(cls && cls.remote && cls.dbId && SB.on() && SB.admin); }
+function enWise(cls, s){ return !!(s.wise || ((cls.fichas || {})[s.id] || {}).inscrito); }
+function wiseBadge(w){ return `<button type="button" class="wz${w ? '' : ' no'}" title="${w ? 'Ya está en Wise · toca para quitar la marca' : 'Falta inscribirlo en Wise · toca si ya está'}" aria-label="${w ? 'En Wise' : 'Falta en Wise'}">W</button>`; }
+function wiseBarHTML(cls, studs, compact){
+  const ok = studs.filter(s => enWise(cls, s)).length, falta = studs.length - ok;
+  const txt = !ok ? 'Aún no comparada con Wise2' : falta ? `<span class="wb-ok">${ok}</span> de ${studs.length} en Wise · <span class="wb-falta">${falta} por inscribir</span>` : `<span class="wb-ok">✓ Los ${studs.length} están en Wise</span>`;
+  return `<div class="wise-bar"><span class="wz" style="cursor:default">W</span><span>${txt}</span><span style="flex:1"></span>${!compact && ok && falta ? `<button class="seg-chip${ST.wiseSolo ? ' on' : ''}" data-wsolo>Solo por inscribir</button>` : ''}<button class="btn sm" data-wcmp>${ICON.copy} Comparar con Wise</button></div>`;
+}
+function bindWiseBar(cls, root, rerender){
+  const c = $('[data-wcmp]', root); if(c) c.onclick = () => openWiseCompare(cls, rerender);
+  const f = $('[data-wsolo]', root); if(f) f.onclick = () => { ST.wiseSolo = !ST.wiseSolo; rerender(); };
+}
+async function guardarWise(cls, si, no){
+  await SB.rpc('marcar_en_wise', { clase: cls.dbId, si, no });
+  si.forEach(id => { if(cls.students[id]) cls.students[id].wise = 1; });
+  no.forEach(id => { if(cls.students[id]) delete cls.students[id].wise; });
+  saveClasses();
+}
+async function toggleWise(cls, sid, rerender){
+  const s = cls.students[sid]; if(!s) return;
+  const f = (cls.fichas || {})[sid];
+  if(!s.wise && f && f.inscrito){ toast('Ya figura como inscrito desde “Inscritos para Wise”'); return; }
+  try{ await guardarWise(cls, s.wise ? [] : [sid], s.wise ? [sid] : []); toast(s.wise ? `✓ ${prettyName(s.n)}: en Wise` : `${prettyName(s.n)}: falta en Wise`, s.wise ? 'ok' : ''); rerender(); }
+  catch(e){ console.error(e); toast(/marcar_en_wise|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0025 en Supabase' : 'No se pudo guardar: ' + (e.message || e), 'error', {ms:4200}); }
+}
+const WISE_STOP = new Set(['de','del','la','las','los','y','da','do','dos','van','von','mc']);
+function wiseTokens(t){ return norm(t).split(' ').filter(x => x.length > 1 && !WISE_STOP.has(x)); }
+function lev1(a, b){ // ¿distancia de edición ≤ 1? (una letra de más, de menos o cambiada)
+  if(Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, d = 0;
+  while(i < a.length && j < b.length){
+    if(a[i] === b[j]){ i++; j++; continue; }
+    if(++d > 1) return false;
+    if(a.length > b.length) i++; else if(b.length > a.length) j++; else { i++; j++; }
+  }
+  return d + (a.length - i) + (b.length - j) <= 1;
+}
+const tokIgual = (a, b) => a === b || (a.length >= 5 && b.length >= 5 && lev1(a, b));
+function wiseComunes(A, B){ const usados = new Set(); let n = 0; A.forEach(a => { const k = B.findIndex((b, i) => !usados.has(i) && tokIgual(a, b)); if(k >= 0){ usados.add(k); n++; } }); return n; }
+// Lee lo copiado de Wise2. Acepta: filas con tabulación (Apellidos ⇥ Nombres), "Apellidos, Nombres" por línea,
+// o apellidos y nombres en líneas alternas (como queda al copiar la tabla en algunos navegadores).
+function parseWiseList(txt){
+  const basura = /^(last name|first name|apellidos?|nombres?|scheduled students|search results|student search|remove selected|schedule selected|\d+\s*total|\d+\s*-\s*\d+ of \d+ items?|no (data|records?).*)$/i;
+  const tm = String(txt).match(/(\d+)\s*total/i); const total = tm ? +tm[1] : null;
+  const lines = String(txt).split(/\r?\n/).map(l => l.replace(/ /g, ' ').trim()).filter(l => l && !basura.test(l) && !/last name\s*\t?\s*first name/i.test(l));
+  let out = [];
+  if(lines.some(l => l.includes('\t'))){
+    lines.forEach(l => { const c = l.split('\t').map(x => x.trim()).filter(x => x && !basura.test(x)); if(c.length >= 2) out.push({ ap:c[0], no:c.slice(1).join(' ') }); else if(c.length === 1 && c[0].includes(',')){ const [a, ...b] = c[0].split(','); out.push({ ap:a.trim(), no:b.join(' ').trim() }); } });
+  } else if(lines.every(l => l.includes(','))){
+    out = lines.map(l => { const [a, ...b] = l.split(','); return { ap:a.trim(), no:b.join(' ').trim() }; });
+  } else if(lines.length % 2 === 0 && (total == null || total === lines.length / 2)){
+    for(let i = 0; i < lines.length; i += 2) out.push({ ap:lines[i], no:lines[i+1] });
+  } else {
+    out = lines.map(l => ({ ap:'', no:l }));
+  }
+  out = out.filter(p => wiseTokens(p.ap + ' ' + p.no).length >= 2);
+  return { lista: out, total };
+}
+// Empareja alumnos de la clase con la lista de Wise: gana el par con más palabras en común (apellidos y nombres,
+// sin tildes, tolera una letra distinta). Exige ≥2 palabras en común y que falte a lo más una del nombre más corto.
+function cruzarWise(studs, wise){
+  const S = studs.map(s => ({ s, t: wiseTokens(s.n) })), Wl = wise.map(w => ({ w, t: wiseTokens(w.ap + ' ' + w.no), ap: wiseTokens(w.ap) }));
+  const pares = [];
+  S.forEach((a, i) => Wl.forEach((b, j) => {
+    const c = wiseComunes(a.t, b.t); const minLen = Math.min(a.t.length, b.t.length);
+    const apOk = !b.ap.length || wiseComunes(b.ap, a.t) >= 1;
+    if(c >= 2 && c >= minLen - 1 && apOk) pares.push({ i, j, c, r: c / Math.max(a.t.length, b.t.length) });
+  }));
+  pares.sort((x, y) => y.c - x.c || y.r - x.r);
+  const si = new Map(), wj = new Set();
+  pares.forEach(p => { if(!si.has(p.i) && !wj.has(p.j)){ si.set(p.i, p.j); wj.add(p.j); } });
+  return {
+    match: [...si].map(([i, j]) => ({ s: S[i].s, w: Wl[j].w })),
+    faltan: S.filter((_, i) => !si.has(i)).map(x => x.s),
+    sobran: Wl.filter((_, j) => !wj.has(j)).map(x => x.w)
+  };
+}
+// Apellidos probables de un nombre "Nombres Apellidos" (las dos últimas palabras), para buscar en Wise.
+function apellidosDe(n){ const i = String(n).indexOf(','); if(i > 0) return n.slice(0, i).trim(); const p = prettyName(n).split(/\s+/); return p.slice(-2).join(' '); }
+function openWiseCompare(cls, rerender){
+  const studs = classStudents(cls);
+  let R = null;
+  const wName = w => esc([w.ap, w.no].filter(Boolean).join(', '));
+  sheet(`${sheetHead('Comparar con Wise2', esc(cls.meta.title || ''))}
+    <ol class="hint" style="margin:0 0 10px;padding-left:18px;line-height:1.5">
+      <li>En Wise2 abre la clase → <b>Students</b> → <b>Schedule</b>.</li>
+      <li>En <b>Scheduled Students</b>, selecciona desde el primer apellido hasta el último nombre (o Ctrl+A en la página) y copia con <b>Ctrl+C</b>.</li>
+      <li>Pégalo aquí. El sistema cruza los nombres solo.</li>
+    </ol>
+    <textarea class="wc-ta" id="wcT" placeholder="Pega aquí la lista de Wise2…" spellcheck="false"></textarea>
+    <div id="wcR"></div>
+    <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="wcS" disabled>${ICON.save} Guardar marcas</button></div>`, {
+    wide: true,
+    onMount(el, close){
+      const ta = $('#wcT', el), out = $('#wcR', el), save = $('#wcS', el);
+      const pintar = () => {
+        const { lista, total } = parseWiseList(ta.value);
+        if(!lista.length){ R = null; save.disabled = true; out.innerHTML = ta.value.trim() ? '<div class="wc-warn">No reconocí nombres en lo pegado. Copia la tabla <b>Scheduled Students</b> (apellidos y nombres).</div>' : ''; return; }
+        R = cruzarWise(studs, lista);
+        const aviso = total != null && total !== lista.length ? `<div class="wc-warn">Wise dice <b>${total} total</b> pero leí <b>${lista.length}</b>. Revisa que copiaste la lista completa (en Wise la lista tiene su propia barra de desplazamiento).</div>` : '';
+        out.innerHTML = `<div class="wc-sum"><span class="s-ok">✓ ${R.match.length} ya en Wise</span><span class="s-no">⚠ ${R.faltan.length} por inscribir</span>${R.sobran.length ? `<span class="s-ex">${R.sobran.length} en Wise y no en la planilla</span>` : ''}</div>${aviso}
+          ${R.faltan.length ? `<div class="wc-sec"><h4>Por inscribir en Wise (no aparecen en lo pegado)</h4>${R.faltan.map(s => `<div class="wc-row no"><span class="wz no" style="cursor:default">W</span><div class="wn">${esc(prettyName(s.n))}<small>${esc(stuSub(s)) || '&nbsp;'}</small></div><button class="btn sm ghost" data-cp="${esc(apellidosDe(s.n))}" title="Copiar apellidos para buscarlo en Wise">${ICON.copy} Apellidos</button><label><input type="checkbox" data-ya="${s.id}"> Ya está</label></div>`).join('')}</div>` : ''}
+          ${R.sobran.length ? `<div class="wc-sec"><h4>En Wise pero no en la planilla del maestro</h4>${R.sobran.map(w => `<div class="wc-row"><div class="wn">${wName(w)}</div></div>`).join('')}</div>` : ''}
+          ${R.match.length ? `<div class="wc-sec"><h4>Coinciden (desmarca si alguna pareja está mal)</h4>${R.match.map(m => `<div class="wc-row"><span class="wz" style="cursor:default">W</span><div class="wn">${esc(prettyName(m.s.n))}<small>Wise: ${wName(m.w)}</small></div><label><input type="checkbox" data-ok="${m.s.id}" checked> Es él/ella</label></div>`).join('')}</div>` : ''}`;
+        $$('[data-cp]', out).forEach(b => b.onclick = () => copyText(b.dataset.cp, 'Apellidos copiados: pégalos en Last Name de Wise'));
+        save.disabled = false;
+      };
+      ta.oninput = pintar;
+      setTimeout(() => ta.focus(), 50);
+      save.onclick = async () => {
+        if(!R) return;
+        const si = [...$$('[data-ok]:checked, [data-ya]:checked', out)].map(x => x.dataset.ok || x.dataset.ya);
+        const no = studs.map(s => s.id).filter(id => !si.includes(id) && !(((cls.fichas || {})[id] || {}).inscrito));
+        save.disabled = true;
+        try{ await guardarWise(cls, si, no); close(); toast(`✓ Marcas guardadas · ${studs.length - studs.filter(s => enWise(cls, s)).length} por inscribir en Wise`, 'ok', {ms:3600}); rerender(); }
+        catch(e){ console.error(e); save.disabled = false; toast(/marcar_en_wise|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0025 en Supabase' : 'No se pudo guardar: ' + (e.message || e), 'error', {ms:4200}); }
+      };
+    }
+  });
 }
 function renderClassShare(cls, body){
   if(cls.remote) return renderRemoteShare(cls, body);
