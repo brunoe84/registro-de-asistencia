@@ -5837,7 +5837,8 @@ function celdaCmp(v, w, WR, enRoll){
 function wiseRollBarHTML(cls, wm, nFill, admin){
   const r = cls.wroll, f = r.archivo_en || r.actualizado_en;
   const sob = (wm.sobran || []).length;
-  return `<div class="wr-bar"><div class="wr-top"><b>Comparado con Wise</b><span class="hint">Class Roll del ${f ? esc(fmtShort(fechaLocal(f))) : '—'}</span><span style="flex:1"></span>${nFill ? `<button class="btn sm" data-wrfill title="Copia a la app las marcas de Wise solo donde la app está vacía">Completar ${nFill} vacío${nFill === 1 ? '' : 's'} con Wise</button>` : ''}</div>
+  let hasta = ''; (r.alumnos || []).forEach(a => Object.keys(a.m || {}).forEach(d => { if(d > hasta) hasta = d; }));
+  return `<div class="wr-bar"><div class="wr-top"><b>Comparado con Wise</b><span class="hint">Class Roll del ${f ? esc(fmtShort(fechaLocal(f))) : '—'} · ${hasta ? `Wise tiene marcas hasta el <b>${esc(fmtShort(hasta))}</b>` : 'Wise aún no tiene marcas'}</span><span style="flex:1"></span>${nFill ? `<button class="btn sm" data-wrfill title="Copia a la app las marcas de Wise solo donde la app está vacía">Completar ${nFill} vacío${nFill === 1 ? '' : 's'} con Wise</button>` : ''}</div>
     <div class="wr-leg"><span><i class="lg p wn">✓</i>Maestro, falta en Wise</span><span><i class="lg p wq">✓</i>Igual en Wise</span><span><i class="lg wp">✓</i>Solo en Wise</span><span><i class="lg f wn">✗</i>Falta (maestro)</span><span><i class="lg f wq">✗</i>Falta igual en Wise</span><span><i class="lg wf">✗</i>Falta solo en Wise</span><span><i class="lg p wd">✓</i>Distinto</span></div>
     ${admin && sob ? `<div class="wr-sob">${sob} alumno${sob === 1 ? '' : 's'} del Class Roll no ${sob === 1 ? 'está' : 'están'} en la planilla · <button class="link-btn" data-wcmp>Ver y agregar</button></div>` : ''}</div>`;
 }
