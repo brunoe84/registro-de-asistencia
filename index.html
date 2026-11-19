@@ -373,7 +373,12 @@ svg{width:18px;height:18px;flex-shrink:0}
 /* ---------- Planilla ---------- */
 .plan-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .plan-wrap{overflow:auto;background:#fff;border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);max-height:70vh}
-table.plan{border-collapse:separate;border-spacing:0;font-size:13px;min-width:100%}
+table.plan{border-collapse:separate;border-spacing:0;font-size:13px;width:auto}
+/* La planilla se ajusta a su contenido (sin columna de nombre estirada) y cada fila lleva su línea fina. */
+.plan-wrap:has(> table.plan){width:fit-content;max-width:100%}
+.plan tbody td{border-bottom:1px solid #D5DFE4}
+.plan tbody tr:hover td{box-shadow:inset 0 999px 0 rgba(31,122,131,.06)}
+.plan tbody tr:hover td.sticky{background:#EEF6F7}
 .plan th,.plan td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:0;text-align:center;white-space:nowrap}
 .plan thead th{position:sticky;top:0;background:var(--navy);color:#fff;font-weight:700;font-size:11.5px;padding:7px 4px;z-index:2;min-width:44px;line-height:1.2}
 .plan thead th span{display:block;font-weight:500;color:#B9CCD8;font-size:10.5px}
@@ -409,7 +414,7 @@ table.plan{border-collapse:separate;border-spacing:0;font-size:13px;min-width:10
 .link-btn{border:0;background:none;padding:0;color:var(--teal-2);font-weight:700;text-decoration:underline;font-size:inherit}
 .plan tbody .sticky{cursor:pointer;color:var(--teal-2)}
 @media(max-width:420px){.cal-d{height:40px}.cal-x{height:40px}.cal-stats b{font-size:16px}}
-.plan .sticky{position:sticky;left:0;background:#fff;text-align:left;z-index:1;padding:8px 12px;min-width:190px;max-width:240px;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.plan .sticky{position:sticky;left:0;background:#fff;text-align:left;z-index:1;padding:8px 14px 8px 12px;min-width:150px;max-width:300px;overflow:hidden;text-overflow:ellipsis;font-weight:600;border-right:1px solid #D5DFE4}
 .plan thead th.sticky{z-index:3;background:var(--navy)}
 .plan .wk{border-left:3px solid #9FB4BE}
 .plan thead th.wk{border-left:3px solid #5E8296}
@@ -418,7 +423,7 @@ table.plan{border-collapse:separate;border-spacing:0;font-size:13px;min-width:10
 .plan td.cell.p{background:var(--green-50);color:var(--green)}
 .plan td.cell.f{background:var(--red-50);color:var(--red)}
 .plan.ro td.cell{cursor:default}
-.plan td.pct{font-weight:800;padding:0 10px;color:var(--navy)}
+.plan td.pct{font-weight:800;padding:0 12px;min-width:52px;color:var(--navy)}
 .plan tfoot td{background:#F6F9FA;font-weight:700;color:var(--muted);padding:8px 4px;position:sticky;bottom:0}
 .plan tfoot td.sticky{background:#F6F9FA}
 /* Marca "ya está en Wise2" (solo administrador) */
