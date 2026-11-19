@@ -467,6 +467,8 @@ button.wz:hover{filter:brightness(1.12)}
 .wc-row .wn{flex:1;min-width:0}
 .wc-row .wn small{display:block;color:var(--muted);font-size:12px}
 .wc-row label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap;cursor:pointer}
+.wc-addbar{display:flex;align-items:center;gap:10px;margin-top:4px}
+.wc-addbar[hidden]{display:none}
 .wc-warn{background:#FFF4E0;border:1px solid #F2D49A;color:#7A4F06;border-radius:10px;padding:8px 10px;font-size:13px;margin-top:8px}
 
 /* ---------- Savebar ---------- */
@@ -5381,10 +5383,71 @@ function openWiseCompare(cls, rerender){
         const aviso = total != null && total !== lista.length ? `<div class="wc-warn">Wise dice <b>${total} total</b> pero leí <b>${lista.length}</b>. Revisa que copiaste la lista completa (en Wise la lista tiene su propia barra de desplazamiento).</div>` : '';
         out.innerHTML = `<div class="wc-sum"><span class="s-ok">✓ ${R.match.length} ya en Wise</span><span class="s-no">⚠ ${R.faltan.length} por inscribir</span>${R.sobran.length ? `<span class="s-ex">${R.sobran.length} en Wise y no en la planilla</span>` : ''}</div>${aviso}
           ${R.faltan.length ? `<div class="wc-sec"><h4>Por inscribir en Wise (no aparecen en lo pegado)</h4>${R.faltan.map(s => `<div class="wc-row no"><span class="wz no" style="cursor:default">W</span><div class="wn">${esc(prettyName(s.n))}<small>${esc(stuSub(s)) || '&nbsp;'}</small></div><button class="btn sm ghost" data-cp="${esc(apellidosDe(s.n))}" title="Copiar apellidos para buscarlo en Wise">${ICON.copy} Apellidos</button><label><input type="checkbox" data-ya="${s.id}"> Ya está</label></div>`).join('')}</div>` : ''}
-          ${R.sobran.length ? `<div class="wc-sec"><h4>En Wise pero no en la planilla del maestro</h4>${R.sobran.map(w => `<div class="wc-row"><div class="wn">${wName(w)}</div></div>`).join('')}</div>` : ''}
+          ${R.sobran.length ? `<div class="wc-sec"><h4>En Wise pero no en la planilla del maestro</h4>${R.sobran.map((w, j) => `<div class="wc-row" data-sob="${j}"><div class="wn">${wName(w)}<small class="wc-base">Buscando en la base…</small></div><span class="wc-add"></span></div>`).join('')}<div class="wc-addbar" hidden><span class="hint" style="flex:1">Opcional: se agregan a la planilla ya marcados como “en Wise”.</span><button class="btn sm" id="wcAdd" disabled>${ICON.plus} Agregar a la planilla</button></div></div>` : ''}
           ${R.match.length ? `<div class="wc-sec"><h4>Coinciden (desmarca si alguna pareja está mal)</h4>${R.match.map(m => `<div class="wc-row"><span class="wz" style="cursor:default">W</span><div class="wn">${esc(prettyName(m.s.n))}<small>Wise: ${wName(m.w)}</small></div><label><input type="checkbox" data-ok="${m.s.id}" checked> Es él/ella</label></div>`).join('')}</div>` : ''}`;
         $$('[data-cp]', out).forEach(b => b.onclick = () => copyText(b.dataset.cp, 'Apellidos copiados: pégalos en Last Name de Wise'));
         save.disabled = false;
+        buscarSobrantes(R.sobran);
+      };
+      // Busca en la base de personas a los que están en Wise y no en la planilla, para poder agregarlos (opcional).
+      let gen = 0;
+      const buscarSobrantes = debounce(async sobran => {
+        const g = ++gen;
+        const enClase = new Map(classStudents(cls).filter(s => s.pid).map(s => [s.pid, s]));
+        const res = await Promise.all(sobran.map(async w => {
+          try{
+            const list = await SB.rpc('buscar_personas', { texto: `${w.no} ${w.ap}`.trim(), f_programa:null, f_estaca:null, f_barrio:null }) || [];
+            const wt = wiseTokens(w.ap + ' ' + w.no), wap = wiseTokens(w.ap);
+            let best = null, bc = 0;
+            list.forEach(p => { const pt = wiseTokens(p.nombre), c = wiseComunes(wt, pt); if(c >= 2 && c >= Math.min(wt.length, pt.length) - 1 && (!wap.length || wiseComunes(wap, pt) >= 1) && c > bc){ best = p; bc = c; } });
+            return best;
+          }catch(e){ console.warn('buscar_personas', e); return undefined; }
+        }));
+        if(g !== gen || !document.body.contains(out)) return;
+        let alguno = false;
+        sobran.forEach((w, j) => {
+          const row = $(`[data-sob="${j}"]`, out); if(!row) return;
+          const p = res[j], sm = $('.wc-base', row), slot = $('.wc-add', row);
+          if(p === undefined){ sm.textContent = 'No se pudo buscar en la base'; return; }
+          if(!p){ sm.textContent = 'No está en la base de personas'; return; }
+          const ya = enClase.get(p.id);
+          if(ya){ sm.textContent = `Ya está en la planilla como ${prettyName(ya.n)}`; return; }
+          sm.textContent = 'En la base: ' + [prettyName(p.nombre), p.barrio, stakeShort(p.estaca)].filter(Boolean).join(' · ');
+          slot.innerHTML = `<label><input type="checkbox" data-add="${j}"> Agregar</label>`;
+          row._persona = p; alguno = true;
+        });
+        const bar = $('.wc-addbar', out); if(!bar || !alguno) return;
+        bar.hidden = false;
+        const btn = $('#wcAdd', out);
+        const upd = () => { const n = $$('[data-add]:checked', out).length; btn.disabled = !n; btn.innerHTML = `${ICON.plus} Agregar ${n || ''} a la planilla`.replace('  ', ' '); };
+        $$('[data-add]', out).forEach(x => x.onchange = upd); upd();
+        btn.onclick = () => agregarSobrantes(btn);
+      }, 250);
+      const agregarSobrantes = async btn => {
+        const code = Object.keys(CLASSES).find(k => CLASSES[k] === cls);
+        const pids = new Set(classStudents(cls).map(s => s.pid).filter(Boolean));
+        const nuevos = [];
+        $$('[data-add]:checked', out).forEach(x => {
+          const p = x.closest('[data-sob]')._persona; if(!p || pids.has(p.id)) return; pids.add(p.id);
+          const s = { id:crypto.randomUUID(), pid:p.id, n:p.nombre, src:'base', vinculo:'vinculado', data:{ k:p.estaca, w:p.barrio }, addedAt:Date.now() };
+          cls.students[s.id] = s; markDirty(cls, 'students/'+s.id); nuevos.push(s);
+        });
+        if(!nuevos.length) return;
+        btn.disabled = true; btn.textContent = 'Agregando…';
+        saveClasses();
+        try{
+          // Primero deben existir en la nube; luego se marcan como "en Wise".
+          for(let i = 0; i < 4 && nuevos.some(s => (cls.dirty || {})['students/'+s.id]); i++){
+            if(i) await new Promise(r => setTimeout(r, 700));
+            await syncRemoteClass(code, {silent:true});
+          }
+          if(nuevos.some(s => (cls.dirty || {})['students/'+s.id])) throw new Error('No se pudieron subir a la nube todavía');
+          const ids = nuevos.map(s => s.id).filter(id => cls.students[id]);
+          if(ids.length) await guardarWise(cls, ids, []);
+          toast(`✓ ${ids.length} agregado${ids.length === 1 ? '' : 's'} a la planilla (en Wise)`, 'ok', {ms:3200});
+        }catch(e){ console.error(e); toast('Se agregaron a la planilla, pero falta marcarlos en Wise: ' + errMsg(e), 'warn', {ms:4200}); }
+        studs.splice(0, studs.length, ...classStudents(cls));
+        pintar(); rerender();
       };
       ta.oninput = pintar;
       setTimeout(() => ta.focus(), 50);
