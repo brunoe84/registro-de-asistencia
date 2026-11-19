@@ -387,6 +387,14 @@ svg{width:18px;height:18px;flex-shrink:0}
 table.plan{border-collapse:separate;border-spacing:0;font-size:13px;width:auto}
 /* La planilla se ajusta a su contenido (sin columna de nombre estirada) y cada fila lleva su línea fina. */
 .plan-wrap:has(> table.plan){width:fit-content;max-width:100%;margin-left:auto;margin-right:auto}
+#tabBody.plan-full{position:fixed;inset:0;z-index:60;background:var(--bg);overflow:auto;padding:58px max(16px,3vw) 16px}
+body.plan-full-on{overflow:hidden}
+body.plan-full-on .savebar{z-index:59}
+.plan-full .plan td.cell{height:46px;font-size:17px}
+.plan-full .plan thead th{font-size:12.5px;padding:9px 6px}
+.plan-full-x{position:fixed;top:10px;right:14px;z-index:61;display:flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid var(--border);border-radius:999px;background:#fff;color:var(--text);font:600 14px/1 inherit;box-shadow:var(--shadow);cursor:pointer}
+.plan-full-x:hover{background:var(--teal-50)}
+.plan-full-x svg{width:18px;height:18px}
 .plan tbody td{border-bottom:1px solid #D5DFE4}
 .plan tbody tr:hover td{box-shadow:inset 0 999px 0 rgba(31,122,131,.06)}
 .plan tbody tr:hover td.sticky{background:#EEF6F7}
@@ -3009,6 +3017,7 @@ function route(){
   window.scrollTo(0,0);
   layer.innerHTML = '';
   SB.stopWatch();
+  if(document.body.classList.contains('plan-full-on')) planillaGrande(false);
   if(SB.on() && !SB.ready){ app.innerHTML = topbar() + `<main class="wrap">${loadingHTML()}</main>`; return; }
   if(parts[0] === 'qr' && parts[1]) return renderQr(parts[1]);
   if(parts[0] === 'qrc' && parts[1]) return renderQrClase(parts[1]);
@@ -5044,6 +5053,7 @@ function renderClass(code){
   if(cls.remote && cls.canEdit && !SB.admin) guiaPrimeraVez('clase');
   if(cls.remote && cls.dbId && !SB.admin) mostrarMensajesMaestro(cls);
   $$('#tabs [data-tab]').forEach(b => b.onclick = () => { ST.ctab = b.dataset.tab; $$('#tabs [data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderClassTab(); });
+  const tp = $('#tabs [data-tab="planilla"]'); if(tp){ tp.title = 'Doble clic: ver la planilla en grande'; tp.ondblclick = () => { if(ST.ctab !== 'planilla') tp.click(); planillaGrande(true); }; }
   $('#saveBtn').onclick = () => classOnline(cls) ? syncClass(code) : exportClassHtml(cls, true);
   renderClassTab();
   liveClass(true);
@@ -5342,6 +5352,7 @@ function bindFillBlank(root, cls, cells, after){
 }
 function renderClassTab(){
   const cls = CLASSES[CUR.code]; const body = $('#tabBody'); if(!cls || !body) return;
+  if(ST.ctab !== 'planilla' && body.classList.contains('plan-full')) planillaGrande(false);
   const ro = !cls.canEdit;
   const studs = classStudents(cls);
   if(ST.ctab === 'hoy'){
@@ -5693,13 +5704,14 @@ function renderPlanilla(cls, body){
   const W = wiseOn(cls);
   const rows = W && ST.wiseSolo ? studs.filter(s => !enWise(cls, s)) : studs;
   const wFill = () => WR && !ro ? ds.flatMap(d => studs.filter(s => !(cls.att[d]||{})[s.id] && wv(s.id, d)).map(s => [d, s.id, wv(s.id, d)])) : [];
-  body.innerHTML = `${W ? wiseBarHTML(cls, studs) : ''}${WR ? wiseRollBarHTML(cls, wm, wFill().length, W) : ''}<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}<span class="only-fine"> · Arrastra el borde de un encabezado para cambiar el ancho</span></span><span style="flex:1"></span><button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
+  body.innerHTML = `${W ? wiseBarHTML(cls, studs) : ''}${WR ? wiseRollBarHTML(cls, wm, wFill().length, W) : ''}<div class="plan-tools"><select class="inp" id="pm" style="width:auto">${months.map(k => `<option value="${k}" ${ST.planMonth===k?'selected':''}>${mLabel(k)}</option>`).join('')}<option value="all" ${ST.planMonth==='all'?'selected':''}>Todo el periodo</option></select><span class="hint">${ro ? 'Vista de solo lectura · toca un nombre para ver su calendario · T: tarde' : 'Casilla: ✓ asistió → ✗ falta → vacío · T: tarde · Nombre: calendario del alumno'}<span class="only-fine"> · Arrastra el borde de un encabezado para cambiar el ancho</span></span><span style="flex:1"></span>${ds.length ? `<button class="btn sm" id="pG" title="Ver la planilla a pantalla completa (también: doble clic en la pestaña Planilla)">⛶ ${body.classList.contains('plan-full') ? 'Reducir' : 'Ampliar'}</button>` : ''}<button class="btn sm" id="pP">${ICON.share} Reporte</button><button class="btn sm" id="pX">${ICON.download} Excel</button></div>
     ${ro || !ds.length ? '' : fillBlankHTML(blanks().length)}
     ${ds.length ? `<div class="plan-wrap"><table class="plan ${ro?'ro':''}${WR?' cmp':''}${planColsAttr()}" id="plan"><thead><tr><th class="sticky">Alumno${GRIP('n')}</th>${ds.map(d => `<th class="dc${d===t?' today':''}${wks.has(d)?' wk':''}${wcols.has(d)?' wcol':''}"${wcols.has(d)?' title="Fecha que solo está en Wise (no está en el calendario de la clase)"':''}><span>${DOW[parseISO(d).getDay()]}</span>${fmtShort(d)}${GRIP('c')}</th>`).join('')}<th>%</th></tr></thead>
       <tbody>${rows.length ? '' : `<tr><td class="sticky" colspan="${ds.length + 2}" style="color:var(--green);cursor:default">✓ Todos los alumnos de esta clase ya están en Wise.</td></tr>`}${rows.map(s => { const st = studentStats(cls, s.id, ds); const w = W && enWise(cls, s); return `<tr data-sid="${s.id}"${W && !w ? ' class="wise-no"' : ''}><td class="sticky" title="${esc(prettyName(s.n))}">${W ? wiseBadge(w) : ''}${esc(prettyName(s.n))}</td>${ds.map(d => { const c = celda(s.id, d); return `<td class="cell ${c.cls}${wks.has(d)?' wk':''}" data-d="${d}"${c.tit ? ` title="${esc(c.tit)}"` : ''}>${c.txt}</td>`; }).join('')}<td class="pct">${st.pct === '' ? '—' : st.pct+'%'}</td></tr>`; }).join('')}</tbody>
       <tfoot><tr><td class="sticky">Asistentes</td>${ds.map(d => `<td data-foot="${d}" class="dc${wks.has(d)?' wk':''}">${studs.filter(s => ATT_OK((cls.att[d]||{})[s.id])).length}</td>`).join('')}<td></td></tr></tfoot></table></div>` : '<div class="empty">No hay sesiones en este periodo.</div>'}`;
   $('#pm').onchange = e => { ST.planMonth = e.target.value; renderPlanilla(cls, body); };
   $('#pX').onclick = () => exportClass(cls, false);
+  const pg = $('#pG'); if(pg) pg.onclick = () => planillaGrande(!body.classList.contains('plan-full'));
   $('#pP').onclick = () => exportClassHtml(cls, true);
   if(!ro) bindFillBlank(body, cls, blanks, () => { if(body.isConnected && $('#plan', body)) renderPlanilla(cls, body); });
   if(W) bindWiseBar(cls, body, () => renderPlanilla(cls, body));
@@ -5730,12 +5742,31 @@ function renderPlanilla(cls, body){
    se queda arriba. */
 function ajustarAltoPlanilla(){
   const wrap = $('#plan') && $('#plan').parentElement; if(!wrap) return;
+  if(!ajustarAltoPlanilla.on){ ajustarAltoPlanilla.on = true; window.addEventListener('resize', debounce(ajustarAltoPlanilla, 150)); }
+  const tb = $('#tabBody');
+  if(tb && tb.classList.contains('plan-full')){ wrap.style.maxHeight = Math.max(260, window.innerHeight - (wrap.getBoundingClientRect().top + tb.scrollTop) - 18) + 'px'; return; }
   const tabs = $('#tabs'), sb = $('.savebar');
   const arriba = tabs ? (parseFloat(getComputedStyle(tabs).top) || 0) + tabs.getBoundingClientRect().height + 10 : 80;
   const abajo = sb ? sb.getBoundingClientRect().height + 10 : 16;
   wrap.style.maxHeight = Math.max(240, window.innerHeight - arriba - abajo) + 'px';
   wrap.style.scrollMarginTop = arriba + 'px';
-  if(!ajustarAltoPlanilla.on){ ajustarAltoPlanilla.on = true; window.addEventListener('resize', debounce(ajustarAltoPlanilla, 150)); }
+}
+// Planilla a pantalla completa: doble clic en la pestaña "Planilla" o botón "Ampliar". Sigue siendo editable.
+const planFullKey = e => { if(e.key === 'Escape' && !$('#layer .ov')) planillaGrande(false); };
+function planillaGrande(on){
+  const tb = $('#tabBody');
+  on = !!(on && tb);
+  document.body.classList.toggle('plan-full-on', on);
+  let x = $('#planFullX');
+  if(on && !x){
+    x = document.createElement('button'); x.id = 'planFullX'; x.className = 'plan-full-x'; x.type = 'button';
+    x.innerHTML = `${ICON.x}<span>Cerrar</span>`; x.onclick = () => planillaGrande(false);
+    document.body.appendChild(x); document.addEventListener('keydown', planFullKey);
+  }
+  if(!on && x){ x.remove(); document.removeEventListener('keydown', planFullKey); }
+  if(tb) tb.classList.toggle('plan-full', on);
+  const pg = $('#pG'); if(pg) pg.innerHTML = `⛶ ${on ? 'Reducir' : 'Ampliar'}`;
+  ajustarAltoPlanilla();
 }
 /* Ancho de columnas de la planilla: se arrastra el borde del encabezado ("Alumno" o cualquier fecha:
    todas las fechas cambian juntas). Doble clic = ancho automático. Se recuerda en este navegador. */
