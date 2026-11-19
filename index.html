@@ -5249,10 +5249,12 @@ function wiseBadge(w){ return `<button type="button" class="wz${w ? '' : ' no'}"
 function wiseBarHTML(cls, studs, compact){
   const ok = studs.filter(s => enWise(cls, s)).length, falta = studs.length - ok;
   const txt = !ok ? 'Aún no comparada con Wise2' : falta ? `<span class="wb-ok">${ok}</span> de ${studs.length} en Wise · <span class="wb-falta">${falta} por inscribir</span>` : `<span class="wb-ok">✓ Los ${studs.length} están en Wise</span>`;
-  return `<div class="wise-bar"><span class="wz" style="cursor:default">W</span><span>${txt}</span><span style="flex:1"></span>${!compact && ok && falta ? `<button class="seg-chip${ST.wiseSolo ? ' on' : ''}" data-wsolo>Solo por inscribir</button>` : ''}<button class="btn sm" data-wcmp>${ICON.copy} Comparar con Wise</button></div>`;
+  return `<div class="wise-bar"><span class="wz" style="cursor:default">W</span><span>${txt}</span><span style="flex:1"></span>${!compact && ok && falta ? `<button class="seg-chip${ST.wiseSolo ? ' on' : ''}" data-wsolo>Solo por inscribir</button>` : ''}<button class="btn sm" data-wcmp>${ICON.copy} Comparar con Wise</button>${compact ? '' : `<button class="btn sm primary" data-wpase title="Copia los presentes de todas las fechas para marcarlos en Wise2">${ICON.check} Copiar para Wise</button><button class="link-btn" data-wayuda style="font-size:12.5px">¿Cómo?</button>`}</div>`;
 }
 function bindWiseBar(cls, root, rerender){
   const c = $('[data-wcmp]', root); if(c) c.onclick = () => openWiseCompare(cls, rerender);
+  const p = $('[data-wpase]', root); if(p) p.onclick = () => copiarParaWise(cls);
+  const a = $('[data-wayuda]', root); if(a) a.onclick = () => ayudaPaseWise();
   const f = $('[data-wsolo]', root); if(f) f.onclick = () => { ST.wiseSolo = !ST.wiseSolo; rerender(); };
 }
 async function guardarWise(cls, si, no){
@@ -5362,6 +5364,109 @@ function openWiseCompare(cls, rerender){
       };
     }
   });
+}
+/* ---------- Pase de asistencia a Wise2 ----------
+   1) "Copiar para Wise" (Planilla) copia los PRESENTES de todas las fechas de la clase.
+   2) En Wise2 → Attendance, con la sesión elegida y el selector en verde (Present), el botón de favoritos
+      "Pasar asistencia" toca la casilla vacía de cada presente. No marca rojos, no cambia lo ya marcado
+      y no guarda: el administrador revisa y presiona Save. */
+const WISE_PASE_TAG = 'CA-WISE1';
+function copiarParaWise(cls){
+  const studs = classStudents(cls); const d = {};
+  classDates(cls).forEach(f => { const a = cls.att[f] || {}; const p = studs.filter(s => ATT_OK(a[s.id])).map(s => prettyName(s.n)); if(p.length) d[f] = p; });
+  const n = Object.keys(d).length;
+  if(!n){ toast('Aún no hay asistencia marcada en esta clase', 'warn'); return; }
+  copyText(WISE_PASE_TAG + '|' + JSON.stringify({ t: cls.meta.title || '', m: cls.meta.teacher || '', d }), `✓ Copiados los presentes de ${n} fecha${n > 1 ? 's' : ''}. Ahora en Wise2 toca “Pasar asistencia”.`);
+  try{ if(!localStorage.getItem('ca_wise_pase_ok')){ localStorage.setItem('ca_wise_pase_ok', '1'); ayudaPaseWise(); } }catch(e){}
+}
+function wisePaseHref(){ return 'javascript:' + encodeURIComponent('(' + WISE_PASE.toString() + ')();void 0'); }
+function ayudaPaseWise(){
+  sheet(`${sheetHead('Pasar asistencia a Wise2', 'Marca en verde a los presentes; tú revisas y guardas')}
+    <p style="margin:0 0 6px"><b>Una sola vez:</b> arrastra este botón a tu <b>barra de favoritos</b> (si no la ves: Ctrl+Shift+B).</p>
+    <p style="text-align:center;margin:14px 0"><a class="btn primary" id="wpLink" href="${wisePaseHref()}" draggable="true" style="cursor:grab">${ICON.check} Pasar asistencia</a></p>
+    <ol class="hint" style="margin:0 0 6px;padding-left:18px;line-height:1.6">
+      <li>Aquí en la Planilla toca <b>Copiar para Wise</b> (lleva todas las fechas).</li>
+      <li>En Wise2 abre la clase → <b>Students → Attendance</b> y elige la sesión.</li>
+      <li>Pon el selector de arriba (junto a <i>Mark All Unmarked</i>) en <b>verde · Present</b>.</li>
+      <li>Toca <b>Pasar asistencia</b> en tus favoritos: pone en verde solo a los que asistieron y tienen la casilla vacía.</li>
+      <li>Completa los ausentes con <i>Mark All Unmarked</i> en rojo y presiona <b>Save</b>. Pasa a la siguiente con <i>Next Unmarked Session</i> y repite el paso 4.</li>
+    </ol>
+    <p class="hint" style="margin:8px 0 0">Si Edge pregunta si Wise2 puede ver el portapapeles, elige <b>Permitir</b> (si no, te pedirá pegar con Ctrl+V). Quien no esté en Wise aparece en el resumen para que lo enroles primero.</p>
+    <div class="sh-foot"><button class="btn" data-close>Listo</button></div>`, {
+    onMount(el){ $('#wpLink', el).onclick = e => { e.preventDefault(); toast('Arrástralo a la barra de favoritos; se usa dentro de Wise2', 'warn', {ms:3600}); }; }
+  });
+}
+// Se ejecuta DENTRO de Wise2 (botón de favoritos). Debe ser autónoma: no usa nada de esta app.
+function WISE_PASE(){
+  const TAG = 'CA-WISE1', VERDE = /6db344/i, ROJO = /b00504|danger/i;
+  const caja = (html, ok) => {
+    let d = document.getElementById('ca-wise-box');
+    if(!d){ d = document.createElement('div'); d.id = 'ca-wise-box'; document.body.appendChild(d); }
+    d.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;width:390px;max-width:calc(100vw - 36px);max-height:72vh;overflow:auto;background:#fff;border:2px solid ' + (ok ? '#1E8449' : '#C2591C') + ';border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.28);padding:14px 16px;font:14px/1.45 Segoe UI,system-ui,sans-serif;color:#17262E';
+    d.innerHTML = '<button type="button" id="ca-wx" style="float:right;border:0;background:none;font-size:20px;line-height:1;cursor:pointer;color:#5C7080">×</button><div style="font-weight:800;margin-bottom:6px">Pasar asistencia · Check-in</div>' + html;
+    d.querySelector('#ca-wx').onclick = () => d.remove();
+  };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[c]);
+  const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const STOP = new Set(['de','del','la','las','los','y','da','do','dos','van','von','mc']);
+  const tok = s => norm(s).split(' ').filter(x => x.length > 1 && !STOP.has(x));
+  const lev1 = (a, b) => { if(Math.abs(a.length - b.length) > 1) return false; let i = 0, j = 0, d = 0; while(i < a.length && j < b.length){ if(a[i] === b[j]){ i++; j++; continue; } if(++d > 1) return false; if(a.length > b.length) i++; else if(b.length > a.length) j++; else { i++; j++; } } return d + (a.length - i) + (b.length - j) <= 1; };
+  const igual = (a, b) => a === b || (a.length >= 5 && b.length >= 5 && lev1(a, b));
+  const comunes = (A, B) => { const u = new Set(); let n = 0; A.forEach(a => { const k = B.findIndex((b, i) => !u.has(i) && igual(a, b)); if(k >= 0){ u.add(k); n++; } }); return n; };
+  const MES = { enero:1, febrero:2, marzo:3, abril:4, mayo:5, junio:6, julio:7, agosto:8, septiembre:9, setiembre:9, octubre:10, noviembre:11, diciembre:12, january:1, february:2, march:3, april:4, may:5, june:6, july:7, august:8, september:9, october:10, november:11, december:12 };
+  const iso = (y, m, d) => y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+  const sesion = () => {
+    const b = document.querySelector('[data-tour="attendance-session-picker"],[data-id="session-picker-dropdown"]');
+    const t = norm(b ? b.textContent : '');
+    let m = t.match(/(\d{1,2}) de ([a-z]+) de (\d{4})/); if(m && MES[m[2]]) return iso(m[3], MES[m[2]], m[1]);
+    m = t.match(/([a-z]+) (\d{1,2}) (\d{4})/); if(m && MES[m[1]]) return iso(m[3], MES[m[1]], m[2]);
+    m = t.match(/(\d{1,2}) ([a-z]+) (\d{4})/); if(m && MES[m[2]]) return iso(m[3], MES[m[2]], m[1]);
+    return '';
+  };
+  const estado = b => { const h = b.outerHTML; return ROJO.test(h) ? 'A' : VERDE.test(h) ? 'P' : ''; };
+  const pausa = ms => new Promise(r => setTimeout(r, ms));
+  (async () => {
+    if(!/wise2?\.churchofjesuschrist\.org/i.test(location.hostname) || !document.querySelector('[data-tour="student-attendance-button"]')) return caja('Abre en Wise2 la clase → <b>Students → Attendance</b> y elige la sesión. Luego vuelve a tocar este botón.');
+    let txt = '';
+    try{ txt = await navigator.clipboard.readText(); }catch(e){}
+    if(!String(txt).startsWith(TAG)) txt = prompt('Pega aquí (Ctrl+V) lo copiado con “Copiar para Wise” en la Planilla de Check-in:') || '';
+    if(!String(txt).startsWith(TAG)) return caja('No encontré los datos. En la Planilla de Check-in toca <b>Copiar para Wise</b> y vuelve a intentarlo.');
+    let data; try{ data = JSON.parse(txt.slice(TAG.length + 1)); }catch(e){ return caja('Los datos copiados están incompletos. Vuelve a tocar <b>Copiar para Wise</b>.'); }
+    const f = sesion();
+    if(!f) return caja('No pude leer la fecha de la sesión elegida. Elige una sesión en <b>Select Class Session</b>.');
+    const fl = f.split('-').reverse().join('/');
+    const pres = (data.d || {})[f];
+    if(!pres || !pres.length) return caja('En Check-in no hay presentes marcados para el <b>' + fl + '</b> (' + esc(data.t || '') + '). Elige otra sesión o revisa la Planilla.');
+    const tipo = document.querySelector('[data-tour="attendance-type"]');
+    if(!tipo || !VERDE.test(tipo.getAttribute('background') || '')) return caja('Primero pon el selector de arriba (junto a <i>Mark All Unmarked</i>) en <b style="color:#1E8449">verde · Present</b>. Luego vuelve a tocar este botón.');
+    const filas = [...document.querySelectorAll('[data-id^="enrollment-"]')].map(r => {
+      const nb = r.querySelector('[data-id="name-btn"]');
+      const n = nb ? [...nb.childNodes].filter(x => x.nodeType === 3).map(x => x.textContent).join(' ').replace(/\s+/g, ' ').trim() : '';
+      return { r, n, b: r.querySelector('[data-tour="student-attendance-button"]'), t: tok(n) };
+    }).filter(x => x.n && x.b);
+    const P = pres.map(n => ({ n, t: tok(n) })), pares = [];
+    P.forEach((a, i) => filas.forEach((w, j) => { const c = comunes(a.t, w.t); if(c >= 2 && c >= Math.min(a.t.length, w.t.length) - 1) pares.push({ i, j, c, r: c / Math.max(a.t.length, w.t.length) }); }));
+    pares.sort((x, y) => y.c - x.c || y.r - x.r);
+    const pi = new Map(), wj = new Set();
+    pares.forEach(p => { if(!pi.has(p.i) && !wj.has(p.j)){ pi.set(p.i, p.j); wj.add(p.j); } });
+    const faltan = P.filter((_, i) => !pi.has(i)).map(x => x.n);
+    if(P.length >= 3 && pi.size < P.length / 2 && !confirm('Solo encontré ' + pi.size + ' de ' + P.length + ' presentes en esta lista de Wise.\n¿Es la clase correcta (' + (data.t || '') + ')?\n\nAceptar = continuar igual')) return caja('No se marcó nada. Revisa que la clase de Wise sea la misma que copiaste.');
+    let hechos = 0, ya = 0; const rojos = [], fallo = [];
+    for(const [i, j] of pi){
+      const w = filas[j], st = estado(w.b);
+      if(st === 'P'){ ya++; continue; }
+      if(st === 'A'){ rojos.push(w.n); w.r.style.outline = '3px solid #E8692A'; continue; }
+      w.b.click(); await pausa(160);
+      if(estado(w.b) === 'P'){ hechos++; w.r.style.outline = '2px solid #1E8449'; } else fallo.push(w.n);
+    }
+    const lista = (t, a, c) => a.length ? '<div style="margin-top:8px;color:' + c + ';font-weight:700">' + t + ' (' + a.length + ')</div><div style="font-size:13px">' + a.map(esc).join('<br>') + '</div>' : '';
+    caja('<div>Sesión <b>' + fl + '</b> · ' + esc(data.t || '') + '</div>'
+      + '<div style="margin-top:6px;font-size:15px"><b style="color:#1E8449">✓ ' + hechos + ' marcados en verde</b>' + (ya ? ' · ' + ya + ' ya estaban' : '') + '</div>'
+      + lista('En rojo en Wise pero asistieron (no se cambió)', rojos, '#C2591C')
+      + lista('No están en esta lista de Wise (enrólalos)', faltan, '#C0392B')
+      + lista('No se pudieron marcar', fallo, '#C0392B')
+      + '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #E1E8EB">Ahora completa los ausentes (<i>Mark All Unmarked</i> en rojo) y presiona <b>Save</b>.</div>', !rojos.length && !faltan.length && !fallo.length);
+  })();
 }
 function renderClassShare(cls, body){
   if(cls.remote) return renderRemoteShare(cls, body);
