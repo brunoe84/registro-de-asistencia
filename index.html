@@ -5823,12 +5823,16 @@ function openStudentCal(cls, sid, onClose){
         };
         box.innerHTML = `<div class="sh-head"><div style="display:flex;gap:12px;align-items:center;min-width:0"><span class="av" style="width:48px;height:48px">${esc(initials(s.n))}</span><div style="min-width:0"><h3>${esc(prettyName(s.n))} ${s.src==='nuevo'?'<span class="badge b-new">Nuevo</span>':''}</h3><p>${esc([d0.w, d0.k, progLabel(cls.meta.program)].filter(Boolean).join(' · '))} · <button class="link-btn" id="calInfo">Ver datos</button></p></div></div><button class="icon-btn" data-close aria-label="Cerrar">${ICON.x}</button></div>
           <div class="cal-stats"><div><b>${P}/${T}</b><span>Asistencia</span></div><div><b>${pct === '' ? '—' : pct+'%'}</b><span>Porcentaje</span></div><div><b>${F}</b><span>Faltas</span></div><div><b>${T - P - F}</b><span>Sin marcar</span></div></div>
-          <div class="cal-legend"><span><i class="lgd p"></i>Asistió</span><span><i class="lgd f"></i>Falta</span><span><i class="lgd e"></i>Sin marcar</span><span><i class="lgd h"></i>Feriado</span>${ro ? '<span class="badge b-ro">Solo lectura</span>' : '<span class="hint">Toca un día para cambiarlo</span>'}</div>
+          <div class="cal-legend"><span><i class="lgd p"></i>Asistió</span><span><i class="lgd f"></i>Falta</span><span><i class="lgd e"></i>Sin marcar</span><span><i class="lgd h"></i>Feriado</span>${ro ? '<span class="badge b-ro">Solo lectura</span>' : '<span class="hint">Toca un día para cambiarlo</span>'}${wiseOn(cls) && (P + F) ? `<button class="btn sm primary" id="calWise" style="margin-left:auto" title="Copia las asistencias y faltas de este alumno para marcarlas en su ficha de Wise2">${ICON.check} Copiar para Wise</button>` : ''}</div>
           ${ro ? '' : fillBlankHTML(T - P - F)}
           <div class="cal-months">${months.map(monthHTML).join('') || '<div class="empty">La clase aún no tiene días de clase.</div>'}</div>
           <div class="sh-foot"><button class="btn" id="calPrev" ${i<=0?'disabled':''}>${ICON.back} Anterior</button><button class="btn primary" id="calNext" ${i>=studs.length-1?'disabled':''}>Siguiente alumno ${ICON.next}</button></div>`;
         $$('[data-close]', box).forEach(b => b.onclick = close);
         $('#calInfo', box).onclick = () => showStudent(cls, s);
+        const cw = $('#calWise', box); if(cw) cw.onclick = () => {
+          const d = {}; dates.forEach(f => { const v = (cls.att[f] || {})[s.id]; if(v) d[f] = v; });
+          copyText('CA-WISE2|' + JSON.stringify({ n: s.n, d }), `✓ Copiadas ${P} asistencias y ${F} faltas de ${prettyName(s.n)}. En Wise abre su ficha y toca “Pasar asistencia”.`);
+        };
         $('#calPrev', box).onclick = () => { i--; render(); el.scrollTop = 0; };
         $('#calNext', box).onclick = () => { i++; render(); el.scrollTop = 0; };
         if(!ro){
@@ -6333,7 +6337,7 @@ function WISE_PASE(){
     let d = document.getElementById('ca-wise-box');
     if(!d){ d = document.createElement('div'); d.id = 'ca-wise-box'; document.body.appendChild(d); }
     d.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;width:390px;max-width:calc(100vw - 36px);max-height:72vh;overflow:auto;background:#fff;border:2px solid ' + (ok ? '#1E8449' : '#C2591C') + ';border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.28);padding:14px 16px;font:14px/1.45 Segoe UI,system-ui,sans-serif;color:#17262E';
-    d.innerHTML = '<button type="button" id="ca-wx" style="float:right;border:0;background:none;font-size:20px;line-height:1;cursor:pointer;color:#5C7080">×</button><div style="font-weight:800;margin-bottom:6px">Pasar asistencia · Check-in <span style="font-weight:600;color:#8A9AA5;font-size:12px">v2</span></div>' + html;
+    d.innerHTML = '<button type="button" id="ca-wx" style="float:right;border:0;background:none;font-size:20px;line-height:1;cursor:pointer;color:#5C7080">×</button><div style="font-weight:800;margin-bottom:6px">Pasar asistencia · Check-in <span style="font-weight:600;color:#8A9AA5;font-size:12px">v3</span></div>' + html;
     d.querySelector('#ca-wx').onclick = () => d.remove();
   };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[c]);
@@ -6385,10 +6389,60 @@ function WISE_PASE(){
     b = btnDe(eid); if(b && estado(b) !== 'P' && directo(b) && await esperarVerde(eid, 1200)) return true;
     return false;
   };
+  /* Modo alumno: con la ficha de un alumno abierta (calendario "Attendance History"), marca sus fechas.
+     Selector en verde = marca los días que asistió; en rojo = marca sus faltas. */
+  const MESN = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const isoTile = t => { const a = t.querySelector('abbr'); const l = norm(a ? a.getAttribute('aria-label') : ''); let m = l.match(/(\d{1,2}) de ([a-z]+) de (\d{4})/); if(m && MES[m[2]]) return iso(m[3], MES[m[2]], m[1]); m = l.match(/([a-z]+) (\d{1,2}) (\d{4})/); if(m && MES[m[1]]) return iso(m[3], MES[m[1]], m[2]); return ''; };
+  const tileDe = f => [...document.querySelectorAll('button.react-calendar__tile')].find(t => isoTile(t) === f) || null;
+  const estTile = t => /\bprsnt\b/.test(t.className) ? 'P' : /\babsnt\b/.test(t.className) ? 'A' : '';
+  const alumno = async data => {
+    const pb = [...document.querySelectorAll('button')].find(b => /view full profile|ver perfil/i.test(b.textContent));
+    const h2 = pb && pb.closest('div') && pb.closest('div').parentElement ? pb.closest('div').parentElement.querySelector('h2') : null;
+    const wn = (pb && pb.getAttribute('title')) || (h2 ? h2.textContent : '');
+    const c = comunes(tok(data.n), tok(wn));
+    if(!(c >= 2 && c >= Math.min(tok(data.n).length, tok(wn).length) - 1) && !confirm('El alumno abierto en Wise (' + wn + ') no parece ser el copiado (' + data.n + ').\n\nAceptar = marcar igual')) return caja('No se marcó nada. Abre en Wise al alumno <b>' + esc(data.n) + '</b>.');
+    const tipo = document.querySelector('[data-tour="attendance-type"]'), bg = tipo ? (tipo.getAttribute('background') || '') : '';
+    const modo = VERDE.test(bg) ? 'P' : ROJO.test(bg) || /c0392b|d32f2f|e53935|red/i.test(bg) ? 'A' : '';
+    if(!modo) return caja('Pon el selector de arriba del calendario en <b style="color:#1E8449">verde</b> (para marcar asistencias) o en <b style="color:#C0392B">rojo</b> (para marcar faltas). Luego vuelve a tocar este botón.');
+    const fechas = Object.keys(data.d || {}).sort().filter(f => modo === 'P' ? /^[PTM]$/.test(data.d[f]) : data.d[f] === 'F');
+    if(!fechas.length) return caja('En Check-in <b>' + esc(data.n) + '</b> no tiene ' + (modo === 'P' ? 'asistencias' : 'faltas') + ' para marcar.');
+    let hechos = 0, ya = 0; const cambio = [], noVis = [], noClase = [], fallo = [];
+    const fl = f => f.split('-').reverse().join('/');
+    for(let k = 0; k < fechas.length; k++){
+      const f = fechas[k]; let t = tileDe(f);
+      caja('Marcando ' + (modo === 'P' ? 'asistencias' : 'faltas') + '… ' + (k + 1) + ' de ' + fechas.length + '<br><small>' + esc(data.n) + ' · ' + fl(f) + '</small>', true);
+      if(!t){ noVis.push(fl(f)); continue; }
+      if(t.disabled){ noClase.push(fl(f)); continue; }
+      const st = estTile(t);
+      if(st === modo){ ya++; continue; }
+      t.scrollIntoView({ block: 'center' }); await pausa(100);
+      t = tileDe(f); secuencia(t);
+      let ok = false;
+      for(let w = 0; w < 1200 && !ok; w += 100){ await pausa(100); const x = tileDe(f); ok = !!x && estTile(x) === modo; }
+      if(!ok){ const x = tileDe(f); if(x && directo(x)) for(let w = 0; w < 1200 && !ok; w += 100){ await pausa(100); const y = tileDe(f); ok = !!y && estTile(y) === modo; } }
+      if(ok){ hechos++; if(st) cambio.push(fl(f)); } else fallo.push(fl(f));
+    }
+    const lista = (t, a, col) => a.length ? '<div style="margin-top:8px;color:' + col + ';font-weight:700">' + t + ' (' + a.length + ')</div><div style="font-size:13px">' + a.join(', ') + '</div>' : '';
+    caja('<div><b>' + esc(data.n) + '</b> · ' + (modo === 'P' ? 'asistencias' : 'faltas') + '</div>'
+      + '<div style="margin-top:6px;font-size:15px"><b style="color:' + (modo === 'P' ? '#1E8449' : '#C0392B') + '">✓ ' + hechos + ' marcadas</b>' + (ya ? ' · ' + ya + ' ya estaban' : '') + '</div>'
+      + lista('Estaban con otro color y se cambiaron', cambio, '#1E5F8C')
+      + lista('Wise no las muestra en el calendario (fuera de los meses visibles)', noVis, '#A8670A')
+      + lista('En Wise no son días de clase', noClase, '#A8670A')
+      + lista('No se pudieron marcar', fallo, '#C0392B')
+      + '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #E1E8EB">' + (modo === 'P' ? 'Para las faltas: pon el selector en <b style="color:#C0392B">rojo</b> y vuelve a tocar <b>Pasar asistencia</b>. ' : '') + 'Revisa y presiona <b>Save</b>.</div>', !fallo.length && !noVis.length);
+  };
   (async () => {
-    if(!/wise2?\.churchofjesuschrist\.org/i.test(location.hostname) || !document.querySelector('[data-tour="student-attendance-button"]')) return caja('Abre en Wise2 la clase → <b>Students → Attendance</b> y elige la sesión. Luego vuelve a tocar este botón.');
+    if(!/wise2?\.churchofjesuschrist\.org/i.test(location.hostname)) return caja('Abre Wise2 y vuelve a tocar este botón.');
     let txt = '';
     try{ txt = await navigator.clipboard.readText(); }catch(e){}
+    if(String(txt).startsWith('CA-WISE2|') || (!String(txt).startsWith(TAG) && document.querySelector('button.react-calendar__tile'))){
+      if(!String(txt).startsWith('CA-WISE2|')) txt = prompt('Pega aquí (Ctrl+V) lo copiado con “Copiar para Wise” en el calendario del alumno en Check-in:') || '';
+      if(!String(txt).startsWith('CA-WISE2|')) return caja('No encontré los datos del alumno. En Check-in abre su calendario y toca <b>Copiar para Wise</b>.');
+      if(!document.querySelector('button.react-calendar__tile')) return caja('Abre en Wise la ficha del alumno (pestaña <b>Attendance</b>, con el calendario a la vista). Luego vuelve a tocar este botón.');
+      let d; try{ d = JSON.parse(txt.slice(9)); }catch(e){ return caja('Los datos copiados están incompletos. Vuelve a tocar <b>Copiar para Wise</b>.'); }
+      return alumno(d);
+    }
+    if(!document.querySelector('[data-tour="student-attendance-button"]')) return caja('Abre en Wise2 la clase → <b>Students → Attendance</b> y elige la sesión (o la ficha de un alumno). Luego vuelve a tocar este botón.');
     if(!String(txt).startsWith(TAG)) txt = prompt('Pega aquí (Ctrl+V) lo copiado con “Copiar para Wise” en la Planilla de Check-in:') || '';
     if(!String(txt).startsWith(TAG)) return caja('No encontré los datos. En la Planilla de Check-in toca <b>Copiar para Wise</b> y vuelve a intentarlo.');
     let data; try{ data = JSON.parse(txt.slice(TAG.length + 1)); }catch(e){ return caja('Los datos copiados están incompletos. Vuelve a tocar <b>Copiar para Wise</b>.'); }
