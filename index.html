@@ -463,7 +463,9 @@ button.person:active{background:var(--soft)}
 .roll-item.f .av{background:var(--red-100);color:var(--red-2)}
 .av-cal{border:0;padding:0;cursor:pointer;position:relative;transition:background .15s,color .15s,box-shadow .15s}
 .av-cal:hover,.av-cal:focus-visible,.roll-item .av-cal:hover{background:var(--ink);color:#fff;box-shadow:0 0 0 3px rgba(19,35,63,.15);outline:none}
-.av-cal::after{content:'';position:absolute;right:-2px;bottom:-2px;width:16px;height:16px;border-radius:50%;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2313233F' stroke-width='2.4' stroke-linecap='round'%3E%3Crect x='4' y='5' width='16' height='15' rx='2'/%3E%3Cpath d='M4 10h16M9 3v4M15 3v4'/%3E%3C/svg%3E") center/10px no-repeat;box-shadow:0 0 0 1px var(--border);opacity:.9}
+/* Ícono de calendario en la esquina del avatar: hoja blanca con encabezado dorado sobre azul noche, nítido en cualquier fondo. */
+.av-cal::after{content:'';position:absolute;right:-4px;bottom:-7px;width:19px;height:19px;border-radius:6px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='6' fill='%2313233F'/%3E%3Crect x='4.2' y='5.4' width='11.6' height='10.4' rx='2' fill='%23fff'/%3E%3Cpath d='M4.2 7.4a2 2 0 0 1 2-2h7.6a2 2 0 0 1 2 2v1.4H4.2z' fill='%23E3A33A'/%3E%3Crect x='6.6' y='3.6' width='1.6' height='3.4' rx='.8' fill='%23fff'/%3E%3Crect x='11.8' y='3.6' width='1.6' height='3.4' rx='.8' fill='%23fff'/%3E%3Cg fill='%2313233F'%3E%3Crect x='6.4' y='10.4' width='2' height='1.8' rx='.4'/%3E%3Crect x='9' y='10.4' width='2' height='1.8' rx='.4'/%3E%3Crect x='11.6' y='10.4' width='2' height='1.8' rx='.4'/%3E%3Crect x='6.4' y='12.9' width='2' height='1.8' rx='.4'/%3E%3Crect x='9' y='12.9' width='2' height='1.8' rx='.4'/%3E%3C/g%3E%3C/svg%3E") center/100% no-repeat;box-shadow:0 0 0 2px #fff,0 2px 5px rgba(19,35,63,.28);transition:transform .15s}
+.av-cal:hover::after,.av-cal:focus-visible::after{transform:scale(1.1)}
 .roll-item .ri{cursor:pointer}
 /* Botones Asistió / Falta: el color se ve antes de tocarlos; al elegir uno se rellena y el otro se aparta. */
 .pf{display:flex;gap:6px}
@@ -842,6 +844,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .item,.person{gap:9px;padding:10px}
   .roll-item,.att-item{gap:8px;padding:8px}
   .av{width:34px;height:34px;font-size:12.5px}
+  .av-cal::after{width:16px;height:16px;border-radius:5px;right:-3px;bottom:-7px}
   .item .ico{width:34px;height:34px}
   .pf{gap:4px}
   .pf-btn{padding:9px 10px;min-width:44px}
