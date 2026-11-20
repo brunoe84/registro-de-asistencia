@@ -2403,7 +2403,7 @@ async function rollArchivos(dir, ruta, out, prof){
   for await (const [name, h] of dir.entries()){
     const p = ruta + '/' + name;
     if(h.kind === 'directory'){ if(prof < 3) await rollArchivos(h, p, out, prof + 1); }
-    else if(/\.xlsx$/i.test(name) && !/^~\$/.test(name) && /class roll|audit/i.test(p)) out.push({ path:p, handle:h });
+    else if(/\.xlsx$/i.test(name) && !/^~\$/.test(name) && (/class roll|audit/i.test(p) || /^potenciales/i.test(name))) out.push({ path:p, handle:h });
   }
   return out;
 }
@@ -2427,15 +2427,25 @@ async function leerClassRoll({ interactive=false, force=false, archivos=null, on
       for(const h of await rollArchivos(dir, dir.name, [], 0)) lista.push({ file: await h.handle.getFile(), path:h.path });
     }
     // El Audit (clases con retraso) va aparte: solo cuenta la versión más reciente.
-    const esAudit = x => /audit/i.test(x.path);
-    const audit = lista.filter(esAudit).sort((a, b) => b.file.lastModified - a.file.lastModified)[0] || null;
-    lista = lista.filter(x => !esAudit(x));
-    if(!lista.length && !audit) return { vacia:true };
+    const esAudit = x => /audit/i.test(x.path), esPot = x => /^potenciales/i.test(x.file.name);
+    const ultimo = arr => arr.sort((a, b) => b.file.lastModified - a.file.lastModified)[0] || null;
+    const audit = ultimo(lista.filter(esAudit)), pot = ultimo(lista.filter(esPot));
+    lista = lista.filter(x => !esAudit(x) && !esPot(x));
+    if(!lista.length && !audit && !pot) return { vacia:true };
     const vistos = LS.get('ca_roll_files', {});
+    const cambio = x => !!x && (force || !!archivos || vistos[x.path] !== x.file.lastModified);
     const cambiados = force || archivos ? lista : lista.filter(x => vistos[x.path] !== x.file.lastModified);
-    const auditCambio = !!audit && (force || !!archivos || vistos[audit.path] !== audit.file.lastModified);
-    if(!cambiados.length && !auditCambio) return { sinCambios:true, total:lista.length + (audit ? 1 : 0), ultimo:Math.max(0, ...lista.map(x => x.file.lastModified), audit ? audit.file.lastModified : 0) };
+    const auditCambio = cambio(audit), potCambio = cambio(pot);
+    const nTot = lista.length + (audit ? 1 : 0) + (pot ? 1 : 0);
+    if(!cambiados.length && !auditCambio && !potCambio) return { sinCambios:true, total:nTot, ultimo:Math.max(0, ...lista.map(x => x.file.lastModified), audit ? audit.file.lastModified : 0, pot ? pot.file.lastModified : 0) };
     await loadScript(SHEETJS_URL);
+    // Base de personas (Potenciales de Wise): se complementa sola cada día; no borra a nadie.
+    let base = null;
+    if(potCambio){
+      est('Actualizando la base de personas (Potenciales)…');
+      try{ const { rows } = await leerBaseArchivo(pot.file); base = await aplicarBaseAuto(rows, pot.file.name); vistos[pot.path] = pot.file.lastModified; LS.set('ca_roll_files', vistos); }
+      catch(e){ console.error(e); base = { error: errMsg(e) }; }
+    }
     let nAudit = null;
     if(auditCambio){
       est('Leyendo el Audit…');
@@ -2443,7 +2453,7 @@ async function leerClassRoll({ interactive=false, force=false, archivos=null, on
       nAudit = await SB.rpc('cargar_audit', { filas:filasA, archivo:audit.file.name, archivo_en:new Date(audit.file.lastModified).toISOString() });
       vistos[audit.path] = audit.file.lastModified; LS.set('ca_roll_files', vistos);
     }
-    if(!cambiados.length){ LS.set('ca_roll_ultima', Date.now()); return { leidos:0, total:lista.length + 1, clases:0, avisos:[], vinculadas:0, pendientes:0, audit:nAudit }; }
+    if(!cambiados.length){ LS.set('ca_roll_ultima', Date.now()); return { leidos:0, total:nTot, clases:0, avisos:[], vinculadas:0, pendientes:0, audit:nAudit, base }; }
     est(`Leyendo ${cambiados.length} Excel…`);
     const nuevas = [], avisos = [];
     for(const x of cambiados){
@@ -2470,7 +2480,7 @@ async function leerClassRoll({ interactive=false, force=false, archivos=null, on
     est('Vinculando con las clases de la app…');
     const vinc = await autoVincularWise();
     LS.set('ca_roll_ultima', Date.now());
-    return { leidos:cambiados.length, total:lista.length, clases:filas.length, avisos, vinculadas:vinc.n, pendientes:vinc.pendientes, audit:nAudit };
+    return { leidos:cambiados.length, total:lista.length, clases:filas.length, avisos, vinculadas:vinc.n, pendientes:vinc.pendientes, audit:nAudit, base };
   } finally { ROLL_BUSY = false; }
 }
 // Empareja cada clase de Wise sin vínculo con la clase de la app más parecida (mismo programa y estaca;
@@ -2739,6 +2749,7 @@ async function rollAuto(){
   try{
     const r = await leerClassRoll();
     if(r.sinCambios) LS.set('ca_roll_ultima', Date.now());
+    if(r.base && !r.base.error && !r.leidos) toast(`Base de personas actualizada desde Potenciales · ${r.base.nuevas} nuevas · ${r.base.resueltas} alertas resueltas`, 'ok', { ms:4500 });
     if(r.leidos) toast(`Class Roll de Wise actualizado · ${r.clases} clases${r.pendientes ? ` · ${r.pendientes} por crear o vincular` : ''}`, r.pendientes ? 'warn' : 'ok', { ms:4500, action: r.pendientes ? 'Ver' : undefined, onAction: () => go('#/wiseroll') });
   }catch(e){ console.warn('Class Roll automático', e); }
 }
@@ -2774,7 +2785,7 @@ async function renderWiseRoll(){
       if(r.sinPermiso) return pintarEst('El navegador pide permiso para leer la carpeta: toca <b>Leer ahora</b> y elige <b>Permitir en cada visita</b>.', 'warn');
       if(r.vacia) return pintarEst('No encontré Excel dentro de una carpeta “Class Roll”. Vincula la carpeta <b>DEL DÍA</b> (o la misma <b>Class Roll</b>).', 'warn');
       if(r.sinCambios) pintarEst(`Todo al día: ${r.total} Excel sin cambios (el más reciente es del ${esc(fmtShort(fechaLocal(r.ultimo)))}).`);
-      else pintarEst(`✓ ${r.leidos} Excel leídos · ${r.clases} clases de Wise guardadas · ${r.vinculadas} vinculadas solas${r.audit != null ? ` · Audit: ${r.audit} clases con retraso` : ''}${r.avisos.length ? `<details style="margin-top:6px"><summary>${r.avisos.length} aviso${r.avisos.length === 1 ? '' : 's'}</summary>${r.avisos.slice(0, 30).map(esc).join('<br>')}</details>` : ''}`);
+      else pintarEst(`✓ ${r.leidos} Excel leídos · ${r.clases} clases de Wise guardadas · ${r.vinculadas} vinculadas solas${r.audit != null ? ` · Audit: ${r.audit} clases con retraso` : ''}${r.base ? (r.base.error ? ` · <b>Base de personas: no se pudo actualizar</b> (${esc(r.base.error)})` : ` · Base de personas: ${Number(r.base.total || 0).toLocaleString('es-PE')} en Potenciales, ${r.base.nuevas} nuevas, ${r.base.resueltas} alertas resueltas`) : ''}${r.avisos.length ? `<details style="margin-top:6px"><summary>${r.avisos.length} aviso${r.avisos.length === 1 ? '' : 's'}</summary>${r.avisos.slice(0, 30).map(esc).join('<br>')}</details>` : ''}`);
     }catch(e){ console.error(e); pintarEst((/wise_clases|cargar_class_roll|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0030 en Supabase.' : esc(errMsg(e))), 'warn'); }
     pintarLista();
   };
@@ -6963,6 +6974,7 @@ function renderAdmin(){
       <table class="mini"><thead><tr><th>Estaca</th><th class="r">Personas</th></tr></thead><tbody>${Object.entries(byStake).sort((a,b)=>b[1].t-a[1].t).map(([k,o]) => `<tr><td>${esc(k)}</td><td class="r">${o.t}</td></tr>`).join('')}</tbody></table>
     </section>
     <section class="card"><h2>${ICON.upload} Cargar o complementar data</h2>
+      ${SB.on() && SB.admin ? `<div class="info-box" style="margin:0 0 10px">🔄 <b>Se actualiza sola</b> cada día con <b>Potenciales.xlsx</b> de la carpeta DEL DÍA (complementa, no borra a nadie). <a href="#/wiseroll">Sincronizar ahora</a></div>` : ''}
       <p class="hint" style="margin-top:0">Acepta el export de <b>Potenciales</b> de Wise (.xlsx) o cualquier Excel/CSV con columnas como: <i>Nombres</i> (o Apellidos + Nombres), Estaca y Barrio. Las demás columnas se ignoran.</p>
       <label class="drop">${ICON.upload}<b>Elegir archivo</b><span>.xlsx · .xls · .csv</span><input type="file" id="impFile" accept=".xlsx,.xls,.csv" class="sr"></label>
       <div id="impPrev"></div>
@@ -7130,10 +7142,8 @@ function renderNewcomers(){
     toast('Personas agregadas ✓','ok'); renderAdmin();
   };
 }
-async function handleImport(file){
-  const prev = $('#impPrev');
-  prev.innerHTML = '<p class="hint">Leyendo archivo…</p>';
-  try{
+// Lee un Excel/CSV de personas (Potenciales de Wise u otro) → filas { n, k, w, g, x }.
+async function leerBaseArchivo(file){
     await loadScript(SHEETJS_URL);
     const wb = XLSX.read(await file.arrayBuffer(), { type:'array', cellDates:true });
     const ws = wb.Sheets[wb.SheetNames[0]];
@@ -7164,6 +7174,31 @@ async function handleImport(file){
       rows.push({ n, k: get('k'), w: get('w'), g: progDe(get('g')), x: genDe(get('x')) });
     }
     if(!rows.length) throw new Error('El archivo no tiene filas con nombres.');
+    return { rows, C };
+}
+// Complementa la base local (no borra a nadie) y la sube a la nube sin ventanas: lo usa la sincronización diaria.
+async function aplicarBaseAuto(rows, archivo){
+  const limpias = rows.map(r => { const x = Object.assign({}, r); Object.keys(x).forEach(k => { if(x[k] === '') delete x[k]; }); return x; });
+  const people = ROSTER.people.map(p => Object.assign({}, p));
+  const byId = new Map(people.map(p => [p.id, p]));
+  const byName = new Map(); people.forEach(p => { const k = norm(p.n); byName.set(k, byName.has(k) ? null : p); });
+  limpias.forEach(r => {
+    const ex = byId.get(pidFor(r.n, r.w)) || byName.get(norm(r.n));
+    if(ex){ const id = ex.id; Object.assign(ex, r); ex.id = id; if(ex.src === 'manual') delete ex.src; }
+    else people.push(Object.assign({ k:'', w:'' }, r, { added: todayISO() }));
+  });
+  people.forEach(p => { if(!p.id) p.id = pidFor(p.n, p.w); });
+  people.sort((a, b) => a.n.localeCompare(b.n, 'es'));
+  saveRosterLocal(people, 'importada: ' + archivo);
+  const r = await SB.rpc('cargar_personas', { filas: rows.filter(x => x.n).map(x => ({ nombre:x.n, estaca:x.k || '', barrio:x.w || '', programa:x.g || '', genero:x.x || '' })), archivo });
+  SB.loadCounts().catch(() => {});
+  return Object.assign({ personas: people.length }, r);
+}
+async function handleImport(file){
+  const prev = $('#impPrev');
+  prev.innerHTML = '<p class="hint">Leyendo archivo…</p>';
+  try{
+    const { rows, C } = await leerBaseArchivo(file);
     const byId = new Map(ROSTER.people.map(p => [p.id, p]));
     const byName = new Map(); ROSTER.people.forEach(p => { const k = norm(p.n); byName.set(k, byName.has(k) ? null : p); });
     let nNew = 0, nUpd = 0;
