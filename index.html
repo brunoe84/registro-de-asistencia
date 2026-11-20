@@ -486,6 +486,7 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .rt-tag.a{background:var(--red-50);color:var(--red)}
 .rt-tag.r{background:var(--amber-50);color:var(--amber)}
 .rt-tag.d{background:var(--line);color:var(--text)}
+.rt-tag.x{background:transparent;color:var(--faint);font-weight:600;border:1px dashed var(--border)}
 .rt-row small.rt-st{margin-top:2px}
 .rt-sum{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 2px}
 .mv-op{display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0;cursor:pointer}
@@ -2574,10 +2575,12 @@ function wiseDeAudit(a, wises, usados){
 function retrasoRoll(w, hoy){
   const al = w.alumnos || []; if(!al.length) return null;
   const primera = al.map(a => Object.keys(a.m || {}).sort()[0] || '');
-  const sin = (w.fechas || []).filter(d => d < hoy && (!al.some(a => (a.m || {})[d]) || al.some((a, i) => primera[i] && primera[i] <= d && !(a.m || {})[d])));
+  const vacia = d => !al.some(a => (a.m || {})[d]);
+  const sin = (w.fechas || []).filter(d => d < hoy && (vacia(d) || al.some((a, i) => primera[i] && primera[i] <= d && !(a.m || {})[d])));
   if(!sin.length) return null;
-  const desde = sin[0];
-  return { desde, sesiones: sin.length, dias: Math.round((parseISO(hoy) - parseISO(desde)) / 864e5) };
+  const desde = sin[0], completas = sin.filter(vacia).length;
+  // completas = nadie tiene marca ese día · parciales = algunos marcados y a otros les falta
+  return { desde, sesiones: sin.length, completas, parciales: sin.length - completas, dias: Math.round((parseISO(hoy) - parseISO(desde)) / 864e5) };
 }
 let ABRIR_MSG = null;
 async function renderRetrasos(){
@@ -2638,6 +2641,18 @@ async function renderRetrasos(){
     catch(e){ console.error(e); if(antes) hechas[it.key] = antes; else delete hechas[it.key]; LS.set('ca_rt_hechas', hechas); paint();
       toast(/marcar_audit_actualizada|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0032 en Supabase' : errMsg(e), 'error', {ms:4200}); }
   };
+  // Etiquetas simples: rojo = clases sin ninguna marca, naranja = clases marcadas a medias (según el Class Roll).
+  const plural = (n, s, p) => `${n} ${n === 1 ? s : p}`;
+  const tagsRetraso = it => {
+    const r = it.roll, a = it.audit, t = [];
+    if(r){
+      if(r.completas) t.push(`<span class="rt-tag a" title="Nadie tiene marca esos días">${plural(r.completas, 'clase completa', 'clases completas')} sin marcar</span>`);
+      if(r.parciales) t.push(`<span class="rt-tag r" title="Algunos alumnos marcados y a otros les falta">${plural(r.parciales, 'clase marcada', 'clases marcadas')} a medias</span>`);
+    } else if(a) t.push(`<span class="rt-tag a">${plural(a.sesiones, 'clase', 'clases')} sin marcar</span>`);
+    if(it.desde) t.push(`<span class="rt-tag d">desde ${esc(fmtShort(it.desde))} · ${it.dias} días</span>`);
+    if(a && r) t.push(`<span class="rt-tag x" title="Lo que reporta el Audit de Wise">Audit: ${a.sesiones}</span>`);
+    return t.join('');
+  };
   const paint = () => {
     const todos = armar();
     const list = todos.filter(it => (!F.p || it.programa === F.p) && (!F.k || it.estaca === F.k) && (!F.src || (F.src === 'audit' ? it.audit : !it.audit)))
@@ -2661,7 +2676,7 @@ async function renderRetrasos(){
       ${list.map(it => `<div class="rt-row${it.hecho ? ' hecho' : ''}" data-key="${esc(it.key)}"><button class="wchk${it.hecho ? ' on' : ''}" data-chk aria-pressed="${it.hecho}" title="${it.hecho ? 'Actualizada en Wise2 · toca para desmarcar' : 'Marcar: ya la actualicé en Wise2'}">${it.hecho ? ICON.check : ''}</button><span class="av">${esc(initials(it.maestro))}</span><div class="ii">
           <b>${esc(/unassigned/i.test(it.maestro) ? 'Sin maestro asignado' : prettyName(it.maestro))}</b>
           <small>${esc([progLabel(it.programa), stakeShort(it.estaca), it.det].filter(Boolean).join(' · '))}</small>
-          <div class="rt-tags">${it.audit ? `<span class="rt-tag a">Audit: ${it.audit.sesiones} sesi${it.audit.sesiones === 1 ? 'ón' : 'ones'} sin marcar desde ${esc(fmtShort(it.audit.desde))}</span>` : ''}${it.roll ? `<span class="rt-tag r">Class Roll: ${it.roll.sesiones} sin marcar desde ${esc(fmtShort(it.roll.desde))}</span>` : ''}<span class="rt-tag d">${it.dias} días</span></div>
+          <div class="rt-tags">${tagsRetraso(it)}</div>
           ${it.hecho ? `<small class="wd-ok">✓ Actualizada en Wise2 el ${esc(fechaHora(hechas[it.key]))} · se confirma con el próximo reporte</small>` : `${appEstado(it)}${it.volvio ? `<small class="wd-new">● Sigue con retraso en un reporte posterior a tu marca del ${esc(fechaHora(it.volvio))}</small>` : ''}`}</div>
         <div class="wr-acts">${it.app ? `<button class="btn sm" data-abrir>Abrir</button><button class="btn sm primary" data-msg>💬 Mensaje</button>` : ''}</div></div>`).join('') || '<div class="empty">✓ No hay clases con retraso con estos filtros.</div>'}`;
     $$('[data-f]', body).forEach(s => s.onchange = () => { F[s.dataset.f] = s.dataset.f === 'dias' ? Math.max(1, +s.value || 8) : s.value; LS.set('ca_rt_filtro', F); paint(); });
