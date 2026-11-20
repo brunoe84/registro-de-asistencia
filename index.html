@@ -364,6 +364,9 @@ svg{width:18px;height:18px;flex-shrink:0}
 .roll{display:flex;flex-direction:column;gap:8px}
 .roll-item{display:flex;align-items:center;gap:11px;background:#fff;border:1.5px solid var(--border);border-radius:15px;padding:10px 10px 10px 12px}
 .roll-item.p{border-color:#BFE3CC;background:#F6FBF8}
+.av-cal{border:0;padding:0;cursor:pointer;position:relative;transition:background .15s,color .15s,box-shadow .15s}
+.av-cal:hover,.av-cal:focus-visible{background:var(--navy);color:#fff;box-shadow:0 0 0 3px rgba(19,44,62,.15);outline:none}
+.av-cal::after{content:'';position:absolute;right:-2px;bottom:-2px;width:15px;height:15px;border-radius:50%;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23132C3E' stroke-width='2.4' stroke-linecap='round'%3E%3Crect x='4' y='5' width='16' height='15' rx='2'/%3E%3Cpath d='M4 10h16M9 3v4M15 3v4'/%3E%3C/svg%3E") center/10px no-repeat;box-shadow:0 0 0 1px var(--border);opacity:.85}
 .roll-item.f{border-color:#F1CFCA;background:#FDF7F6}
 .roll-item .ri{cursor:pointer}
 .pf{display:flex;gap:6px}
@@ -5711,15 +5714,17 @@ function renderClassTab(){
       ${ro ? '' : fillBlankHTML(studs.filter(s => !att[s.id]).length)}
       <div class="roll" id="roll">${studs.map(s => {
         const v = att[s.id] || '';
-        return `<div class="roll-item ${ATT_OK(v)?'p':v==='F'?'f':''}" data-sid="${s.id}"><span class="av">${esc(initials(s.n))}</span><div class="ri"><b>${esc(prettyName(s.n))}</b><small>${esc(stuSub(s))}${attNote(v)}</small></div>
+        return `<div class="roll-item ${ATT_OK(v)?'p':v==='F'?'f':''}" data-sid="${s.id}"><button type="button" class="av av-cal" data-cal title="Ver la asistencia de ${esc(prettyName(s.n))}">${esc(initials(s.n))}</button><div class="ri"><b>${esc(prettyName(s.n))}</b><small>${esc(stuSub(s))}${attNote(v)}</small></div>
           <div class="pf"><button class="pf-btn p ${ATT_OK(v)?'on':''}" data-v="P" ${ro?'disabled':''}>${ICON.check}<span>Asistió</span></button><button class="pf-btn f ${v==='F'?'on':''}" data-v="F" ${ro?'disabled':''}>${ICON.x}<span>Falta</span></button></div></div>`;
       }).join('')}</div>
-      ${ro ? '' : '<p class="hint" style="text-align:center;margin-top:12px">Toca el nombre para marcar “Asistió” rápido. Toca otra vez para quitar.</p>'}`;
+      ${ro ? '' : '<p class="hint" style="text-align:center;margin-top:12px">Toca el nombre para marcar “Asistió” rápido. Toca otra vez para quitar. Toca las iniciales para ver su calendario.</p>'}`;
     const dp = $('#dPrev'), dn = $('#dNext');
     if(idx > 0) dp.onclick = () => { ST.classDate = dates[idx-1]; renderClassTab(); };
     if(idx < dates.length-1 && idx >= 0) dn.onclick = () => { ST.classDate = dates[idx+1]; renderClassTab(); };
     const pf = $('#pFirst'); if(pf) pf.onclick = () => { ST.classDate = pending[0]; renderClassTab(); };
     const pn = $('#pNext'); if(pn) pn.onclick = () => { ST.classDate = nextPend; renderClassTab(); };
+    // Iniciales del alumno → su calendario personal de asistencia (como en la Planilla).
+    $$('#roll [data-cal]').forEach(b => b.onclick = e => { e.stopPropagation(); openStudentCal(cls, b.closest('.roll-item').dataset.sid, () => { if(CUR.code === cls.code && ST.ctab === 'hoy') renderClassTab(); }); });
     $('#dPick').onchange = e => {
       const v = e.target.value; if(!v) return;
       const why = blockedReason(v);
