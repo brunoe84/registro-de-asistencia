@@ -474,6 +474,12 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .rt-dias input{width:70px}
 .rt-row{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;padding:11px 12px;border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:6px}
 .rt-row .ii{flex:1;min-width:200px}
+.rt-row .wchk{align-self:flex-start;margin-top:3px}
+.rt-row.hecho{background:#F7FAF8;opacity:.6;transition:opacity .15s}
+.rt-row.hecho:hover{opacity:1}
+.rt-row.hecho .ii > b,.rt-row.hecho .ii > small:not(.wd-ok){text-decoration:line-through;text-decoration-color:#9AA8B0}
+.rt-row.hecho .rt-tags{filter:grayscale(1)}
+.rt-row.hecho .wr-acts{display:none}
 .rt-row .ii small{display:block;color:var(--muted);font-size:12.5px}
 .rt-tags{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0 3px}
 .rt-tag{font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px}
@@ -2585,10 +2591,17 @@ async function renderRetrasos(){
   const A = (audit || [])[0] || { filas:[] }; wises = wises || []; apps = apps || [];
   const appPorId = new Map(apps.map(c => [c.id, c])), hoy = todayISO();
   const F = Object.assign({ p:'', k:'', src:'', dias:8 }, LS.get('ca_rt_filtro', {}));
+  // "Ya actualizada en Wise2": vale mientras el Audit / Class Roll leídos sean anteriores a la marca.
+  // Si llega un Excel más nuevo y la clase sigue con retraso, la marca deja de valer y vuelve arriba.
+  let hechas = LS.get('ca_rt_hechas', {}), sinMig = false;
+  try{ const r = await SB.rpc('audit_actualizadas_admin'); hechas = {}; (r || []).forEach(x => { hechas[x.clave] = x.marcado_en; }); LS.set('ca_rt_hechas', hechas); }
+  catch(e){ console.warn('audit_actualizadas_admin', e); sinMig = true; }
+  const ms = t => { const v = Date.parse(t); return isNaN(v) ? 0 : v; };
+  const auditEn = ms(A.archivo_en || A.actualizado_en);
   const armar = () => {
     const items = new Map(), usados = new Set();
     (A.filas || []).forEach((a, i) => {
-      const w = wiseDeAudit(a, wises, usados), key = w ? w.clave : 'a' + i;
+      const w = wiseDeAudit(a, wises, usados), key = w ? w.clave : 'a:' + norm([a.programa, a.estaca, a.curso + '-' + a.seccion, a.maestro].join('|'));
       if(w) usados.add(w.clave);
       const it = items.get(key) || { key, w, audit:null };
       it.audit = a; items.set(key, it);
@@ -2608,14 +2621,29 @@ async function renderRetrasos(){
       it.desde = a ? a.desde : it.roll ? it.roll.desde : '';
       it.dias = it.desde ? Math.round((parseISO(hoy) - parseISO(it.desde)) / 864e5) : 0;
       it.enRango = !!a || (it.roll && it.roll.dias >= F.dias);
+      const h = hechas[it.key], hm = ms(h);
+      const datosEn = Math.max(a ? auditEn : 0, it.roll && w ? ms(w.archivo_en || w.actualizado_en) : 0);
+      it.hecho = !!h && datosEn <= hm;          // los datos son de antes de la marca
+      it.volvio = !!h && !it.hecho ? h : '';   // un reporte nuevo la sigue mostrando con retraso
       return it;
     }).filter(it => it.enRango);
+  };
+  const marcar = async (it, si) => {
+    const antes = hechas[it.key];
+    if(si) hechas[it.key] = new Date().toISOString(); else delete hechas[it.key];
+    LS.set('ca_rt_hechas', hechas); paint();
+    if(si) toast(`✓ ${/unassigned/i.test(it.maestro) ? 'Clase' : prettyName(it.maestro)}: actualizada en Wise2`, 'ok', { action:'Deshacer', onAction: () => marcar(it, false) });
+    if(sinMig) return;
+    try{ const t = await SB.rpc('marcar_audit_actualizada', { clave:it.key, hecho:si }); if(si && t){ hechas[it.key] = t; LS.set('ca_rt_hechas', hechas); } }
+    catch(e){ console.error(e); if(antes) hechas[it.key] = antes; else delete hechas[it.key]; LS.set('ca_rt_hechas', hechas); paint();
+      toast(/marcar_audit_actualizada|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0032 en Supabase' : errMsg(e), 'error', {ms:4200}); }
   };
   const paint = () => {
     const todos = armar();
     const list = todos.filter(it => (!F.p || it.programa === F.p) && (!F.k || it.estaca === F.k) && (!F.src || (F.src === 'audit' ? it.audit : !it.audit)))
-      .sort((x, y) => y.dias - x.dias || x.maestro.localeCompare(y.maestro, 'es'));
-    const nA = list.filter(it => it.audit).length;
+      .sort((x, y) => (x.hecho - y.hecho) || y.dias - x.dias || x.maestro.localeCompare(y.maestro, 'es'));
+    const pend = list.filter(it => !it.hecho), nH = list.length - pend.length;
+    const nA = pend.filter(it => it.audit).length;
     const fa = A.archivo_en ? `Audit del ${fmtShort(fechaLocal(A.archivo_en))}` : 'Aún no se leyó el Audit';
     const appEstado = it => {
       if(!it.app) return `<small class="rt-st no">No está vinculada a una clase de la app · <a href="#/wiseroll">revisar</a></small>`;
@@ -2629,17 +2657,19 @@ async function renderRetrasos(){
         <div class="rt-f"><label>Fuente</label><select class="inp" data-f="src"><option value="">Audit + Class Roll</option><option value="audit" ${F.src === 'audit' ? 'selected' : ''}>Solo Audit</option><option value="roll" ${F.src === 'roll' ? 'selected' : ''}>Solo Class Roll (fuera del Audit)</option></select></div>
         <div class="rt-f"><label>Class Roll: retraso desde</label><span class="rt-dias"><input class="inp" type="number" min="1" max="60" data-f="dias" value="${F.dias}"> días</span></div>
       </section>
-      <div class="rt-sum"><p class="hint" style="margin:0;flex:1">${esc(fa)} · <b>${list.length}</b> clase${list.length === 1 ? '' : 's'} con retraso (${nA} del Audit, ${list.length - nA} detectadas con el Class Roll) · <a href="#/wiseroll">Sincronizar</a></p>${list.some(it => it.app) ? `<button class="btn sm primary" id="rtTodos" style="background:#1E8449;border-color:#1E8449">📣 Enviar mensaje a todos</button>` : ''}</div>
-      ${list.map(it => `<div class="rt-row" data-key="${esc(it.key)}"><span class="av">${esc(initials(it.maestro))}</span><div class="ii">
+      <div class="rt-sum"><p class="hint" style="margin:0;flex:1">${esc(fa)} · <b>${pend.length}</b> clase${pend.length === 1 ? '' : 's'} con retraso (${nA} del Audit, ${pend.length - nA} detectadas con el Class Roll)${nH ? ` · <b style="color:var(--green)">${nH} ya actualizada${nH === 1 ? '' : 's'} en Wise2</b>` : ''} · <a href="#/wiseroll">Sincronizar</a><br><small>Marca la casilla cuando ya la pusiste al día en Wise2: baja al final y, si el próximo reporte la sigue mostrando con retraso, se desmarca sola.</small></p>${pend.some(it => it.app) ? `<button class="btn sm primary" id="rtTodos" style="background:#1E8449;border-color:#1E8449">📣 Enviar mensaje a todos</button>` : ''}</div>
+      ${list.map(it => `<div class="rt-row${it.hecho ? ' hecho' : ''}" data-key="${esc(it.key)}"><button class="wchk${it.hecho ? ' on' : ''}" data-chk aria-pressed="${it.hecho}" title="${it.hecho ? 'Actualizada en Wise2 · toca para desmarcar' : 'Marcar: ya la actualicé en Wise2'}">${it.hecho ? ICON.check : ''}</button><span class="av">${esc(initials(it.maestro))}</span><div class="ii">
           <b>${esc(/unassigned/i.test(it.maestro) ? 'Sin maestro asignado' : prettyName(it.maestro))}</b>
           <small>${esc([progLabel(it.programa), stakeShort(it.estaca), it.det].filter(Boolean).join(' · '))}</small>
           <div class="rt-tags">${it.audit ? `<span class="rt-tag a">Audit: ${it.audit.sesiones} sesi${it.audit.sesiones === 1 ? 'ón' : 'ones'} sin marcar desde ${esc(fmtShort(it.audit.desde))}</span>` : ''}${it.roll ? `<span class="rt-tag r">Class Roll: ${it.roll.sesiones} sin marcar desde ${esc(fmtShort(it.roll.desde))}</span>` : ''}<span class="rt-tag d">${it.dias} días</span></div>
-          ${appEstado(it)}</div>
+          ${it.hecho ? `<small class="wd-ok">✓ Actualizada en Wise2 el ${esc(fechaHora(hechas[it.key]))} · se confirma con el próximo reporte</small>` : `${appEstado(it)}${it.volvio ? `<small class="wd-new">● Sigue con retraso en un reporte posterior a tu marca del ${esc(fechaHora(it.volvio))}</small>` : ''}`}</div>
         <div class="wr-acts">${it.app ? `<button class="btn sm" data-abrir>Abrir</button><button class="btn sm primary" data-msg>💬 Mensaje</button>` : ''}</div></div>`).join('') || '<div class="empty">✓ No hay clases con retraso con estos filtros.</div>'}`;
     $$('[data-f]', body).forEach(s => s.onchange = () => { F[s.dataset.f] = s.dataset.f === 'dias' ? Math.max(1, +s.value || 8) : s.value; LS.set('ca_rt_filtro', F); paint(); });
-    const tb = $('#rtTodos'); if(tb) tb.onclick = () => envioMasivo(list.filter(it => it.app));
+    const tb = $('#rtTodos'); if(tb) tb.onclick = () => envioMasivo(pend.filter(it => it.app));
     $$('.rt-row', body).forEach(row => {
-      const it = list.find(x => x.key === row.dataset.key); if(!it || !it.app) return;
+      const it = list.find(x => x.key === row.dataset.key); if(!it) return;
+      $('[data-chk]', row).onclick = () => marcar(it, !it.hecho);
+      if(!it.app) return;
       $('[data-abrir]', row).onclick = () => go('#/clase/' + it.app.codigo);
       $('[data-msg]', row).onclick = () => {
         const n = it.audit ? it.audit.sesiones : it.roll.sesiones;
