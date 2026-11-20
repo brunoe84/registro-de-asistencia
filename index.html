@@ -489,6 +489,20 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .rt-tag.x{background:transparent;color:var(--faint);font-weight:600;border:1px dashed var(--border)}
 .rt-row small.rt-st{margin-top:2px}
 .rt-sum{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 2px}
+.rt-sep{font:700 12.5px 'Manrope';color:var(--green);margin:14px 2px 6px;padding-top:10px;border-top:1px dashed var(--border)}
+/* PC: la página de retrasos usa todo el ancho — filtros en una fila y clases en columnas */
+@media(min-width:1000px){
+  .wrap.rt-wide{max-width:1640px;padding-left:24px;padding-right:24px}
+  body:has(.rt-wide) .top-in{max-width:1640px;padding:0 24px}
+  .rt-wide .rt-filtros{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.4fr) auto;align-items:end;gap:10px 16px;padding:14px 18px}
+  .rt-wide .rt-f{min-width:0}
+  .rt-wide .rt-f select{width:100%}
+  .rt-wide .rt-sum{margin:14px 2px 12px}
+  .rt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(500px,1fr));gap:10px;align-items:stretch}
+  .rt-grid .rt-row{margin:0}
+  .rt-grid .rt-sep,.rt-grid .empty{grid-column:1/-1}
+  .rt-grid .rt-sep{margin:6px 2px 0}
+}
 .mv-op{display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0;cursor:pointer}
 .mv-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;margin-bottom:5px;background:#fff}
 .mv-row .ii{flex:1;min-width:0}
@@ -2585,7 +2599,7 @@ function retrasoRoll(w, hoy){
 let ABRIR_MSG = null;
 async function renderRetrasos(){
   CUR = { type:'retrasos', code:null };
-  app.innerHTML = topbar({ back:'#/', title:'Audit · Clases con retraso', sub:'Administración' }) + `<main class="wrap"><div id="rtBody">${loadingHTML()}</div></main>`;
+  app.innerHTML = topbar({ back:'#/', title:'Audit · Clases con retraso', sub:'Administración' }) + `<main class="wrap rt-wide"><div id="rtBody">${loadingHTML()}</div></main>`;
   bindTop();
   const body = $('#rtBody');
   let audit, wises, apps;
@@ -2676,12 +2690,12 @@ async function renderRetrasos(){
         <div class="rt-f"><label>Class Roll: retraso desde</label><span class="rt-dias"><input class="inp" type="number" min="1" max="60" data-f="dias" value="${F.dias}"> días</span></div>
       </section>
       <div class="rt-sum"><p class="hint" style="margin:0;flex:1">${esc(fa)} · <b>${pend.length}</b> clase${pend.length === 1 ? '' : 's'} con retraso (${nA} del Audit, ${pend.length - nA} detectadas con el Class Roll)${nH ? ` · <b style="color:var(--green)">${nH} ya actualizada${nH === 1 ? '' : 's'} en Wise2</b>` : ''} · <a href="#/wiseroll">Sincronizar</a><br><small>Marca la casilla cuando ya la pusiste al día en Wise2: baja al final y, si el próximo reporte la sigue mostrando con retraso, se desmarca sola.</small></p>${pend.some(it => it.app) ? `<button class="btn sm primary" id="rtTodos" style="background:#1E8449;border-color:#1E8449">📣 Enviar mensaje a todos</button>` : ''}</div>
-      ${list.map(it => `<div class="rt-row${it.hecho ? ' hecho' : ''}" data-key="${esc(it.key)}"><button class="wchk${it.hecho ? ' on' : ''}" data-chk aria-pressed="${it.hecho}" title="${it.hecho ? 'Actualizada en Wise2 · toca para desmarcar' : 'Marcar: ya la actualicé en Wise2'}">${it.hecho ? ICON.check : ''}</button><span class="av">${esc(initials(it.maestro))}</span><div class="ii">
+      <div class="rt-grid">${list.map((it, i) => `${it.hecho && (!i || !list[i - 1].hecho) ? `<div class="rt-sep">✓ Ya actualizadas en Wise2 (${nH})</div>` : ''}<div class="rt-row${it.hecho ? ' hecho' : ''}" data-key="${esc(it.key)}"><button class="wchk${it.hecho ? ' on' : ''}" data-chk aria-pressed="${it.hecho}" title="${it.hecho ? 'Actualizada en Wise2 · toca para desmarcar' : 'Marcar: ya la actualicé en Wise2'}">${it.hecho ? ICON.check : ''}</button><span class="av">${esc(initials(it.maestro))}</span><div class="ii">
           <b>${esc(/unassigned/i.test(it.maestro) ? 'Sin maestro asignado' : prettyName(it.maestro))}</b>
           <small>${esc([progLabel(it.programa), stakeShort(it.estaca), it.det].filter(Boolean).join(' · '))}</small>
           <div class="rt-tags">${tagsRetraso(it)}</div>
           ${it.hecho ? `<small class="wd-ok">✓ Actualizada en Wise2 el ${esc(fechaHora(hechas[it.key]))} · se confirma con el próximo reporte</small>` : `${appEstado(it)}${it.volvio ? `<small class="wd-new">● Sigue con retraso en un reporte posterior a tu marca del ${esc(fechaHora(it.volvio))}</small>` : ''}`}</div>
-        <div class="wr-acts">${it.app ? `<button class="btn sm" data-abrir>Abrir</button><button class="btn sm primary" data-msg>💬 Mensaje</button>` : ''}</div></div>`).join('') || '<div class="empty">✓ No hay clases con retraso con estos filtros.</div>'}`;
+        <div class="wr-acts">${it.app ? `<button class="btn sm" data-abrir>Abrir</button><button class="btn sm primary" data-msg>💬 Mensaje</button>` : ''}</div></div>`).join('') || '<div class="empty">✓ No hay clases con retraso con estos filtros.</div>'}</div>`;
     $$('[data-f]', body).forEach(s => s.onchange = () => { F[s.dataset.f] = s.dataset.f === 'dias' ? Math.max(1, +s.value || 8) : s.value; LS.set('ca_rt_filtro', F); paint(); });
     const tb = $('#rtTodos'); if(tb) tb.onclick = () => envioMasivo(pend.filter(it => it.app));
     $$('.rt-row', body).forEach(row => {
