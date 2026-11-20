@@ -2593,7 +2593,9 @@ async function renderRetrasos(){
   catch(e){ body.innerHTML = `<div class="warn-box">${/audit_admin|wise_clases|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración en Supabase.' : esc(errMsg(e))}</div>`; return; }
   const A = (audit || [])[0] || { filas:[] }; wises = wises || []; apps = apps || [];
   const appPorId = new Map(apps.map(c => [c.id, c])), hoy = todayISO();
-  const F = Object.assign({ p:'', k:'', src:'', dias:8 }, LS.get('ca_rt_filtro', {}));
+  const F = Object.assign({ p:'', k:'', src:'', t:'', dias:8 }, LS.get('ca_rt_filtro', {}));
+  // Tipo de retraso: 'c' = con clases completas sin marcar (o solo Audit, sin Class Roll), 'm' = con clases marcadas a medias.
+  const esTipo = it => !F.t || (F.t === 'c' ? (it.roll ? it.roll.completas > 0 : !!it.audit) : !!(it.roll && it.roll.parciales > 0));
   // "Ya actualizada en Wise2": vale mientras el Audit / Class Roll leídos sean anteriores a la marca.
   // Si llega un Excel más nuevo y la clase sigue con retraso, la marca deja de valer y vuelve arriba.
   let hechas = LS.get('ca_rt_hechas', {}), sinMig = false;
@@ -2655,7 +2657,7 @@ async function renderRetrasos(){
   };
   const paint = () => {
     const todos = armar();
-    const list = todos.filter(it => (!F.p || it.programa === F.p) && (!F.k || it.estaca === F.k) && (!F.src || (F.src === 'audit' ? it.audit : !it.audit)))
+    const list = todos.filter(it => (!F.p || it.programa === F.p) && (!F.k || it.estaca === F.k) && (!F.src || (F.src === 'audit' ? it.audit : !it.audit)) && esTipo(it))
       .sort((x, y) => (x.hecho - y.hecho) || y.dias - x.dias || x.maestro.localeCompare(y.maestro, 'es'));
     const pend = list.filter(it => !it.hecho), nH = list.length - pend.length;
     const nA = pend.filter(it => it.audit).length;
@@ -2670,6 +2672,7 @@ async function renderRetrasos(){
         <div class="rt-f"><label>Programa</label><select class="inp" data-f="p"><option value="">Todos</option><option value="S" ${F.p === 'S' ? 'selected' : ''}>Seminarios</option><option value="I" ${F.p === 'I' ? 'selected' : ''}>Institutos</option></select></div>
         <div class="rt-f"><label>Estaca</label><select class="inp" data-f="k"><option value="">Todas</option>${PROG_STAKES.map(s => `<option value="${esc(s)}" ${F.k === s ? 'selected' : ''}>${esc(stakeShort(s))}</option>`).join('')}</select></div>
         <div class="rt-f"><label>Fuente</label><select class="inp" data-f="src"><option value="">Audit + Class Roll</option><option value="audit" ${F.src === 'audit' ? 'selected' : ''}>Solo Audit</option><option value="roll" ${F.src === 'roll' ? 'selected' : ''}>Solo Class Roll (fuera del Audit)</option></select></div>
+        <div class="rt-f"><label>Tipo de retraso</label><select class="inp" data-f="t"><option value="">Todos</option><option value="c" ${F.t === 'c' ? 'selected' : ''}>🔴 Clases completas sin marcar</option><option value="m" ${F.t === 'm' ? 'selected' : ''}>🟠 Clases marcadas a medias</option></select></div>
         <div class="rt-f"><label>Class Roll: retraso desde</label><span class="rt-dias"><input class="inp" type="number" min="1" max="60" data-f="dias" value="${F.dias}"> días</span></div>
       </section>
       <div class="rt-sum"><p class="hint" style="margin:0;flex:1">${esc(fa)} · <b>${pend.length}</b> clase${pend.length === 1 ? '' : 's'} con retraso (${nA} del Audit, ${pend.length - nA} detectadas con el Class Roll)${nH ? ` · <b style="color:var(--green)">${nH} ya actualizada${nH === 1 ? '' : 's'} en Wise2</b>` : ''} · <a href="#/wiseroll">Sincronizar</a><br><small>Marca la casilla cuando ya la pusiste al día en Wise2: baja al final y, si el próximo reporte la sigue mostrando con retraso, se desmarca sola.</small></p>${pend.some(it => it.app) ? `<button class="btn sm primary" id="rtTodos" style="background:#1E8449;border-color:#1E8449">📣 Enviar mensaje a todos</button>` : ''}</div>
