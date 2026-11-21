@@ -218,6 +218,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,label:focus-visible,[
 .item:hover{border-color:var(--border-2);box-shadow:var(--shadow)}
 button.item:active{transform:scale(.995)}
 .item .ii{flex:1;min-width:0}
+.item small b{display:inline}
 .item b{display:block;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item small{display:block;color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item>svg:last-child{color:var(--faint)}
@@ -1618,6 +1619,7 @@ const SB = {
     this.admin = !!(perfil[0] && perfil[0].rol === 'admin');
     this.mis = await this.rpc('mis_clases');
     if(!this.admin) await this.recuperarAccesos();
+    await cargarWiseUlt();
     this.solicitudes = await this.rpc('mis_solicitudes');
     if(this.admin){ await this.loadCounts(); this.watchGlobal(); }
   },
@@ -1848,11 +1850,23 @@ function classBack(cls){
 
 /* ---------- Seguimiento: retrasos y últimos cambios ---------- */
 const DIAS_RETRASO = 7;
+/* Última fecha con marcas en el Class Roll de Wise, por clase de la app (id → 'AAAA-MM-DD'). */
+const WISE_ULT = {};
+function ultimaWise(alumnos){ let u = ''; (alumnos || []).forEach(a => Object.entries((a && a.m) || {}).forEach(([f, v]) => { if(v && /^\d{4}-\d\d-\d\d$/.test(f) && f > u) u = f; })); return u; }
+let WISE_ULT_AT = 0;
+async function cargarWiseUlt(){
+  try{
+    if(SB.admin){ if(Date.now() - WISE_ULT_AT < 60000) return; (await SB.rpc('wise_clases_admin') || []).forEach(w => { if(w.clase_id) WISE_ULT[w.clase_id] = ultimaWise(w.alumnos); }); WISE_ULT_AT = Date.now(); }
+    else await Promise.all((SB.mis || []).map(async c => { const r = ((await SB.rpc('wise_de_clase', { clase:c.id })) || [])[0]; if(r) WISE_ULT[c.id] = ultimaWise(r.alumnos); }));
+  }catch(e){ console.warn('Wise: última fecha', e); }
+}
 /* Una clase está atrasada si su primera sesión sin marcar tiene más de una semana. */
 function retrasoDe(c){
   if(!c || !c.inicio || !c.dias) return null;
   const dates = classDates({ meta:{ days:c.dias, start:c.inicio, end:c.fin || '', extraDates:c.fechas_extra || [], skipDates:c.fechas_omitidas || [] }, att:{} });
-  const pend = dates.filter(d => d > (c.ultima_fecha || ''));
+  // Cuenta lo marcado en la app y lo marcado en Wise (Class Roll): vale la fecha más reciente de las dos.
+  const w = WISE_ULT[c.id] || '', ult = (c.ultima_fecha || '') > w ? (c.ultima_fecha || '') : w;
+  const pend = dates.filter(d => d > ult);
   if(!pend.length) return null;
   const dias = Math.floor((parseISO(todayISO()) - parseISO(pend[0])) / 864e5);
   return dias > DIAS_RETRASO ? { dias, desde:pend[0], sesiones:pend.length } : null;
@@ -1902,6 +1916,7 @@ async function renderSeguimiento(filtro='adoptadas'){
     const body = $('#segBody'); if(!body) return;
     try{
       SB.resumen = await SB.rpc('resumen_clases');
+      await cargarWiseUlt();
       try{ const r = await SB.rpc('clases_wise_al_dia'); alDia = {}; (r || []).forEach(x => { alDia[x.id] = x.al_dia_en; }); }catch(e){ console.warn('clases_wise_al_dia', e); }
       paint();
     }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
@@ -2417,6 +2432,7 @@ async function renderTodas(prog, stakeIdx){
     const body = $('#todasBody'); if(!body) return;
     try{
       SB.resumen = await SB.rpc('resumen_clases');
+      await cargarWiseUlt();
       paintTodas(body, nivel, prog, stakeIdx);
     }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
   };
