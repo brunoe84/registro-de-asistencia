@@ -1873,10 +1873,16 @@ function retrasoDe(c){
 }
 const fechaLocal = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; };
 const fechaHora = ts => { if(!ts) return ''; const d = new Date(ts); return isNaN(d) ? '' : `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()} ${fmtTime(d)}`; };
+// Institutos (clases semanales): el atraso se cuenta en semanas; Seminarios (diario), en días.
+function atrasoTxt(c, r){
+  if(c.programa !== 'I') return `Atrasada ${r.dias} días`;
+  const sem = Math.max(1, Math.floor(r.dias / 7));
+  return `Atrasada ${sem} semana${sem === 1 ? '' : 's'} · ${r.sesiones} sesi${r.sesiones === 1 ? 'ón' : 'ones'} sin marcar`;
+}
 function seguimientoHTML(c){
   const r = retrasoDe(c);
   return `<small>${c.titular ? `Adoptada por <b>${esc(c.titular)}</b>${c.adoptada_en ? ' · '+esc(fechaHora(c.adoptada_en)) : ''}` : 'Sin adoptar'}</small>
-    <small>${c.ultimo_cambio ? `Último cambio del maestro: <b>${esc(fechaHora(c.ultimo_cambio))}</b> · ${c.cambios} cambio${c.cambios===1?'':'s'}` : 'Sin cambios del maestro'}${r ? ` · <b class="late-txt">Atrasada ${r.dias} días</b>` : ''}${Number(c.recordatorios) ? ' · 🔔 Recordatorios activos' : ''}</small>`;
+    <small>${c.ultimo_cambio ? `Último cambio del maestro: <b>${esc(fechaHora(c.ultimo_cambio))}</b> · ${c.cambios} cambio${c.cambios===1?'':'s'}` : 'Sin cambios del maestro'}${r ? ` · <b class="late-txt">${atrasoTxt(c, r)}</b>` : ''}${Number(c.recordatorios) ? ' · 🔔 Recordatorios activos' : ''}</small>`;
 }
 async function renderSeguimiento(filtro='adoptadas'){
   CUR = { type:'seguimiento', code:null };
