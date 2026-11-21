@@ -222,6 +222,10 @@ button.item:active{transform:scale(.995)}
 .item small{display:block;color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item>svg:last-child{color:var(--faint)}
 .item .num-badge{background:var(--blue-50);color:var(--blue-2);font-weight:800;border-radius:10px;padding:5px 10px;font-size:13px;white-space:nowrap}
+.num-badge{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border-radius:999px;padding:4px 10px;font-weight:800;font-size:12.5px}
+/* Alertas en las tarjetas de programa: etiqueta suave con punto rojo, bajo el texto */
+.action-card .alert-badge{grid-column:2;justify-self:start;margin-top:10px;background:var(--red-50);color:var(--red-2);box-shadow:inset 0 0 0 1px var(--red-100)}
+.action-card .alert-badge::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--red)}
 .item .num-badge.alert-badge{background:var(--red);color:#fff;border-radius:999px;min-width:26px;text-align:center;box-shadow:0 4px 10px -4px rgba(199,62,49,.7)}
 .item .ico{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;flex-shrink:0}
 /* Seguimiento: casilla "Al día en Wise" a la izquierda de cada clase */
@@ -745,6 +749,8 @@ button.wz:hover{filter:brightness(1.12)}
 .sh-foot .btn{flex:1}
 /* En celular, el botón principal (el último) va a la izquierda: en Netlify el sello de la esquina inferior derecha lo tapaba. */
 @media(max-width:700px){.sh-foot{flex-direction:row-reverse}}
+/* Calendario del alumno: Anterior a la izquierda (angosto) y Siguiente alumno a la derecha (ancho) */
+#calBox .sh-foot{flex-direction:row}#calBox #calPrev{flex:1 1 0}#calBox #calNext{flex:2 1 0}
 .sig-wrap{position:relative;border:1.5px dashed #BDB5A7;border-radius:14px;background:var(--soft);height:170px;overflow:hidden}
 canvas.sig{width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
 .sig-ph{position:absolute;inset:0;display:grid;place-items:center;color:#B9B2A5;font-weight:600;pointer-events:none}
