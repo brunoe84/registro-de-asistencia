@@ -7268,6 +7268,86 @@ function askAdmin(){
   });
 }
 let IMPORT = null;
+/* ---------- Directorio de maestros (Excel para completar celulares y volver a subir) ----------
+   Ordenado por programa, estaca y maestro. La columna ID identifica la clase al importar;
+   la última columna (Celular) se llena a mano. Al importar, cada celular se guarda para ese
+   maestro (se copia a todas sus clases) y queda listo para escribirle por WhatsApp. */
+async function directorioFilas(){
+  await SB.ensureSession();
+  const all = (await SB.rpc('resumen_clases')) || [];
+  const progOrden = { S:0, I:1 };
+  const filas = all.slice().sort((a,b) => (progOrden[a.programa] ?? 9) - (progOrden[b.programa] ?? 9) || String(a.estaca||'').localeCompare(String(b.estaca||''),'es') || prettyName(a.maestro).localeCompare(prettyName(b.maestro),'es') || String(a.horario||'').localeCompare(String(b.horario||''),'es'));
+  const cel = {};
+  for(let i = 0; i < filas.length; i += 10){
+    await Promise.all(filas.slice(i, i+10).map(c => SB.rpc('celular_maestro', { clase:c.id }).then(v => { cel[c.id] = v || ''; }).catch(() => { cel[c.id] = ''; })));
+  }
+  return filas.map(c => ({ c, celular: cel[c.id] || '' }));
+}
+async function descargarDirectorio(btn){
+  const t0 = btn.innerHTML; btn.disabled = true; btn.textContent = 'Preparando…';
+  try{
+    const [ExcelJS, filas] = await Promise.all([excelLib(), directorioFilas()]);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Directorio', { views:[{ state:'frozen', ySplit:1 }] });
+    ws.columns = [
+      { header:'Programa', key:'p', width:12 }, { header:'Estaca', key:'e', width:14 }, { header:'Maestro', key:'m', width:34 },
+      { header:'Horario', key:'h', width:22 }, { header:'Curso', key:'cu', width:30 }, { header:'Alumnos', key:'a', width:10 },
+      { header:'Código', key:'co', width:12 }, { header:'ID (no modificar)', key:'id', width:14 }, { header:'Celular (WhatsApp)', key:'cel', width:20 }
+    ];
+    xlHeader(ws.getRow(1));
+    ws.getCell(1, 9).fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFE3A33A'}}; ws.getCell(1, 9).font = {bold:true,color:{argb:'FF13233F'},size:11};
+    filas.forEach(({ c, celular }, i) => {
+      const r = ws.addRow({ p:progLabel(c.programa), e:stakeShort(c.estaca), m:prettyName(c.maestro), h:c.horario || '', cu:c.curso || '', a:Number(c.alumnos) || 0, co:c.codigo || '', id:c.id, cel:celular });
+      xlBody(r, i);
+      r.getCell(8).font = {size:8,color:{argb:'FF8B919D'}};
+      r.getCell(9).numFmt = '@'; r.getCell(9).fill = {type:'pattern',pattern:'solid',fgColor:{argb:'FFFCF4E2'}};
+    });
+    ws.autoFilter = { from:'A1', to:'I1' };
+    const wi = wb.addWorksheet('Instrucciones');
+    ['Directorio de maestros · Check-in Asistencia', '', '1. Escribe el celular de cada maestro en la última columna "Celular (WhatsApp)": 9 dígitos (Perú) o con código de país.',
+     '2. No cambies ni borres la columna "ID (no modificar)": así la app reconoce cada clase.', '3. Puedes ordenar o filtrar las filas; el orden no importa al importar.',
+     '4. En la app: Administración → Directorio de maestros → Importar directorio, y elige este archivo.',
+     '5. Una celda de celular vacía no borra el número que ya estaba guardado.'].forEach((l, i) => { const c = wi.getCell(i+1, 1); c.value = l; c.font = i ? {size:11} : {bold:true,size:14,color:{argb:'FF13233F'}}; });
+    wi.getColumn(1).width = 110;
+    downloadBlob(await xlBlob(wb), `Directorio de maestros ${todayISO()}.xlsx`);
+    toast(`✓ Directorio descargado · ${filas.length} clases`, 'ok');
+  }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+  btn.disabled = false; btn.innerHTML = t0;
+}
+async function importarDirectorio(file){
+  const box = $('#dirRes'); if(box) box.innerHTML = loadingHTML('Leyendo el directorio…', true);
+  try{
+    const ExcelJS = await excelLib();
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(await file.arrayBuffer());
+    const ws = wb.getWorksheet('Directorio') || wb.worksheets[0];
+    const txt = v => { if(v == null) return ''; if(typeof v === 'object'){ if(v.text != null) return String(v.text); if(v.result != null) return String(v.result); if(v.richText) return v.richText.map(x => x.text).join(''); } return String(v); };
+    let hRow = 0, cId = 0, cCel = 0, cM = 0;
+    ws.eachRow((row, n) => { if(hRow) return; let i = 0, c2 = 0, m = 0; row.eachCell((c, k) => { const t = norm(txt(c.value)); if(/^id\b/.test(t)) i = k; if(t.startsWith('celular')) c2 = k; if(t === 'maestro') m = k; }); if(i && c2){ hRow = n; cId = i; cCel = c2; cM = m; } });
+    if(!hRow) throw new Error('No encontré las columnas "ID" y "Celular". Usa el archivo descargado con "Descargar directorio".');
+    const actuales = await directorioFilas(); const porId = new Map(actuales.map(x => [x.c.id, x]));
+    const cambios = [], invalidos = [], desconocidos = [];
+    ws.eachRow((row, n) => {
+      if(n <= hRow) return;
+      const id = txt(row.getCell(cId).value).trim(), cel = txt(row.getCell(cCel).value).trim(), nom = cM ? txt(row.getCell(cM).value).trim() : '';
+      if(!id || !cel) return;
+      const a = porId.get(id); if(!a){ desconocidos.push(nom || id); return; }
+      if(!normPhone(cel)){ invalidos.push(`${nom || prettyName(a.c.maestro)}: ${cel}`); return; }
+      if(normPhone(cel) !== normPhone(a.celular)) cambios.push({ a, cel });
+    });
+    // Un maestro con varias clases: basta guardar una vez (el servidor lo copia a todas sus clases).
+    const vistos = new Set(); const guardar = cambios.filter(x => { const k = norm(x.a.c.maestro) + '|' + normPhone(x.cel); if(vistos.has(k)) return false; vistos.add(k); return true; });
+    let ok = 0; const fallas = [];
+    for(const x of guardar){
+      try{
+        await SB.rpc('guardar_celular_maestro', { clase:x.a.c.id, celular:x.cel }); ok++;
+        try{ const d = JSON.parse(localStorage.getItem('ca_cel_maestro') || '{}') || {}; d['m:' + norm(x.a.c.maestro)] = x.cel; localStorage.setItem('ca_cel_maestro', JSON.stringify(d)); }catch(e){}
+      }catch(e){ fallas.push(prettyName(x.a.c.maestro) + ': ' + errMsg(e)); }
+    }
+    const lista = (t, arr) => arr.length ? `<details style="margin-top:6px"><summary>${t} (${arr.length})</summary>${arr.slice(0, 50).map(esc).join('<br>')}</details>` : '';
+    if(box) box.innerHTML = `<div class="pend-box ${fallas.length || invalidos.length || desconocidos.length ? '' : 'ok'}" style="margin-top:12px"><div><b>✓ ${ok} celular${ok === 1 ? '' : 'es'} guardado${ok === 1 ? '' : 's'}</b><small>Los números que no cambiaron se dejaron igual. Las celdas vacías no borran nada.</small>${lista('Números no válidos', invalidos)}${lista('Filas con un ID que no existe', desconocidos)}${lista('No se pudieron guardar', fallas)}</div></div>`;
+    toast(`✓ Directorio importado · ${ok} celulares guardados`, 'ok');
+  }catch(e){ console.error(e); if(box) box.innerHTML = `<div class="warn-box" style="margin-top:12px">${esc(errMsg(e))}</div>`; }
+}
 function renderAdmin(){
   CUR = { type:'admin', code:null };
   const P = ROSTER.people;
@@ -7278,6 +7358,11 @@ function renderAdmin(){
       <div class="kpis"><div class="kpi"><b>${P.length.toLocaleString('es-PE')}</b><span>personas</span></div><div class="kpi"><b>${Object.keys(byStake).length}</b><span>estacas</span></div><div class="kpi"><b>${manualN}</b><span>agregadas a mano</span></div><div class="kpi"><b style="font-size:15px">${fmtVersion(ROSTER.v)}</b><span>versión · ${esc(ROSTER.src)}</span></div></div>
       <table class="mini"><thead><tr><th>Estaca</th><th class="r">Personas</th></tr></thead><tbody>${Object.entries(byStake).sort((a,b)=>b[1].t-a[1].t).map(([k,o]) => `<tr><td>${esc(k)}</td><td class="r">${o.t}</td></tr>`).join('')}</tbody></table>
     </section>
+    ${SB.on() && SB.admin ? `<section class="card"><h2>${ICON.users} Directorio de maestros</h2>
+      <p class="hint" style="margin-top:0">Excel con todas las clases ordenadas por <b>programa</b>, <b>estaca</b> y <b>maestro</b>. Escribe el celular de cada maestro en la última columna y vuelve a subirlo: el número queda guardado para ese maestro (en todas sus clases) y listo para escribirle por WhatsApp.</p>
+      <div class="btn-row"><button class="btn primary" id="dirDl">${ICON.download} Descargar directorio (Excel)</button><label class="btn" style="cursor:pointer">${ICON.upload} Importar directorio<input type="file" id="dirUp" accept=".xlsx" class="sr"></label></div>
+      <div id="dirRes"></div>
+    </section>` : ''}
     <section class="card"><h2>${ICON.upload} Cargar o complementar data</h2>
       ${SB.on() && SB.admin ? `<div class="info-box" style="margin:0 0 10px">🔄 <b>Se actualiza sola</b> cada día con <b>Potenciales.xlsx</b> de la carpeta DEL DÍA (complementa, no borra a nadie). <a href="#/wiseroll">Sincronizar ahora</a></div>` : ''}
       <p class="hint" style="margin-top:0">Acepta el export de <b>Potenciales</b> de Wise (.xlsx) o cualquier Excel/CSV con columnas como: <i>Nombres</i> (o Apellidos + Nombres), Estaca y Barrio. Las demás columnas se ignoran.</p>
@@ -7341,6 +7426,8 @@ function renderAdmin(){
   $('#dlHtml').onclick = () => downloadHtml();
   $('#dbHtml').onclick = () => downloadHtml();
   $('#expDb').onclick = exportRoster;
+  const dd = $('#dirDl'); if(dd) dd.onclick = () => descargarDirectorio(dd);
+  const du = $('#dirUp'); if(du) du.onchange = () => { const f = du.files[0]; du.value = ''; if(f) importarDirectorio(f); };
   $('#reset').onclick = async () => { if(!(await confirmBox('Se descartan los cambios de la base hechos en este dispositivo y se vuelve a la data incluida en el archivo.', {title:'Volver a la data original', ok:'Restaurar', danger:true}))) return; LS.del('ca_roster'); loadRoster(); toast('Data original restaurada','ok'); renderAdmin(); };
   $('#dbSave').onclick = async () => {
     const v = $('#dbUrl').value.trim().replace(/\/+$/,'');
