@@ -2617,23 +2617,39 @@ async function rollArchivos(dir, ruta, out, prof){
 }
 const rollClave = c => [c.programa, norm(c.estaca), norm(c.maestro), norm(c.horario), norm(c.curso)].join('|');
 const horaDe = h => { const m = String(h || '').match(/(\d{1,2}):(\d{2})\s*([ap])\.?\s*m/i); if(!m) return ''; let hh = +m[1] % 12; if(/p/i.test(m[3])) hh += 12; return hh + ':' + m[2]; };
-let ROLL_BUSY = false;
+// Ningún paso puede quedarse "Leyendo…" para siempre (OneDrive escribiendo un Excel, permiso sin respuesta, red).
+const conTiempo = (p, ms, msg) => { let t; return Promise.race([p, new Promise((_, rej) => { t = setTimeout(() => rej(new Error(msg)), ms); })]).finally(() => clearTimeout(t)); };
+// Excel guardado hace menos de esto: probablemente OneDrive o Automate lo siguen escribiendo; se lee en la próxima vuelta.
+const ROLL_RECIENTE = 2 * 60e3;
+let ROLL_BUSY = false, ROLL_BUSY_T = 0, ROLL_RUN = 0;
 async function leerClassRoll({ interactive=false, force=false, archivos=null, onEstado }={}){
-  if(ROLL_BUSY) return { ocupado:true };
-  ROLL_BUSY = true;
+  // Si una lectura anterior quedó colgada más de 5 minutos, no bloquea las siguientes.
+  if(ROLL_BUSY && Date.now() - ROLL_BUSY_T < 5 * 60e3) return { ocupado:true };
+  ROLL_BUSY = true; ROLL_BUSY_T = Date.now(); const run = ++ROLL_RUN;
   const est = m => onEstado && onEstado(m);
+  const fallidos = [];
   try{
     let lista = [];
     if(archivos) lista = archivos.map(f => ({ file:f, path:f.webkitRelativePath || ('Class Roll/' + f.name) }));
     else {
-      const dir = await fsGet('rollDir').catch(() => null);
+      est('Abriendo la carpeta vinculada…');
+      const dir = await conTiempo(fsGet('rollDir'), 10e3, 'el navegador no devolvió la carpeta vinculada').catch(() => null);
       if(!dir) return { sinCarpeta:true };
-      let perm = await dir.queryPermission({ mode:'read' });
-      if(perm !== 'granted' && interactive) perm = await dir.requestPermission({ mode:'read' });
+      let perm = await conTiempo(dir.queryPermission({ mode:'read' }), 10e3, 'el navegador no respondió el permiso de la carpeta');
+      if(perm !== 'granted' && interactive){ est('Esperando el permiso para leer la carpeta (revisa el aviso del navegador)…'); perm = await conTiempo(dir.requestPermission({ mode:'read' }), 90e3, 'no se respondió el permiso para leer la carpeta'); }
       if(perm !== 'granted') return { sinPermiso:true };
       est('Buscando los Excel del Class Roll…');
-      for(const h of await rollArchivos(dir, dir.name, [], 0)) lista.push({ file: await h.handle.getFile(), path:h.path });
+      const hs = await conTiempo(rollArchivos(dir, dir.name, [], 0), 60e3, 'la carpeta tardó demasiado en responder (¿OneDrive está sincronizando?)');
+      for(let i = 0; i < hs.length; i++){
+        const h = hs[i];
+        est(`Revisando ${i + 1} de ${hs.length}: ${h.path.split('/').pop()}`);
+        try{ lista.push({ file: await conTiempo(h.handle.getFile(), 20e3, 'no respondió'), path:h.path }); }
+        catch(e){ console.warn('Class Roll', h.path, e); fallidos.push(`${h.path.split('/').pop()}: ${e.message || e}`); }
+      }
     }
+    // Los que se están escribiendo ahora se dejan para la próxima vuelta (no se marcan como vistos).
+    const ahora = Date.now(), recientes = archivos || interactive ? [] : lista.filter(x => ahora - x.file.lastModified < ROLL_RECIENTE);
+    if(recientes.length){ lista = lista.filter(x => !recientes.includes(x)); recientes.forEach(x => fallidos.push(`${x.file.name}: se está actualizando, se leerá en unos minutos`)); setTimeout(() => { rollAuto.t = 0; rollAuto(); }, ROLL_RECIENTE + 30e3); }
     // El Audit (clases con retraso) va aparte: solo cuenta la versión más reciente.
     const esAudit = x => /audit/i.test(x.path), esPot = x => /^potenciales/i.test(x.file.name);
     const ultimo = arr => arr.sort((a, b) => b.file.lastModified - a.file.lastModified)[0] || null;
@@ -2645,34 +2661,44 @@ async function leerClassRoll({ interactive=false, force=false, archivos=null, on
     const cambiados = force || archivos ? lista : lista.filter(x => vistos[x.path] !== x.file.lastModified);
     const auditCambio = cambio(audit), potCambio = cambio(pot);
     const nTot = lista.length + (audit ? 1 : 0) + (pot ? 1 : 0);
-    if(!cambiados.length && !auditCambio && !potCambio) return { sinCambios:true, total:nTot, ultimo:Math.max(0, ...lista.map(x => x.file.lastModified), audit ? audit.file.lastModified : 0, pot ? pot.file.lastModified : 0) };
-    await loadScript(SHEETJS_URL);
+    if(!cambiados.length && !auditCambio && !potCambio) return { sinCambios:true, total:nTot, fallidos, ultimo:Math.max(0, ...lista.map(x => x.file.lastModified), audit ? audit.file.lastModified : 0, pot ? pot.file.lastModified : 0) };
+    est('Cargando el lector de Excel…');
+    await conTiempo(loadScript(SHEETJS_URL), 30e3, 'no se pudo cargar el lector de Excel (revisa el internet)');
     // Base de personas (Potenciales de Wise): se complementa sola cada día; no borra a nadie.
     let base = null;
     if(potCambio){
       est('Actualizando la base de personas (Potenciales)…');
-      try{ const { rows } = await leerBaseArchivo(pot.file); base = await aplicarBaseAuto(rows, pot.file.name); vistos[pot.path] = pot.file.lastModified; LS.set('ca_roll_files', vistos); }
+      try{ const { rows } = await conTiempo(leerBaseArchivo(pot.file), 60e3, 'Potenciales tardó demasiado en leerse'); base = await conTiempo(aplicarBaseAuto(rows, pot.file.name), 180e3, 'la base de personas tardó demasiado en guardarse'); vistos[pot.path] = pot.file.lastModified; LS.set('ca_roll_files', vistos); }
       catch(e){ console.error(e); base = { error: errMsg(e) }; }
     }
     let nAudit = null;
     if(auditCambio){
       est('Leyendo el Audit…');
-      const filasA = parseAuditWorkbook(XLSX.read(await audit.file.arrayBuffer(), { type:'array', raw:true }));
-      nAudit = await SB.rpc('cargar_audit', { filas:filasA, archivo:audit.file.name, archivo_en:new Date(audit.file.lastModified).toISOString() });
-      vistos[audit.path] = audit.file.lastModified; LS.set('ca_roll_files', vistos);
+      try{
+        const filasA = parseAuditWorkbook(XLSX.read(await conTiempo(audit.file.arrayBuffer(), 30e3, 'no se pudo abrir'), { type:'array', raw:true }));
+        nAudit = await conTiempo(SB.rpc('cargar_audit', { filas:filasA, archivo:audit.file.name, archivo_en:new Date(audit.file.lastModified).toISOString() }), 60e3, 'el servidor no respondió');
+        vistos[audit.path] = audit.file.lastModified; LS.set('ca_roll_files', vistos);
+      }catch(e){ console.warn('Audit', e); fallidos.push(`${audit.file.name}: ${e.message || e}`); }
     }
-    if(!cambiados.length){ LS.set('ca_roll_ultima', Date.now()); return { leidos:0, total:nTot, clases:0, avisos:[], vinculadas:0, pendientes:0, audit:nAudit, base }; }
-    est(`Leyendo ${cambiados.length} Excel…`);
-    const nuevas = [], avisos = [];
-    for(const x of cambiados){
-      const prog = /seminario|\bsem\b/i.test(x.path) ? 'S' : 'I';
-      const wb = XLSX.read(await x.file.arrayBuffer(), { type:'array', raw:false });
-      const r = parseRollWorkbook(wb, prog);
-      r.clases.forEach(c => { c.archivo = x.file.name; c.archivo_en = new Date(x.file.lastModified).toISOString(); nuevas.push(c); });
-      avisos.push(...r.avisos.filter(a => !/no trae fechas/.test(a)).map(a => `${x.file.name} · ${a}`));
+    if(!cambiados.length){ LS.set('ca_roll_ultima', Date.now()); return { leidos:0, total:nTot, clases:0, avisos:[], vinculadas:0, pendientes:0, audit:nAudit, base, fallidos }; }
+    // Cada Excel por separado: si uno está a medio escribir o dañado, los demás igual se guardan.
+    const nuevas = [], avisos = [], leidos = [];
+    for(let i = 0; i < cambiados.length; i++){
+      const x = cambiados[i];
+      est(`Leyendo ${i + 1} de ${cambiados.length}: ${x.file.name}`);
+      try{
+        const prog = /seminario|\bsem\b/i.test(x.path) ? 'S' : 'I';
+        const wb = XLSX.read(await conTiempo(x.file.arrayBuffer(), 30e3, 'no se pudo abrir'), { type:'array', raw:false });
+        const r = parseRollWorkbook(wb, prog);
+        r.clases.forEach(c => { c.archivo = x.file.name; c.archivo_en = new Date(x.file.lastModified).toISOString(); nuevas.push(c); });
+        avisos.push(...r.avisos.filter(a => !/no trae fechas/.test(a)).map(a => `${x.file.name} · ${a}`));
+        leidos.push(x);
+      }catch(e){ console.warn('Class Roll', x.path, e); fallidos.push(`${x.file.name}: ${e.message || e}`); }
+      await new Promise(r => setTimeout(r, 0)); // deja respirar a la pantalla entre archivos
     }
+    if(!leidos.length) return { leidos:0, total:nTot, clases:0, avisos, vinculadas:0, pendientes:0, audit:nAudit, base, fallidos };
     est('Guardando en la nube…');
-    const prev = await SB.rpc('wise_clases_admin') || [];
+    const prev = await conTiempo(SB.rpc('wise_clases_admin'), 60e3, 'el servidor no respondió') || [];
     const porClave = new Map(prev.map(w => [w.clave, w])), usadas = new Map();
     // Fusión: las fechas del Excel nuevo mandan; las fechas anteriores (que ya no trae) se conservan.
     const filas = nuevas.filter(c => c.estaca).map(c => {
@@ -2683,13 +2709,16 @@ async function leerClassRoll({ interactive=false, force=false, archivos=null, on
       return { clave, programa:c.programa, estaca:c.estaca, maestro:c.maestro, horario:c.horario, curso:c.curso, titulo:c.titulo, unidad:c.unidad, periodo:c.periodo,
         total:c.total, fechas:[...new Set([...((old && old.fechas) || []), ...c.fechas])].sort(), alumnos, archivo:c.archivo, archivo_en:c.archivo_en };
     });
-    for(let i = 0; i < filas.length; i += 25) await SB.rpc('cargar_class_roll', { filas: filas.slice(i, i + 25) });
-    cambiados.forEach(x => { vistos[x.path] = x.file.lastModified; }); LS.set('ca_roll_files', vistos);
+    for(let i = 0; i < filas.length; i += 25){
+      est(`Guardando en la nube… ${Math.min(i + 25, filas.length)} de ${filas.length} clases`);
+      await conTiempo(SB.rpc('cargar_class_roll', { filas: filas.slice(i, i + 25) }), 60e3, 'el servidor no respondió al guardar');
+    }
+    leidos.forEach(x => { vistos[x.path] = x.file.lastModified; }); LS.set('ca_roll_files', vistos);
     est('Vinculando con las clases de la app…');
-    const vinc = await autoVincularWise();
+    const vinc = await conTiempo(autoVincularWise(), 120e3, 'el servidor no respondió al vincular');
     LS.set('ca_roll_ultima', Date.now());
-    return { leidos:cambiados.length, total:lista.length, clases:filas.length, avisos, vinculadas:vinc.n, pendientes:vinc.pendientes, audit:nAudit, base };
-  } finally { ROLL_BUSY = false; }
+    return { leidos:leidos.length, total:lista.length, clases:filas.length, avisos, vinculadas:vinc.n, pendientes:vinc.pendientes, audit:nAudit, base, fallidos };
+  } finally { if(run === ROLL_RUN) ROLL_BUSY = false; }
 }
 // Empareja cada clase de Wise sin vínculo con la clase de la app más parecida (mismo programa y estaca;
 // maestro con 2+ palabras en común; desempata horario y curso). Si hay empate, se deja para decidir a mano.
@@ -2999,10 +3028,31 @@ async function rollAuto(){
   rollAuto.t = Date.now();
   try{
     const r = await leerClassRoll();
+    // Edge/Chrome vuelven a pedir permiso al reabrir el navegador: sin un toque no se puede leer la carpeta.
+    if(r.sinPermiso){
+      rollAuto.t = 0;
+      if(!rollAuto.avisado){ rollAuto.avisado = true; toast('Class Roll de Wise: el navegador pide permiso para leer la carpeta DEL DÍA', 'warn', { ms:30000, action:'Permitir', onAction: rollPermitir }); }
+      return;
+    }
     if(r.sinCambios) LS.set('ca_roll_ultima', Date.now());
+    if(r.fallidos && r.fallidos.length && !r.leidos && !r.sinCambios) console.warn('Class Roll automático: archivos sin leer', r.fallidos);
     if(r.base && !r.base.error && !r.leidos) toast(`Base de personas actualizada desde Potenciales · ${r.base.nuevas} nuevas · ${r.base.resueltas} alertas resueltas`, 'ok', { ms:4500 });
     if(r.leidos) toast(`Class Roll de Wise actualizado · ${r.clases} clases${r.pendientes ? ` · ${r.pendientes} por crear o vincular` : ''}`, r.pendientes ? 'warn' : 'ok', { ms:4500, action: r.pendientes ? 'Ver' : undefined, onAction: () => go('#/wiseroll') });
   }catch(e){ console.warn('Class Roll automático', e); }
+}
+// Toque del administrador: pide el permiso de la carpeta y lee (o abre la pantalla, si ya está ahí).
+async function rollPermitir(){
+  if(CUR.type === 'wiseroll'){ const l = $('#wrLeer'); if(l){ l.click(); return; } }
+  try{
+    const dir = await fsGet('rollDir');
+    if(!dir || (await dir.requestPermission({ mode:'read' })) !== 'granted'){ go('#/wiseroll'); return; }
+    rollAuto.avisado = false;
+    toast('Leyendo el Class Roll de Wise…');
+    const r = await leerClassRoll({ interactive:true });
+    if(r.leidos) toast(`Class Roll de Wise actualizado · ${r.clases} clases`, 'ok', { ms:4500 });
+    else if(r.sinCambios) toast('Class Roll de Wise: todo al día', 'ok');
+    if(r.fallidos && r.fallidos.length) toast(`${r.fallidos.length} archivo${r.fallidos.length === 1 ? '' : 's'} sin leer · se reintentará`, 'warn', { ms:5000, action:'Ver', onAction: () => go('#/wiseroll') });
+  }catch(e){ console.error(e); go('#/wiseroll'); }
 }
 async function renderWiseRoll(){
   CUR = { type:'wiseroll', code:null };
@@ -3033,10 +3083,12 @@ async function renderWiseRoll(){
       const r = await leerClassRoll(Object.assign({ onEstado: m => { const b = $('.info-box', est); if(b) b.innerHTML = loadingHTML(m, true); } }, opts));
       if(r.ocupado) return pintarEst('Ya se está leyendo; espera un momento.');
       if(r.sinCarpeta) return pintarEst('Primero vincula la carpeta.', 'warn');
-      if(r.sinPermiso) return pintarEst('El navegador pide permiso para leer la carpeta: toca <b>Leer ahora</b> y elige <b>Permitir en cada visita</b>.', 'warn');
+      if(r.sinPermiso) return pintarEst('El navegador pide permiso para leer la carpeta: toca <b>Sincronizar ahora</b> y elige <b>Permitir en cada visita</b>.', 'warn');
       if(r.vacia) return pintarEst('No encontré Excel dentro de una carpeta “Class Roll”. Vincula la carpeta <b>DEL DÍA</b> (o la misma <b>Class Roll</b>).', 'warn');
-      if(r.sinCambios) pintarEst(`Todo al día: ${r.total} Excel sin cambios (el más reciente es del ${esc(fmtShort(fechaLocal(r.ultimo)))}).`);
-      else pintarEst(`✓ ${r.leidos} Excel leídos · ${r.clases} clases de Wise guardadas · ${r.vinculadas} vinculadas solas${r.audit != null ? ` · Audit: ${r.audit} clases con retraso` : ''}${r.base ? (r.base.error ? ` · <b>Base de personas: no se pudo actualizar</b> (${esc(r.base.error)})` : ` · Base de personas: ${Number(r.base.total || 0).toLocaleString('es-PE')} en Potenciales, ${r.base.nuevas} nuevas, ${r.base.resueltas} alertas resueltas`) : ''}${r.avisos.length ? `<details style="margin-top:6px"><summary>${r.avisos.length} aviso${r.avisos.length === 1 ? '' : 's'}</summary>${r.avisos.slice(0, 30).map(esc).join('<br>')}</details>` : ''}`);
+      const fx = r.fallidos && r.fallidos.length ? `<details style="margin-top:6px" open><summary><b>${r.fallidos.length} archivo${r.fallidos.length === 1 ? "" : "s"} sin leer</b> · se reintentará solo</summary>${r.fallidos.slice(0, 30).map(esc).join("<br>")}</details>` : "";
+      if(r.sinCambios) pintarEst(`Todo al día: ${r.total} Excel sin cambios (el más reciente es del ${esc(fmtShort(fechaLocal(r.ultimo)))} ${esc(fmtTime(r.ultimo))}).${fx}`, fx ? "warn" : "");
+      else if(!r.leidos && fx && r.audit == null && !r.base) pintarEst(`No se pudo leer ningún Excel nuevo.${fx}`, "warn");
+      else pintarEst(`✓ ${r.leidos} Excel leídos · ${r.clases} clases de Wise guardadas · ${r.vinculadas} vinculadas solas${r.audit != null ? ` · Audit: ${r.audit} clases con retraso` : ''}${r.base ? (r.base.error ? ` · <b>Base de personas: no se pudo actualizar</b> (${esc(r.base.error)})` : ` · Base de personas: ${Number(r.base.total || 0).toLocaleString('es-PE')} en Potenciales, ${r.base.nuevas} nuevas, ${r.base.resueltas} alertas resueltas`) : ''}${r.avisos.length ? `<details style="margin-top:6px"><summary>${r.avisos.length} aviso${r.avisos.length === 1 ? '' : 's'}</summary>${r.avisos.slice(0, 30).map(esc).join('<br>')}</details>` : ''}${fx}`);
     }catch(e){ console.error(e); pintarEst((/wise_clases|cargar_class_roll|PGRST202|function/i.test(e.message || '') ? 'Falta aplicar la migración 0030 en Supabase.' : esc(errMsg(e))), 'warn'); }
     pintarLista();
   };
@@ -3080,7 +3132,11 @@ async function renderWiseRoll(){
   };
   pintarEst();
   pintarLista();
-  if(dir && rollModo() !== 'manual' && (await dir.queryPermission({ mode:'read' }).catch(() => '')) === 'granted') leer({});
+  if(dir && rollModo() !== 'manual'){
+    const perm = await dir.queryPermission({ mode:'read' }).catch(() => '');
+    if(perm === 'granted') leer({});
+    else pintarEst('El navegador volvió a pedir permiso para leer la carpeta (pasa al reabrir Edge): toca <b>Sincronizar ahora</b> y elige <b>Permitir en cada visita</b> para que se lea sola.', 'warn');
+  }
 }
 
 /* ---------- Solicitudes de acceso ---------- */
