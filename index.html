@@ -71,6 +71,14 @@ button:focus-visible,a:focus-visible,summary:focus-visible,label:focus-visible,[
 .top .spacer{flex:1}
 .sync-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);color:#E4EBF5;border-radius:999px;padding:6px 12px 6px 10px;font-size:12px;font-weight:600;white-space:nowrap;transition:background .15s}
 .sync-pill:hover{background:rgba(255,255,255,.14)}
+/* En clases y eventos en línea la pastilla es también el botón de guardar (ya no hay barra abajo). */
+.sync-pill .sv{display:none;width:15px;height:15px}
+.sync-pill .sv svg{width:15px;height:15px}
+.sync-pill.can-save .sv{display:inline-flex}
+.sync-pill.can-save{padding-left:12px}
+.sync-pill.can-save.pending{background:var(--gold);border-color:var(--gold);color:#1F1606;animation:sbPend 2.2s ease-in-out infinite}
+.sync-pill.can-save.pending .dot{display:none}
+@media (prefers-reduced-motion:reduce){.sync-pill.can-save.pending{animation:none}}
 .sync-pill .dot{width:8px;height:8px;border-radius:50%;background:#9AA7BA;box-shadow:0 0 0 3px rgba(154,167,186,.2)}
 .sync-pill.ok .dot{background:#4ADE80;box-shadow:0 0 0 3px rgba(74,222,128,.2)}
 .sync-pill.pending .dot{background:#F6B73C;box-shadow:0 0 0 3px rgba(246,183,60,.24)}
@@ -2122,7 +2130,7 @@ function renderSupervisor(){
 const GUIAS = {
   clase:{ t:'Cómo usar tu clase', pasos:[
     ['Agrega a tus alumnos', 'Pestaña <b>Alumnos</b>: busca su nombre en la base y tócalo. Si no aparece, toca <b>Alumno nuevo</b> y escribe su WhatsApp para enviarle su ficha de inscripción.'],
-    ['Pon la asistencia', 'Pestaña <b>Asistencia</b>: elige la fecha y toca ✓ <b>Presente</b> o ✗ <b>Ausente</b> en cada alumno. <b>Marcar todo lo que esté sin marcar</b> llena solo los vacíos. Al terminar toca <b>Guardar asistencia</b> (abajo).'],
+    ['Pon la asistencia', 'Pestaña <b>Asistencia</b>: elige la fecha y toca ✓ <b>Presente</b> o ✗ <b>Ausente</b> en cada alumno. <b>Marcar todo lo que esté sin marcar</b> llena solo los vacíos. Al terminar toca el botón de guardar de arriba, junto a <b>Sincronizado</b>.'],
     ['Revisa la planilla', 'Pestaña <b>Planilla</b>: todas las fechas del mes. Toca una casilla para corregirla o el nombre de un alumno para ver su calendario.'],
     ['Que los alumnos se registren con el QR', 'Pestaña <b>Compartir</b> → <b>Crear QR de la clase</b>. Muéstralo en pantalla o descárgalo e imprímelo. El día de clase los alumnos lo escanean, eligen su nombre y envían. Arriba te aparece <b>asistencias por QR por aprobar</b>: confirma quiénes vinieron.'],
     ['Comparte la clase para que alguien colabore', 'Pestaña <b>Compartir</b> → <b>Invitar a un colaborador</b>: elige por cuánto tiempo y toca <b>Enviar invitación</b>. El código sirve para una sola persona. (Solo lo ve el maestro de la clase.)'],
@@ -2135,7 +2143,7 @@ const GUIAS = {
     ['Forma grupos', 'Pestaña <b>Grupos</b>: arma grupos al azar con los asistentes.'],
     ['Que los participantes se registren solos', 'Pestaña <b>Compartir</b>: muestra el <b>QR del evento</b>. Cada participante escanea, busca su nombre y se registra (funciona del día antes al día después del evento). Los acompañantes que anoten aparecen arriba para aprobar.'],
     ['Invita a colaboradores', 'Pestaña <b>Compartir</b> → <b>Invitar por WhatsApp</b> o copia el código (EV-…). Quien lo ingrese marca en la misma lista.'],
-    ['Guarda', 'Toca <b>Guardar asistencia</b> (abajo) para que todo quede en línea.']
+    ['Guarda', 'Toca el botón de guardar de arriba (junto a <b>Sincronizado</b>) para que todo quede en línea. Si hay cambios sin enviar, se pone dorado.']
   ]}
 };
 function openGuia(tipo){
@@ -3545,7 +3553,7 @@ function topbar({back, title, sub}={}){
   return `<header class="top"><div class="top-in">
     ${back ? `<button class="icon-btn" data-go="${back}" aria-label="Volver">${ICON.back}</button><button class="icon-btn" data-go="#/" aria-label="Ir al inicio" title="Inicio">${ICON.home}</button><div class="top-title"><b>${esc(title)}</b>${sub?`<small>${esc(sub)}</small>`:''}</div>`
            : `<div class="brand" id="brand"><span class="mark">S&amp;I</span><span class="bt"><b>Check-in Asistencia</b><small>Seminarios e Institutos</small></span></div><span class="spacer"></span>`}
-    <button class="sync-pill" id="syncPill" title="Estado de sincronización"><span class="dot"></span><span class="lbl"></span></button>
+    <button class="sync-pill" id="syncPill" title="Estado de sincronización"><span class="sv">${ICON.save}</span><span class="dot"></span><span class="lbl"></span></button>
   </div></header>`;
 }
 function bindTop(){
@@ -3573,7 +3581,11 @@ function paintSync(){
     else if(SYNC_STATE.at){ cls = 'ok'; lbl = 'Sincronizado '+fmtTime(SYNC_STATE.at); }
     else { cls = 'ok'; lbl = 'En línea'; }
   }
-  pill.className = 'sync-pill '+cls;
+  // Clase o evento en línea: la pastilla guarda (no hay barra de guardar abajo).
+  const canSave = online && (CUR.type === 'class' || CUR.type === 'event') && !$('#saveBtn');
+  if(canSave && pending && SYNC_STATE.s !== 'syncing') lbl = `Guardar · ${pending} sin enviar`;
+  pill.className = 'sync-pill '+cls+(canSave ? ' can-save' : '');
+  pill.title = canSave ? (pending ? 'Guardar la asistencia ahora' : 'Guardar y sincronizar') : 'Estado de sincronización';
   $('.lbl', pill).textContent = lbl;
   const sb = $('#sbStatus'), btn = $('#saveBtn');
   if(sb){
@@ -3585,6 +3597,9 @@ function paintSync(){
   if(btn) btn.classList.toggle('has-pending', pending > 0);
 }
 function saveBar(label='Guardar asistencia', share=false){
+  // En línea se guarda desde la pastilla de arriba ("Sincronizado"): la barra solo queda para enviar
+  // la asistencia guardada en el celular.
+  if(!share) return '';
   // El botón va a la izquierda: en Netlify el sello de la esquina inferior derecha lo tapaba.
   return `<div class="savebar"><div class="sb-in"><button class="btn primary" id="saveBtn">${share ? ICON.share : ICON.save} ${esc(label)}</button><span class="sb-status" id="sbStatus"></span></div></div>`;
 }
@@ -4139,7 +4154,7 @@ function renderEvent(code){
   CUR = { type:'event', code };
   const m = ev.meta;
   const offline = !Sync.on() && !eventoEnNube(ev);
-  app.innerHTML = topbar({ back:'#/', title:m.title, sub:'Check-in · '+code }) + `<main class="wrap has-savebar">
+  app.innerHTML = topbar({ back:'#/', title:m.title, sub:'Check-in · '+code }) + `<main class="wrap${offline ? ' has-savebar' : ''}">
     <section class="card ev-head">
       <div class="eh-main"><div style="min-width:0">${ev.contrib ? '<span class="badge b-man">Colaborador</span>' : ''}<h1 ${ev.contrib?'style="margin-top:6px"':''}>${esc(m.title)}</h1>${m.multi ? '<span class="badge b-multi">🌐 Multiestaca</span>' : ''}<p class="meta">${esc(m.placeholder ? 'Te uniste solo con el código · ' + fmtDate(m.date) : [evLugar(m), fmtDate(m.date)].filter(Boolean).join(' · '))}</p></div>
       <div class="counter"><b id="evCount">0</b><span>asistentes</span></div></div>
@@ -4156,7 +4171,7 @@ function renderEvent(code){
   const eb = $('#editEv'); if(eb) eb.onclick = () => go('#/evento/'+code+'/editar');
   guiaPrimeraVez('evento');
   $$('#tabs [data-tab]').forEach(b => b.onclick = () => { ST.tab = b.dataset.tab; $$('#tabs [data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderEventTab(); });
-  $('#saveBtn').onclick = () => offline ? exportEventHtml(ev, true) : syncEvent(code);
+  const svE = $('#saveBtn'); if(svE) svE.onclick = () => offline ? exportEventHtml(ev, true) : syncEvent(code);
   renderEventTab();
   liveEvent();
   if(Sync.on() || eventoEnNube(ev)) syncEvent(code, {silent:true});
@@ -4277,7 +4292,7 @@ function renderEventTab(){
       ${eventoEnNube(ev) ? `<section class="card" id="qrCard"></section>` : ''}
       <section class="card">
         <h2>${ICON.users} Invitar a colaborar</h2>
-        ${Sync.on() || eventoEnNube(ev) ? `<p class="hint" style="margin-top:0">Quien ingrese este código en su celular podrá marcar en esta misma lista. Cada uno toca <b>Guardar asistencia</b> y todo se une.</p>`
+        ${Sync.on() || eventoEnNube(ev) ? `<p class="hint" style="margin-top:0">Quien ingrese este código en su celular podrá marcar en esta misma lista. Cada uno toca el botón de guardar de arriba y todo se une.</p>`
           : `<ol class="steps" style="margin-top:0"><li>Envía el <b>enlace por WhatsApp</b> a tus colaboradores: así reciben el título, la estaca, el barrio y las preguntas del evento. También pueden entrar solo con el código.</li><li>Cada uno marca en su celular y al final toca <b>Enviar asistencia</b>.</li><li>Tú tocas <b>Importar aportes</b> y eliges sus reportes (o Excel): todos se suman a este evento por el código.</li></ol>`}
         <div class="code-big">${CUR.code}</div>
         <div class="btn-row"><button class="btn primary" id="waInv">${ICON.chat} Invitar por WhatsApp</button><button class="btn" id="cpLink">${ICON.link} Copiar enlace</button><button class="btn" id="cpCode">${ICON.copy} Copiar código</button></div>
@@ -5527,7 +5542,7 @@ function renderClass(code){
   CUR = { type:'class', code };
   const m = cls.meta;
   const daysTxt = (m.days||[]).slice().sort((a,b)=>((a||7)-(b||7))).map(d => DOW[d]).join(', ');
-  app.innerHTML = topbar({ back:classBack(cls), title:cls.remote ? prettyName(m.teacher) : m.title, sub:cls.remote ? m.title : m.teacher }) + `<main class="wrap wide has-savebar">
+  app.innerHTML = topbar({ back:classBack(cls), title:cls.remote ? prettyName(m.teacher) : m.title, sub:cls.remote ? m.title : m.teacher }) + `<main class="wrap wide${classOnline(cls) ? '' : ' has-savebar'}">
     <section class="card ev-head">
       <div class="eh-main"><div style="min-width:0"><span class="badge ${m.program==='S'?'b-sem':'b-inst'}">${progLabel(m.program)}</span> ${cls.canEdit ? '' : '<span class="badge b-ro">'+ICON.lock.replace('<svg','<svg style="width:12px;height:12px"')+' Solo lectura</span>'}
         <h1 style="margin-top:6px">${esc(m.title)}</h1><p class="meta">Maestro: <b>${esc(cls.remote ? prettyName(m.teacher) : m.teacher)}</b>${m.stake ? ' · '+esc(m.ward || (cls.remote ? stakeShort(m.stake) : m.stake)) : ''} · ${esc(daysTxt)}</p></div>
@@ -5550,7 +5565,7 @@ function renderClass(code){
   if(ABRIR_MSG && ABRIR_MSG.code === code && cls.remote && cls.dbId && SB.admin){ const o = ABRIR_MSG; ABRIR_MSG = null; setTimeout(() => openMensajeMaestro(cls, o), 250); }
   $$('#tabs [data-tab]').forEach(b => b.onclick = () => { ST.ctab = b.dataset.tab; $$('#tabs [data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderClassTab(); });
   const tp = $('#tabs [data-tab="planilla"]'); if(tp){ tp.title = 'Doble clic: ver la planilla en grande'; tp.ondblclick = () => { if(ST.ctab !== 'planilla') tp.click(); planillaGrande(true); }; }
-  $('#saveBtn').onclick = () => classOnline(cls) ? syncClass(code) : exportClassHtml(cls, true);
+  const svC = $('#saveBtn'); if(svC) svC.onclick = () => classOnline(cls) ? syncClass(code) : exportClassHtml(cls, true);
   renderClassTab();
   liveClass(true);
   if(classOnline(cls)) syncClass(code, {silent:true});
@@ -5923,6 +5938,7 @@ function renderClassTab(){
         ${cls.remote ? '<div class="filt-row" id="cfilt"></div>' : opts.length > 1 ? `<div class="scope-row"><div class="seg" id="cscope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.cscope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div></div>` : '<div style="height:10px"></div>'}
         <div id="cres" class="results"></div>
         <button class="manual-cta" id="newStu"><span class="mc-ico">${ICON.userPlus}</span><span><b>Alumno nuevo</b><small>No es miembro o no aparece en la base · nombre, estaca y barrio${cls.remote ? ' · WhatsApp para enviarle su ficha' : ''}</small></span>${ICON.next}</button>
+        ${cls.remote && cls.dbId ? `<button class="manual-cta" id="unirCod"><span class="mc-ico">${ICON.copy}</span><span><b>Unir un evento u otra clase</b><small>¿Marcaron la asistencia en un evento (EV-…) o en otra clase (CL-…) por error? Escribe su código: sus alumnos y su asistencia se suman aquí sin duplicar</small></span>${ICON.next}</button>` : ''}
       </section>`}
       <section class="section"><div class="section-h"><h2>Alumnos de la clase (<span id="stuN">${studs.length}</span>)</h2></div><div id="stuList" class="att-list"></div></section>`;
     if(!ro){
@@ -5930,6 +5946,7 @@ function renderClassTab(){
       q.oninput = () => { ST.cq = q.value; renderClassSearch(cls); };
       $$('#cscope button').forEach(b => b.onclick = () => { ST.cscope = b.dataset.s; $$('#cscope button').forEach(x => x.classList.toggle('on', x === b)); renderClassSearch(cls); });
       $('#newStu').onclick = () => openNewStudent(cls);
+      const uc = $('#unirCod'); if(uc) uc.onclick = () => openUnirCodigo(cls);
       if(cls.remote) renderRemoteFilters(cls);
       renderClassSearch(cls);
     }
@@ -5937,6 +5954,101 @@ function renderClassTab(){
   } else {
     renderClassShare(cls, body);
   }
+}
+/* Unir a esta clase un evento (EV-…) u otra clase (CL-…) creada por error: primero muestra lo que
+   pasará (vista previa) y al confirmar suma alumnos y asistencia sin duplicar ni cambiar marcas. */
+function openUnirCodigo(cls){
+  const avisos = {
+    no_existe:'No existe ningún evento ni clase con ese código. Revisa que esté bien escrito.',
+    misma:'Ese es el código de esta misma clase.',
+    sin_acceso:'No tienes acceso para modificar esta clase.',
+    sin_acceso_origen:'No tienes acceso a ese evento o clase. Debe unirlo quien lo creó o el administrador.',
+    no_existe_clase:'Esta clase ya no existe.'
+  };
+  const leerCodigo = v => { const t = String(v || '').trim().toUpperCase(); const m = t.match(/\b(EV|CL)-[A-Z0-9]+/); return m ? m[0] : t; };
+  const resumen = r => `<dl class="kv">
+      <dt>${r.tipo === 'evento' ? 'Evento' : 'Clase'}</dt><dd><b>${esc(r.titulo || '')}</b>${r.detalle ? ' · ' + esc(r.tipo === 'evento' ? fmtDate(r.detalle) : prettyName(r.detalle)) : ''}</dd>
+      <dt>${r.tipo === 'evento' ? 'Asistentes' : 'Alumnos'} en el origen</dt><dd>${r.origen}</dd>
+      <dt>Ya estaban en esta clase (no se duplican)</dt><dd>${r.ya_estaban}</dd>
+      <dt>Alumnos que se agregan</dt><dd><b>${r.alumnos}</b></dd>
+      ${r.reactivados ? `<dt>Alumnos retirados que vuelven a la clase</dt><dd>${r.reactivados}</dd>` : ''}
+      <dt>Marcas de asistencia que se suman</dt><dd><b>${r.marcas}</b></dd>
+      ${r.distintas ? `<dt>Marcas que ya existen aquí con otro valor (se mantienen)</dt><dd>${r.distintas}</dd>` : ''}
+      ${r.fechas_extra ? `<dt>Fechas extra que se agregan al calendario</dt><dd>${r.fechas_extra}</dd>` : ''}
+    </dl>`;
+  // Fechas del origen que no son sesiones de la clase: se sugiere la sesión más cercana (hasta 6 días).
+  const sesiones = classDates(cls);
+  const enClase = new Set(sesiones);
+  const dias = (a, b) => Math.round((parseISO(a) - parseISO(b)) / 864e5);
+  const sugerida = f => { let best = null; sesiones.forEach(d => { if(Math.abs(dias(d, f)) <= 6 && (!best || Math.abs(dias(d, f)) < Math.abs(dias(best, f)))) best = d; }); return best || f; };
+  const fechasHTML = (fuera, fo, mapa) => `<div class="warn-box" style="margin-top:12px"><b>${fuera.length === 1 ? 'Una fecha no coincide' : fuera.length + ' fechas no coinciden'} con las sesiones de esta clase.</b> Elige en qué sesión poner esa asistencia, si la agregas como fecha extra o si no la pasas.</div>
+    ${fuera.map(f => `<div class="field" style="margin-top:8px"><label>${esc(fmtDate(f))} · ${fo[f]} marca${fo[f] === 1 ? '' : 's'}</label><select data-fecha="${f}">
+      ${sesiones.length ? `<optgroup label="Poner en la sesión de la clase">${sesiones.slice().reverse().map(d => `<option value="${d}"${mapa[f] === d ? ' selected' : ''}>${esc(fmtDate(d))}</option>`).join('')}</optgroup>` : ''}
+      <option value="${f}"${mapa[f] === f ? ' selected' : ''}>Agregar ${esc(fmtShort(f))} como fecha extra de la clase</option>
+      <option value="omitir"${mapa[f] === 'omitir' ? ' selected' : ''}>No pasar esta fecha</option>
+    </select></div>`).join('')}`;
+  sheet(`${sheetHead('Unir un evento u otra clase', esc(cls.meta.title || ''))}
+    <p class="hint" style="margin-top:0">Escribe o pega el código del evento (<b>EV-…</b>) o de la clase (<b>CL-…</b>) donde se marcó la asistencia por error. Sus alumnos y su asistencia se suman a esta clase: los alumnos que ya están no se duplican y las marcas que ya existen aquí no se cambian. El evento o la clase de origen no se borra.</p>
+    <form id="ucf"><div class="field"><label>Código</label><input id="ucCod" autocomplete="off" spellcheck="false" placeholder="EV-XXXXX o CL-XXXXX" style="text-transform:uppercase"></div></form>
+    <div id="ucFechas"></div><div id="ucRes"></div>
+    <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ucBtn">Revisar</button></div>`, {
+    wide:true,
+    onMount(el, close){
+      const inp = $('#ucCod', el), btn = $('#ucBtn', el), res = $('#ucRes', el), fbox = $('#ucFechas', el);
+      let vista = null, mapa = {};
+      setTimeout(() => inp.focus(), 250);
+      const reiniciar = () => { vista = null; mapa = {}; res.innerHTML = ''; fbox.innerHTML = ''; btn.textContent = 'Revisar'; btn.className = 'btn primary'; };
+      inp.oninput = () => { if(vista) reiniciar(); };
+      const mostrar = r => {
+        const hay = r.alumnos || r.marcas || r.reactivados;
+        res.innerHTML = `<div class="info-box" style="margin-top:10px">Esto es lo que pasará al unir <b>${esc(vista.cod)}</b>:</div>${resumen(r)}${hay ? '' : '<p class="hint">No hay nada nuevo que sumar: todo ya está en esta clase.</p>'}`;
+        btn.textContent = hay ? 'Unir a esta clase' : 'Revisar'; btn.className = hay ? 'btn gold' : 'btn primary';
+      };
+      const previa = async () => {
+        const r = await SB.rpc('unir_codigo_a_clase', { clase:cls.dbId, codigo_origen:vista.cod, confirmar:false, fechas:mapa });
+        if(avisos[r.estado]){ res.innerHTML = `<div class="warn-box">${avisos[r.estado]}</div>`; vista = null; return null; }
+        vista.r = r; mostrar(r); return r;
+      };
+      const correr = async () => {
+        const cod = leerCodigo(inp.value);
+        if(!/^(EV|CL)-/.test(cod)){ toast('El código empieza con EV- (evento) o CL- (clase).', 'warn'); inp.focus(); return; }
+        btn.disabled = true;
+        try{
+          await SB.ensureSession();
+          if(!vista || !vista.r || !(vista.r.alumnos || vista.r.marcas || vista.r.reactivados)){
+            reiniciar();
+            // Lo pendiente de esta clase se envía antes, para comparar con lo último.
+            if(classPendingCount(cls)) await syncRemoteClass(cls.code, { silent:true });
+            vista = { cod };
+            const r0 = await SB.rpc('unir_codigo_a_clase', { clase:cls.dbId, codigo_origen:cod, confirmar:false });
+            if(avisos[r0.estado]){ res.innerHTML = `<div class="warn-box">${avisos[r0.estado]}</div>`; vista = null; return; }
+            const fo = r0.fechas_origen || {};
+            const fuera = Object.keys(fo).filter(f => !enClase.has(f)).sort();
+            if(!fuera.length){ vista.r = r0; mostrar(r0); return; }
+            fuera.forEach(f => mapa[f] = sugerida(f));
+            fbox.innerHTML = fechasHTML(fuera, fo, mapa);
+            $$('select[data-fecha]', fbox).forEach(s => s.onchange = async () => {
+              mapa[s.dataset.fecha] = s.value; btn.disabled = true;
+              try{ await previa(); }catch(e){ console.error(e); toast(errMsg(e), 'error'); }finally{ btn.disabled = false; }
+            });
+            await previa();
+            return;
+          }
+          const r = await SB.rpc('unir_codigo_a_clase', { clase:cls.dbId, codigo_origen:vista.cod, confirmar:true, fechas:mapa });
+          if(avisos[r.estado]){ res.innerHTML = `<div class="warn-box">${avisos[r.estado]}</div>`; vista = null; btn.textContent = 'Revisar'; btn.className = 'btn primary'; return; }
+          close();
+          await syncRemoteClass(cls.code, { silent:true });
+          if(CUR.type === 'class' && CUR.code === cls.code) renderClass(cls.code);
+          sheet(`${sheetHead('✓ Unido a la clase', esc(vista.cod))}${resumen(r)}<p class="hint">El ${r.tipo === 'evento' ? 'evento' : 'clase'} de origen se conserva sin cambios.</p><div class="sh-foot"><button class="btn primary" data-close>Listo</button></div>`);
+        }catch(e){
+          console.error(e);
+          toast(/unir_codigo_a_clase|schema cache|could not find/i.test(String(e && e.message)) ? 'Falta actualizar la base de datos (migración 0033).' : errMsg(e), 'error', { ms:6000 });
+        }finally{ btn.disabled = false; }
+      };
+      btn.onclick = correr;
+      $('#ucf', el).onsubmit = e => { e.preventDefault(); correr(); };
+    }
+  });
 }
 function stuSub(s){ const d = s.data || {}; return [s.src === 'nuevo' ? 'Nuevo' : '', d.w, SB.on() ? stakeShort(d.k) : d.k, SB.admin && s.vinculo === 'pendiente' ? '⚠ Sin coincidencia en la base' : '', SB.admin && s.vinculo === 'no_miembro' ? 'No miembro' : ''].filter(Boolean).join(' · '); }
 function setAtt(cls, d, sid, v, noSave){
