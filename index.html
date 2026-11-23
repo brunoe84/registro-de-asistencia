@@ -3512,7 +3512,11 @@ function renderRemoteShare(cls, body){
   body.innerHTML = `<section class="card" id="qrClCard"></section><section class="card"><h2>${ICON.download} Asistencia en tabla</h2>
       <p class="hint" style="margin-top:0">Reporte y Excel con una columna por fecha, totales y porcentaje por alumno.</p>
       <div class="btn-row"><button class="btn primary" id="xs">${ICON.share} Enviar asistencia</button><button class="btn" id="xp">${ICON.download} Descargar reporte</button><button class="btn" id="xd">${ICON.download} Descargar Excel</button><button class="btn" id="ws">${ICON.chat} Resumen del ${fmtShort(d)}</button></div></section>
-    <section class="card hide" id="invCard"></section>`;
+    <section class="card hide" id="invCard"></section>
+    ${cls.canEdit && cls.dbId ? `<section class="card"><h2>${ICON.copy} Unir un evento u otra clase</h2>
+      <p class="hint" style="margin-top:0">¿Se marcó la asistencia en un evento (<b>EV-…</b>) o en otra clase (<b>CL-…</b>) por error? Con su código, sus alumnos y su asistencia se suman a esta clase sin duplicar.</p>
+      <div class="btn-row"><button class="btn" id="unirCod">${ICON.copy} Unir con un código</button></div></section>` : ''}`;
+  const uc = $('#unirCod'); if(uc) uc.onclick = () => openUnirCodigo(cls);
   paintInvitacion(cls);
   paintQrClaseCard(cls);
   $('#xd').onclick = () => exportClass(cls, false);
@@ -5994,7 +5998,6 @@ function renderClassTab(){
         ${cls.remote ? '<div class="filt-row" id="cfilt"></div>' : opts.length > 1 ? `<div class="scope-row"><div class="seg" id="cscope">${opts.map(o=>`<button data-s="${o[0]}" class="${ST.cscope===o[0]?'on':''}">${o[1]}</button>`).join('')}</div></div>` : '<div style="height:10px"></div>'}
         <div id="cres" class="results"></div>
         <button class="manual-cta" id="newStu"><span class="mc-ico">${ICON.userPlus}</span><span><b>Alumno nuevo</b><small>No es miembro o no aparece en la base · nombre, estaca y barrio${cls.remote ? ' · WhatsApp para enviarle su ficha' : ''}</small></span>${ICON.next}</button>
-        ${cls.remote && cls.dbId ? `<button class="manual-cta" id="unirCod"><span class="mc-ico">${ICON.copy}</span><span><b>Unir un evento u otra clase</b><small>¿Marcaron la asistencia en un evento (EV-…) o en otra clase (CL-…) por error? Escribe su código: sus alumnos y su asistencia se suman aquí sin duplicar</small></span>${ICON.next}</button>` : ''}
       </section>`}
       <section class="section"><div class="section-h"><h2>Alumnos de la clase (<span id="stuN">${studs.length}</span>)</h2></div><div id="stuList" class="att-list"></div></section>`;
     if(!ro){
@@ -6002,7 +6005,6 @@ function renderClassTab(){
       q.oninput = () => { ST.cq = q.value; renderClassSearch(cls); };
       $$('#cscope button').forEach(b => b.onclick = () => { ST.cscope = b.dataset.s; $$('#cscope button').forEach(x => x.classList.toggle('on', x === b)); renderClassSearch(cls); });
       $('#newStu').onclick = () => openNewStudent(cls);
-      const uc = $('#unirCod'); if(uc) uc.onclick = () => openUnirCodigo(cls);
       if(cls.remote) renderRemoteFilters(cls);
       renderClassSearch(cls);
     }
