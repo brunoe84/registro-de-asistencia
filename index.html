@@ -2891,6 +2891,12 @@ async function renderRetrasos(){
       .sort((x, y) => (x.hecho - y.hecho) || y.dias - x.dias || x.maestro.localeCompare(y.maestro, 'es'));
     const pend = list.filter(it => !it.hecho), nH = list.length - pend.length;
     const nA = pend.filter(it => it.audit).length;
+    // % de retraso sobre el total de clases de la app (con los mismos filtros de programa y estaca).
+    // Baja a medida que se marcan como actualizadas en Wise2.
+    const totCl = (apps || []).filter(c => (!F.p || c.programa === F.p) && (!F.k || c.estaca === F.k)).length;
+    const pct = n => totCl ? (100 * n / totCl).toLocaleString('es-PE', { minimumFractionDigits:1, maximumFractionDigits:1 }) + ' %' : '—';
+    const ambito = [F.p ? progPlural(F.p) : 'Seminarios + Institutos', F.k ? stakeShort(F.k) : ''].filter(Boolean).join(' · ');
+    const pctHTML = totCl ? ` · <b style="color:${pend.length ? 'var(--red)' : 'var(--green)'}">${pct(pend.length)} de retraso</b> (${pend.length} de ${totCl} clases · ${esc(ambito)})${nH ? `, era ${pct(pend.length + nH)} antes de actualizar` : ''}` : '';
     const fa = A.archivo_en ? `Audit del ${fmtShort(fechaLocal(A.archivo_en))}` : 'Aún no se leyó el Audit';
     const appEstado = it => {
       if(!it.app) return `<small class="rt-st no">No está vinculada a una clase de la app · <a href="#/wiseroll">revisar</a></small>`;
@@ -2906,7 +2912,7 @@ async function renderRetrasos(){
         <div class="rt-f"><label>Class Roll: retraso desde</label><span class="rt-dias"><input class="inp" type="number" min="1" max="60" data-f="dias" value="${F.dias}"> días</span></div>
         <button class="btn sm rt-limpiar" id="rtLimpiar" ${F.p || F.k || F.src || F.t || +F.dias !== 8 ? '' : 'disabled'} title="Volver a Todos y 8 días">✕ Quitar filtros</button>
       </section>
-      <div class="rt-sum"><p class="hint" style="margin:0;flex:1">${esc(fa)} · <b>${pend.length}</b> clase${pend.length === 1 ? '' : 's'} con retraso (${nA} del Audit, ${pend.length - nA} detectadas con el Class Roll)${nH ? ` · <b style="color:var(--green)">${nH} ya actualizada${nH === 1 ? '' : 's'} en Wise2</b>` : ''} · <a href="#/wiseroll">Sincronizar</a><br><small>Marca la casilla cuando ya la pusiste al día en Wise2: baja al final y, si el próximo reporte la sigue mostrando con retraso, se desmarca sola.</small></p>${pend.some(it => it.app) ? `<button class="btn sm primary" id="rtTodos" style="background:#1E8449;border-color:#1E8449">📣 Enviar mensaje a todos</button>` : ''}</div>
+      <div class="rt-sum"><p class="hint" style="margin:0;flex:1">${esc(fa)} · <b>${pend.length}</b> clase${pend.length === 1 ? '' : 's'} con retraso (${nA} del Audit, ${pend.length - nA} detectadas con el Class Roll)${pctHTML}${nH ? ` · <b style="color:var(--green)">${nH} ya actualizada${nH === 1 ? '' : 's'} en Wise2</b>` : ''} · <a href="#/wiseroll">Sincronizar</a><br><small>Marca la casilla cuando ya la pusiste al día en Wise2: baja al final y, si el próximo reporte la sigue mostrando con retraso, se desmarca sola.</small></p>${pend.some(it => it.app) ? `<button class="btn sm primary" id="rtTodos" style="background:#1E8449;border-color:#1E8449">📣 Enviar mensaje a todos</button>` : ''}</div>
       ${list.length ? `<div class="rt-cont" style="--n:${Math.max(1, Math.min(3, Math.max(pend.length, nH)))}"><div class="rt-grid">${list.map((it, i) => `${it.hecho && (!i || !list[i - 1].hecho) ? `</div><div class="rt-sep"><span>✓ Ya actualizadas en Wise2 (${nH})</span></div><div class="rt-grid">` : ''}<div class="rt-row${it.hecho ? ' hecho' : ''}" data-key="${esc(it.key)}"><button class="wchk${it.hecho ? ' on' : ''}" data-chk aria-pressed="${it.hecho}" title="${it.hecho ? 'Actualizada en Wise2 · toca para desmarcar' : 'Marcar: ya la actualicé en Wise2'}">${it.hecho ? ICON.check : ''}</button><span class="av">${esc(initials(it.maestro))}</span><div class="ii">
           <b>${esc(/unassigned/i.test(it.maestro) ? 'Sin maestro asignado' : prettyName(it.maestro))}</b>
           <small>${esc([progLabel(it.programa), stakeShort(it.estaca), it.det].filter(Boolean).join(' · '))}</small>
