@@ -3214,13 +3214,15 @@ async function renderInformeJAS(){
   let datos;
   try{
     await SB.ensureSession();
-    const clases = (SB.resumen = await SB.rpc('resumen_clases') || []).filter(c => c.programa === 'I');
+    const [resumen, wisesTodas] = await Promise.all([SB.rpc('resumen_clases'), SB.rpc('wise_clases_admin').catch(e => { console.warn('wise_clases_admin', e); return []; })]);
+    const clases = (SB.resumen = resumen || []).filter(c => c.programa === 'I');
+    const wises = (wisesTodas || []).filter(w => w.programa === 'I');
     const estacaDe = new Map(clases.map(c => [c.id, c.estaca]));
     const ids = clases.map(c => c.id), trozos = [];
     for(let i = 0; i < ids.length; i += 80) trozos.push(ids.slice(i, i + 80));
     const alumnos = [], marcas = [];
     for(const t of trozos){
-      alumnos.push(...await traerTodo(() => SB.client.from('clase_alumnos').select('id,persona_id').in('clase_id', t).order('id')));
+      alumnos.push(...await traerTodo(() => SB.client.from('clase_alumnos').select('id,persona_id,clase_id,nombre').in('clase_id', t).order('id')));
       if(per.s <= hasta) marcas.push(...await traerTodo(() => SB.client.from('asistencia').select('alumno_id,clase_id,fecha').in('clase_id', t).in('estado', ['P', 'T', 'M']).gte('fecha', per.s).lte('fecha', hasta).order('alumno_id').order('fecha')));
     }
     // Una persona en dos clases la misma semana cuenta una sola vez (por su persona de la base).
@@ -3228,13 +3230,29 @@ async function renderInformeJAS(){
     const semanas = per.s <= hasta ? semanasDelRango(per.s, hasta) : [];
     const porLunes = new Map(semanas.map(w => [w.lun, w]));
     semanas.forEach(w => { w.est = {}; PROG_STAKES.forEach(k => w.est[k] = new Set()); w.total = new Set(); });
-    marcas.forEach(m => {
-      const d = parseISO(m.fecha); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-      const w = porLunes.get(iso(d)), k = estacaDe.get(m.clase_id); if(!w || !k) return;
-      const p = quien.get(m.alumno_id) || m.alumno_id;
-      (w.est[k] = w.est[k] || new Set()).add(p); w.total.add(p);
+    // Suma a la persona p en la semana de la fecha f (si cae dentro del periodo). fuente: 'app' | 'wise'.
+    const sumar = (f, k, p, fuente) => {
+      if(!k || !/^\d{4}-\d\d-\d\d$/.test(f) || f < per.s || f > hasta) return;
+      const d = parseISO(f); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      const w = porLunes.get(iso(d)); if(!w) return;
+      (w.est[k] = w.est[k] || new Set()).add(p); w.total.add(p); w[fuente].add(p);
+    };
+    semanas.forEach(w => { w.app = new Set(); w.wise = new Set(); });
+    // 1) Lo marcado en la app.
+    marcas.forEach(m => sumar(m.fecha, estacaDe.get(m.clase_id), quien.get(m.alumno_id) || m.alumno_id, 'app'));
+    // 2) Los presentes del Class Roll de Wise. Cada alumno de Wise se empareja por nombre con el de la
+    //    clase vinculada de la app (como en la Planilla), así quien está en los dos cuenta una sola vez.
+    const porClase = new Map(); alumnos.forEach(a => { if(!porClase.has(a.clase_id)) porClase.set(a.clase_id, []); porClase.get(a.clase_id).push({ id:a.id, n:a.nombre }); });
+    const claveNombre = n => wiseTokens(n).slice().sort().join(' ');
+    let ultWise = '';
+    wises.forEach(w => {
+      const k = (w.clase_id && estacaDe.get(w.clase_id)) || w.estaca;
+      const lista = (w.alumnos || []).map(a => { const n = String(a.n || ''), i = n.indexOf(','); return { ap: i > 0 ? n.slice(0, i).trim() : '', no: i > 0 ? n.slice(i + 1).trim() : n, n, m: a.m || {} }; });
+      const R = cruzarWise(w.clase_id ? porClase.get(w.clase_id) || [] : [], lista);
+      const pares = [...R.match.map(x => [quien.get(x.s.id) || x.s.id, x.w.m]), ...R.sobran.map(x => ['n:' + claveNombre(x.n), x.m])];
+      pares.forEach(([p, m]) => Object.entries(m).forEach(([f, v]) => { if(ATT_OK(v)){ sumar(f, k, p, 'wise'); if(f > ultWise) ultWise = f; } }));
     });
-    datos = { semanas, nClases:clases.length };
+    datos = { semanas, nClases:clases.length, nWise:wises.length, ultWise };
   }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; return; }
   const { semanas } = datos;
   const meses = [...new Set(semanas.map(w => w.mes))];
@@ -3250,7 +3268,7 @@ async function renderInformeJAS(){
     const cols = F.k ? [F.k] : PROG_STAKES;
     body.innerHTML = `<section class="card">
         <div class="inf-top"><div><h2 style="margin:0">Asistencia de Centros JAS</h2>
-          <p class="meta" style="margin:2px 0 0">Jóvenes que asistieron a clases de Instituto (presente, tarde o con permiso), contados una vez por semana · ${datos.nClases} clases</p></div></div>
+          <p class="meta" style="margin:2px 0 0">Jóvenes que asistieron a clases de Instituto (presente, tarde o con permiso), contados una vez por semana · ${datos.nClases} clases en la app${datos.nWise ? ` + ${datos.nWise} del Class Roll de Wise${datos.ultWise ? ` (con presentes hasta el ${esc(fmtDMY(datos.ultWise))})` : ''}` : ' · todavía no hay Class Roll de Wise leído'}</p></div></div>
         <div class="inf-f">
           <label>Periodo<select class="inp" id="infPer">${pers.map(p => `<option value="${p.key}" ${p.key === per.key ? 'selected' : ''}>${esc(periodLabel(p))}${cur && p.key === cur.key ? ' (actual)' : ''}</option>`).join('')}</select></label>
           <label>Estaca<select class="inp" id="infEst"><option value="">Todas</option>${PROG_STAKES.map(k => `<option value="${esc(k)}" ${F.k === k ? 'selected' : ''}>${esc(stakeShort(k))}</option>`).join('')}</select></label>
@@ -3259,9 +3277,9 @@ async function renderInformeJAS(){
       </section>
       ${!semanas.length ? '<div class="empty">El periodo todavía no empieza.</div>' : meses.map(m => `<section class="card inf-mes"><h3>${esc(mesTxt(m))}</h3>
         <div class="inf-scroll"><table class="inf-t"><thead><tr><th class="l">Semana</th>${cols.map(k => `<th>${esc(stakeShort(k))}</th>`).join('')}${F.k ? '' : '<th class="tot">Total</th>'}</tr></thead><tbody>
-        ${semanas.filter(w => w.mes === m).map(w => `<tr${enCurso(w) ? ' class="cur"' : ''}><td class="l"><b>${ORDINAL_SEM[w.n - 1] || w.n + 'ª'} semana</b><small>${esc(rangoCorto(w.desde, w.hasta))}${enCurso(w) ? ' · en curso' : ''}</small></td>${cols.map(k => `<td>${w.est[k].size}</td>`).join('')}${F.k ? '' : `<td class="tot">${w.total.size}</td>`}</tr>`).join('')}
+        ${semanas.filter(w => w.mes === m).map(w => `<tr${enCurso(w) ? ' class="cur"' : ''}><td class="l"><b>${ORDINAL_SEM[w.n - 1] || w.n + 'ª'} semana</b><small>${esc(rangoCorto(w.desde, w.hasta))}${enCurso(w) ? ' · en curso' : ''}</small></td>${cols.map(k => `<td>${w.est[k].size}</td>`).join('')}${F.k ? '' : `<td class="tot" title="Marcados en la app: ${w.app.size} · presentes en el Class Roll de Wise: ${w.wise.size} · sin repetir: ${w.total.size}">${w.total.size}</td>`}</tr>`).join('')}
         </tbody></table></div></section>`).join('')}
-      <p class="hint" style="margin:4px 2px">Cuenta la asistencia marcada en la app. Una persona que asiste a dos clases en la misma semana cuenta una vez. Las semanas van de lunes a domingo y pertenecen al mes en el que cae su jueves.</p>`;
+      <p class="hint" style="margin:4px 2px">Suma los presentes marcados en la app y los del Class Roll de Wise: quien aparece en los dos (o en dos clases la misma semana) cuenta una sola vez. Los alumnos de Wise se emparejan por nombre con los de la clase vinculada. Pasa el cursor sobre el total para ver cuántos vienen de cada fuente. Las semanas van de lunes a domingo y pertenecen al mes en el que cae su jueves.</p>`;
     $('#infPer').onchange = e => { ST.infPer = e.target.value; renderInformeJAS(); };
     $('#infEst').onchange = e => { F.k = ST.infEst = e.target.value; paint(); };
     $('#infCopy').onclick = () => copyText(texto(), 'Informe copiado');
@@ -3269,10 +3287,10 @@ async function renderInformeJAS(){
     $('#infXls').onclick = async () => {
       try{
         await loadScript(SHEETJS_URL);
-        const filas = [['Mes', 'Semana', 'Desde', 'Hasta', ...PROG_STAKES.map(stakeShort), 'Total']];
-        semanas.forEach(w => filas.push([mesTxt(w.mes), `${ORDINAL_SEM[w.n - 1] || w.n + 'ª'} semana`, fmtDMY(w.desde), fmtDMY(w.hasta), ...PROG_STAKES.map(k => w.est[k].size), w.total.size]));
+        const filas = [['Mes', 'Semana', 'Desde', 'Hasta', ...PROG_STAKES.map(stakeShort), 'Total', 'Marcados en la app', 'Presentes en Wise']];
+        semanas.forEach(w => filas.push([mesTxt(w.mes), `${ORDINAL_SEM[w.n - 1] || w.n + 'ª'} semana`, fmtDMY(w.desde), fmtDMY(w.hasta), ...PROG_STAKES.map(k => w.est[k].size), w.total.size, w.app.size, w.wise.size]));
         const wb = XLSX.utils.book_new(), ws = XLSX.utils.aoa_to_sheet(filas);
-        ws['!cols'] = [{ wch:16 }, { wch:16 }, { wch:12 }, { wch:12 }, ...PROG_STAKES.map(() => ({ wch:10 })), { wch:8 }];
+        ws['!cols'] = [{ wch:16 }, { wch:16 }, { wch:12 }, { wch:12 }, ...PROG_STAKES.map(() => ({ wch:10 })), { wch:8 }, { wch:12 }, { wch:12 }];
         XLSX.utils.book_append_sheet(wb, ws, 'Centros JAS');
         XLSX.writeFile(wb, `Asistencia Centros JAS - ${per.n} - ${hoy}.xlsx`);
       }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
