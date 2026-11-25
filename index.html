@@ -596,6 +596,23 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .rt-filtros{display:flex;flex-wrap:wrap;gap:10px 14px;padding:12px 14px}
 .rt-f{display:flex;flex-direction:column;gap:4px;min-width:140px}
 .rt-f label{font-size:12px;font-weight:700;color:var(--muted)}
+/* Informes */
+.inf-top{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.inf-f{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 14px;margin-top:14px}
+.inf-f label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);min-width:160px}
+.inf-mes{margin-top:14px}
+.inf-mes h3{margin:0 0 10px;font-size:17px}
+.inf-scroll{overflow-x:auto}
+.inf-t{border-collapse:collapse;width:100%;font-size:14px}
+.inf-t th{background:var(--ink);color:#fff;font-size:12px;font-weight:700;padding:8px 10px;text-align:center;white-space:nowrap}
+.inf-t th:first-child{border-radius:10px 0 0 0}.inf-t th:last-child{border-radius:0 10px 0 0}
+.inf-t td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:center;font-variant-numeric:tabular-nums;font-weight:600}
+.inf-t .l{text-align:left}
+.inf-t td.l b{display:block;font-size:14px}
+.inf-t td.l small{display:block;color:var(--muted);font-weight:500;font-size:12px}
+.inf-t .tot{font-weight:800}
+.inf-t th.tot{background:var(--gold);color:#1F1606}
+.inf-t tr.cur td{background:#FFF8EA}
 .rt-f select,.rt-f input{font-size:13.5px;padding:7px 9px}
 .rt-dias{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
 .rt-dias input{width:70px}
@@ -2170,6 +2187,7 @@ function homeOnlineHTML(){
     ${(SB.solicitudes||[]).length ? `<section class="section">${SB.solicitudes.map(s => `<div class="pend-box"><div><b>Solicitud enviada</b><small>${esc(prettyName(s.maestro))} · ${esc(s.horario)}. El administrador la revisará.</small></div></div>`).join('')}</section>` : ''}
     ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2></div>
       <button class="item" data-go="#/todas"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Todas las clases</b><small>Por programa, estaca y maestro · asistencia en vivo</small></span>${ICON.next}</button>
+      <button class="item" data-go="#/informes"><span class="ico t">${ICON.download}</span><span class="ii"><b>Informes</b><small>Asistencia de Centros JAS por estaca y semana · más informes con el tiempo</small></span>${ICON.next}</button>
       <button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b><small>Personas que piden entrar a una clase ya adoptada</small></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button>
       <button class="item" data-go="#/inscripciones"><span class="ico g">${ICON.userPlus}</span><span class="ii"><b>Inscritos para Wise</b><small>Por Seminario e Instituto · enlace y QR de inscripción para compartir</small></span><span class="num-badge alert-badge hide" data-badge="inscripciones" title="Por inscribir"></span>${ICON.next}</button>
       <button class="item" data-go="#/alertas"><span class="ico g">${ICON.users}</span><span class="ii"><b>Alertas de base</b><small>Alumnos sin coincidencia con la base de personas</small></span><span class="num-badge alert-badge hide" data-badge="alertas"></span>${ICON.next}</button>
@@ -3145,6 +3163,124 @@ async function renderWiseRoll(){
   }
 }
 
+/* ---------- Informes (administrador) ----------
+   Cada informe es una entrada de INFORMES con su pantalla #/informes/<id>. */
+const INFORMES = [
+  { id:'jas', t:'Asistencia de Centros JAS', s:'Institutos · jóvenes que asistieron, por estaca y por semana del periodo', ico:'users' }
+];
+function renderInformes(){
+  CUR = { type:'informes', code:null };
+  app.innerHTML = topbar({ back:'#/', title:'Informes', sub:'Administración' }) + `<main class="wrap">
+    <p class="hint" style="margin:0 2px 10px">Informes con la asistencia que se marca en la app.</p>
+    <section class="section">${INFORMES.map(i => `<button class="item" data-go="#/informes/${i.id}"><span class="ico t">${ICON[i.ico] || ICON.grid}</span><span class="ii"><b>${esc(i.t)}</b><small>${esc(i.s)}</small></span>${ICON.next}</button>`).join('')}</section></main>`;
+  bindTop();
+}
+// Trae todas las filas de una consulta, de 1000 en 1000. build() arma la consulta (sin .range).
+async function traerTodo(build){
+  const out = [];
+  for(let from = 0; ; from += 1000){
+    const { data, error } = await build().range(from, from + 999);
+    if(error) throw error;
+    out.push(...data);
+    if(data.length < 1000) return out;
+  }
+}
+const ORDINAL_SEM = ['Primera', 'Segunda', 'Tercera', 'Cuarta', 'Quinta'];
+/* Semanas de lunes a domingo. Cada semana es del mes donde cae su jueves (como el calendario ISO),
+   así ninguna semana queda de un solo día. n = 1.ª, 2.ª… semana de ese mes. */
+function semanasDelRango(s, e){
+  const ini = parseISO(s), fin = parseISO(e);
+  const lun = new Date(ini); lun.setDate(ini.getDate() - ((ini.getDay() + 6) % 7));
+  const out = [];
+  for(const d = new Date(lun); d <= fin; d.setDate(d.getDate() + 7)){
+    const dom = new Date(d); dom.setDate(d.getDate() + 6);
+    const jue = new Date(d); jue.setDate(d.getDate() + 3);
+    out.push({ lun:iso(d), dom:iso(dom), mes:iso(jue).slice(0, 7), n:Math.ceil(jue.getDate() / 7),
+      desde: iso(d) < s ? s : iso(d), hasta: iso(dom) > e ? e : iso(dom) });
+  }
+  return out;
+}
+const rangoCorto = (a, b) => { const x = parseISO(a), y = parseISO(b); return x.getMonth() === y.getMonth() ? `del ${x.getDate()} al ${y.getDate()}` : `del ${x.getDate()} ${MES[x.getMonth()]} al ${y.getDate()} ${MES[y.getMonth()]}`; };
+async function renderInformeJAS(){
+  CUR = { type:'informe-jas', code:null };
+  app.innerHTML = topbar({ back:'#/informes', title:'Asistencia de Centros JAS', sub:'Informes · Institutos' }) + `<main class="wrap wide"><div id="infBody">${loadingHTML('Contando la asistencia…')}</div></main>`;
+  bindTop();
+  const body = $('#infBody');
+  const pers = periodsOf('I');
+  if(!pers.length){ body.innerHTML = '<div class="warn-box">No hay periodos de Institutos configurados. Configúralos en <b>Base de personas y periodos</b>.</div>'; return; }
+  const cur = currentPeriod('I');
+  const per = pers.find(p => p.key === ST.infPer) || cur || pers[pers.length - 1];
+  const hoy = todayISO(), hasta = per.e < hoy ? per.e : hoy;
+  let datos;
+  try{
+    await SB.ensureSession();
+    const clases = (SB.resumen = await SB.rpc('resumen_clases') || []).filter(c => c.programa === 'I');
+    const estacaDe = new Map(clases.map(c => [c.id, c.estaca]));
+    const ids = clases.map(c => c.id), trozos = [];
+    for(let i = 0; i < ids.length; i += 80) trozos.push(ids.slice(i, i + 80));
+    const alumnos = [], marcas = [];
+    for(const t of trozos){
+      alumnos.push(...await traerTodo(() => SB.client.from('clase_alumnos').select('id,persona_id').in('clase_id', t).order('id')));
+      if(per.s <= hasta) marcas.push(...await traerTodo(() => SB.client.from('asistencia').select('alumno_id,clase_id,fecha').in('clase_id', t).in('estado', ['P', 'T', 'M']).gte('fecha', per.s).lte('fecha', hasta).order('alumno_id').order('fecha')));
+    }
+    // Una persona en dos clases la misma semana cuenta una sola vez (por su persona de la base).
+    const quien = new Map(alumnos.map(a => [a.id, a.persona_id || a.id]));
+    const semanas = per.s <= hasta ? semanasDelRango(per.s, hasta) : [];
+    const porLunes = new Map(semanas.map(w => [w.lun, w]));
+    semanas.forEach(w => { w.est = {}; PROG_STAKES.forEach(k => w.est[k] = new Set()); w.total = new Set(); });
+    marcas.forEach(m => {
+      const d = parseISO(m.fecha); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      const w = porLunes.get(iso(d)), k = estacaDe.get(m.clase_id); if(!w || !k) return;
+      const p = quien.get(m.alumno_id) || m.alumno_id;
+      (w.est[k] = w.est[k] || new Set()).add(p); w.total.add(p);
+    });
+    datos = { semanas, nClases:clases.length };
+  }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; return; }
+  const { semanas } = datos;
+  const meses = [...new Set(semanas.map(w => w.mes))];
+  const mesTxt = m => { const [y, mm] = m.split('-'); return `${MES_L[+mm - 1][0].toUpperCase()}${MES_L[+mm - 1].slice(1)} ${y}`; };
+  const enCurso = w => w.lun <= hoy && hoy <= w.dom;
+  const F = { k: ST.infEst || '' };
+  const texto = () => {
+    const ks = F.k ? [F.k] : [''];
+    return ks.map(k => [`*Asistencia de Centros JAS · ${k ? stakeShort(k) : 'Todas las estacas'}*`, `${per.n} (${fmtDMY(per.s)} al ${fmtDMY(per.e)})`, '',
+      ...meses.flatMap(m => [`*${mesTxt(m)}:*`, ...semanas.filter(w => w.mes === m).map(w => `${ORDINAL_SEM[w.n - 1] || w.n + 'ª'} semana (${rangoCorto(w.desde, w.hasta)}) Asistieron: ${(k ? w.est[k] : w.total).size} jóvenes${enCurso(w) ? ' (semana en curso)' : ''}`), ''])].join('\n')).join('\n').trim();
+  };
+  const paint = () => {
+    const cols = F.k ? [F.k] : PROG_STAKES;
+    body.innerHTML = `<section class="card">
+        <div class="inf-top"><div><h2 style="margin:0">Asistencia de Centros JAS</h2>
+          <p class="meta" style="margin:2px 0 0">Jóvenes que asistieron a clases de Instituto (presente, tarde o con permiso), contados una vez por semana · ${datos.nClases} clases</p></div></div>
+        <div class="inf-f">
+          <label>Periodo<select class="inp" id="infPer">${pers.map(p => `<option value="${p.key}" ${p.key === per.key ? 'selected' : ''}>${esc(periodLabel(p))}${cur && p.key === cur.key ? ' (actual)' : ''}</option>`).join('')}</select></label>
+          <label>Estaca<select class="inp" id="infEst"><option value="">Todas</option>${PROG_STAKES.map(k => `<option value="${esc(k)}" ${F.k === k ? 'selected' : ''}>${esc(stakeShort(k))}</option>`).join('')}</select></label>
+          <div class="btn-row" style="margin:0"><button class="btn" id="infCopy">${ICON.copy} Copiar texto</button><button class="btn" id="infWa">${ICON.chat} WhatsApp</button><button class="btn" id="infXls">${ICON.download} Excel</button></div>
+        </div>
+      </section>
+      ${!semanas.length ? '<div class="empty">El periodo todavía no empieza.</div>' : meses.map(m => `<section class="card inf-mes"><h3>${esc(mesTxt(m))}</h3>
+        <div class="inf-scroll"><table class="inf-t"><thead><tr><th class="l">Semana</th>${cols.map(k => `<th>${esc(stakeShort(k))}</th>`).join('')}${F.k ? '' : '<th class="tot">Total</th>'}</tr></thead><tbody>
+        ${semanas.filter(w => w.mes === m).map(w => `<tr${enCurso(w) ? ' class="cur"' : ''}><td class="l"><b>${ORDINAL_SEM[w.n - 1] || w.n + 'ª'} semana</b><small>${esc(rangoCorto(w.desde, w.hasta))}${enCurso(w) ? ' · en curso' : ''}</small></td>${cols.map(k => `<td>${w.est[k].size}</td>`).join('')}${F.k ? '' : `<td class="tot">${w.total.size}</td>`}</tr>`).join('')}
+        </tbody></table></div></section>`).join('')}
+      <p class="hint" style="margin:4px 2px">Cuenta la asistencia marcada en la app. Una persona que asiste a dos clases en la misma semana cuenta una vez. Las semanas van de lunes a domingo y pertenecen al mes en el que cae su jueves.</p>`;
+    $('#infPer').onchange = e => { ST.infPer = e.target.value; renderInformeJAS(); };
+    $('#infEst').onchange = e => { F.k = ST.infEst = e.target.value; paint(); };
+    $('#infCopy').onclick = () => copyText(texto(), 'Informe copiado');
+    $('#infWa').onclick = () => waOpen(texto());
+    $('#infXls').onclick = async () => {
+      try{
+        await loadScript(SHEETJS_URL);
+        const filas = [['Mes', 'Semana', 'Desde', 'Hasta', ...PROG_STAKES.map(stakeShort), 'Total']];
+        semanas.forEach(w => filas.push([mesTxt(w.mes), `${ORDINAL_SEM[w.n - 1] || w.n + 'ª'} semana`, fmtDMY(w.desde), fmtDMY(w.hasta), ...PROG_STAKES.map(k => w.est[k].size), w.total.size]));
+        const wb = XLSX.utils.book_new(), ws = XLSX.utils.aoa_to_sheet(filas);
+        ws['!cols'] = [{ wch:16 }, { wch:16 }, { wch:12 }, { wch:12 }, ...PROG_STAKES.map(() => ({ wch:10 })), { wch:8 }];
+        XLSX.utils.book_append_sheet(wb, ws, 'Centros JAS');
+        XLSX.writeFile(wb, `Asistencia Centros JAS - ${per.n} - ${hoy}.xlsx`);
+      }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+    };
+  };
+  paint();
+}
+
 /* ---------- Solicitudes de acceso ---------- */
 async function renderSolicitudes(){
   CUR = { type:'solicitudes', code:null };
@@ -3593,7 +3729,8 @@ function route(){
   if(parts[0] === 'terminos' || parts[0] === 'privacidad') return renderLegal(parts[0]);
   if(parts[0] === 'entrar') return renderEntrar();
   if(parts[0] === 'supervisor') return renderSupervisor();
-  if(['todas','solicitudes','alertas','seguimiento','inscripciones','wiseroll','retrasos'].includes(parts[0])){
+  if(['todas','solicitudes','alertas','seguimiento','inscripciones','wiseroll','retrasos','informes'].includes(parts[0])){
+    if(parts[0] === 'informes' && SB.admin) return parts[1] === 'jas' ? renderInformeJAS() : renderInformes();
     if(!SB.admin){ go('#/'); return; }
     if(parts[0] === 'wiseroll') return renderWiseRoll();
     if(parts[0] === 'retrasos') return renderRetrasos();
