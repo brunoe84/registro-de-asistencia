@@ -1932,7 +1932,7 @@ async function renderSeguimiento(filtro='adoptadas'){
       SB.resumen = await SB.rpc('resumen_clases');
       await cargarWiseUlt();
       try{ const r = await SB.rpc('clases_wise_al_dia'); alDia = {}; (r || []).forEach(x => { alDia[x.id] = x.al_dia_en; }); }catch(e){ console.warn('clases_wise_al_dia', e); }
-      paint();
+      conservarVista(body, paint);
     }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
   };
   await load();
@@ -2447,7 +2447,7 @@ async function renderTodas(prog, stakeIdx){
     try{
       SB.resumen = await SB.rpc('resumen_clases');
       await cargarWiseUlt();
-      paintTodas(body, nivel, prog, stakeIdx);
+      conservarVista(body, () => paintTodas(body, nivel, prog, stakeIdx));
     }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; }
   };
   await load();
@@ -4242,9 +4242,11 @@ function liveEvent(){
   const c = $('#evCount'); if(c) c.textContent = rows.length;
   const t = $('#tabCount'); if(t) t.textContent = rows.length;
   paintAprobar(ev);
-  if(ST.tab === 'marcar') renderResults();
-  else if(ST.tab === 'lista') renderEvList();
-  else if(ST.tab === 'grupos') renderGrupos();
+  conservarVista($('#tabBody'), () => {
+    if(ST.tab === 'marcar') renderResults();
+    else if(ST.tab === 'lista') renderEvList();
+    else if(ST.tab === 'grupos') renderGrupos();
+  });
   paintSync();
 }
 // Aviso para los colaboradores: acompañantes anotados por un amigo desde el QR, por confirmar.
@@ -5882,11 +5884,34 @@ async function paintQrClaseCard(cls){
     catch(e){ console.error(e); toast(errMsg(e), 'error'); }
   };
 }
+/* Redibujar por una sincronización no debe mover la vista: guarda y devuelve el desplazamiento de la
+   página y de cada caja con scroll (planilla, listas), los <details> abiertos y el campo donde se escribe. */
+function conservarVista(root, fn){
+  if(!root) return fn();
+  const ruta = el => { const p = []; while(el && el !== root){ p.unshift(el.id ? '#' + el.id : [...el.parentNode.children].indexOf(el)); if(el.id) break; el = el.parentNode; } return p; };
+  const buscar = p => { let el = root; for(const k of p){ el = typeof k === 'string' ? document.getElementById(k.slice(1)) : el && el.children[k]; if(!el) return null; } return el; };
+  const wx = window.scrollX, wy = window.scrollY;
+  const cajas = [[[], root.scrollTop, root.scrollLeft]];
+  root.querySelectorAll('*').forEach(el => { if(el.scrollTop || el.scrollLeft) cajas.push([ruta(el), el.scrollTop, el.scrollLeft]); });
+  const det = [...root.querySelectorAll('details')].map(d => d.open);
+  const f = document.activeElement, foco = f && f !== document.body && root.contains(f) && f.id ? { id:f.id, s:f.selectionStart, e:f.selectionEnd } : null;
+  const r = fn();
+  const volver = () => {
+    cajas.forEach(([p, t, l]) => { const el = buscar(p); if(el){ el.scrollTop = t; el.scrollLeft = l; } });
+    window.scrollTo(wx, wy);
+  };
+  const ds = root.querySelectorAll('details'); if(ds.length === det.length) ds.forEach((d, i) => { d.open = det[i]; });
+  if(foco){ const el = document.getElementById(foco.id); if(el && el !== document.activeElement){ el.focus({ preventScroll:true }); try{ if(foco.s != null) el.setSelectionRange(foco.s, foco.e); }catch(e){} } }
+  volver();
+  // La planilla ajusta su alto un instante después: se vuelve a poner en su lugar.
+  requestAnimationFrame(() => { if(window.scrollY !== wy && Math.abs(window.scrollY - wy) > 2) window.scrollTo(wx, wy); cajas.forEach(([p, t, l]) => { const el = buscar(p); if(el && (el.scrollTop !== t || el.scrollLeft !== l)){ el.scrollTop = t; el.scrollLeft = l; } }); });
+  return r;
+}
 function liveClass(skipTab){
   const cls = CLASSES[CUR.code]; if(!cls) return;
   const c = $('#clCount'); if(c) c.textContent = classStudents(cls).length;
-  if(!skipTab && ST.ctab !== 'alumnos' && ST.ctab !== 'compartir') renderClassTab();
-  else if(!skipTab && ST.ctab === 'alumnos') renderStuList();
+  if(!skipTab && ST.ctab !== 'alumnos' && ST.ctab !== 'compartir') conservarVista($('#tabBody'), renderClassTab);
+  else if(!skipTab && ST.ctab === 'alumnos') conservarVista($('#tabBody'), renderStuList);
   paintSync();
 }
 function unlockClass(cls){
