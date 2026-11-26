@@ -639,6 +639,29 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .pr-bar .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0}
 .pr-bar .tr i.enr{top:3px;bottom:3px}
 .pr-bar .v{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:600;min-width:52px;text-align:right}
+.pr-t td[data-v],.pr-bar i[data-v],.pr-cols .b[data-v]{cursor:pointer}
+.pr-t tbody td[data-v]:hover{background:#E3EEF4;color:#1B4A63;text-decoration:underline;text-underline-offset:3px}
+.pr-t tfoot td[data-v]:hover{background:#2A6585}
+.pr-bar i[data-v]:hover{filter:brightness(.88)}
+.pr-cols .b[data-v]:hover{filter:brightness(1.12)}
+/* Ventana con los nombres de una cifra */
+.pn-sum{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
+.pn-tot{font-size:14px;color:var(--muted);margin-right:6px}
+.pn-tot b{font:800 22px 'Manrope';color:var(--ink);margin-right:3px}
+.pn-chip{border:1px solid var(--border-2);background:#fff;border-radius:999px;padding:6px 13px;font-size:12.5px;font-weight:700;color:var(--text);cursor:pointer;transition:background .15s,color .15s}
+.pn-chip:hover{background:var(--soft)}
+.pn-chip.on{background:#1B4A63;border-color:#1B4A63;color:#fff}
+.pn-chip.ok:not(.on){color:var(--green-2);border-color:var(--green-100);background:var(--green-50)}
+.pn-q{width:100%;margin:0 0 10px}
+.pn-list{list-style:none;margin:0;padding:2px;max-height:52vh;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px}
+.pn-list li{display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.pn-list li[hidden]{display:none}
+.pn-list li.ok{border-color:var(--green-100);background:linear-gradient(90deg,var(--green-50),var(--card) 70%)}
+.pn-av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;font:800 12px 'Manrope';background:#E3EEF4;color:#1B4A63}
+.pn-list li.ok .pn-av{background:#1B4A63;color:#fff}
+.pn-n{flex:1;min-width:0;font-size:13.5px;font-weight:600;line-height:1.3}
+.pn-b{flex-shrink:0;font-size:11px;font-weight:800;color:var(--green-2);background:#fff;border:1px solid var(--green-100);border-radius:999px;padding:2px 8px}
+.pn-vacio{grid-column:1/-1;justify-content:center;color:var(--muted)}
 .pr-ley .c12,.pr-cols .b.a{background:#E07A2E}
 .pr-cols .b.e{background:#1B4A63}
 .pr-cg{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px 34px;margin-top:14px}
@@ -3415,12 +3438,15 @@ const barrioCorto = w => { const s = String(w || '').trim(); return /\bbranch$/i
 function calcPresidentes(pot, prog, hoy){
   const persona = (n, k) => wiseTokens(n).slice().sort().join(' ') + '|' + k;
   const edadDe = v => { const n = parseInt(v, 10); return isNaN(n) ? null : n; };
+  // det: quiénes están detrás de cada número (solo en memoria, para ver los nombres al tocar un número).
+  const nom = new Map(), ins = new Map(), cls = new Map();
   const out = {};
   const E = k => out[k] = out[k] || { barrios:{}, mp:new Set(), mpCls:new Set(), maeI:new Set() };
-  const B = (e, w) => e.barrios[w] = e.barrios[w] || { semPot:0, semEnr:new Set(), i1Pot:0, i1Enr:new Set(), i2Pot:0, i2Enr:new Set(), nc1:0, nc1Enr:0, nc2:0, nc2Enr:0, rm:0, rmEnr:0, maeS:0 };
+  const COLS_SET = ['semPot', 'semEnr', 'i1Pot', 'i1Enr', 'i2Pot', 'i2Enr', 'nc1', 'nc1Enr', 'nc2', 'nc2Enr', 'rm', 'rmEnr', 'maeS'];
+  const B = (e, w) => e.barrios[w] = e.barrios[w] || Object.fromEntries(COLS_SET.map(c => [c, new Set()]));
   const si = v => /^(yes|si|sí|1|true)$/i.test(String(v).trim());
   // Programados: alumnos enrolados en el año escolar, sin los que se retiraron.
-  const filas = prog.map(r => { const p = String(r.program || ''); return { r, tipo: /\bSEM\b/i.test(p) ? 'S' : /\bIN\b|\bINST/i.test(p) ? 'I' : '', ek:estacaDeTxt(r['stake district']), pk:estacaDeTxt(p), w:barrioCorto(r['ward branch']), t:parseInt(r['term number'], 10) || 0, edad:edadDe(r.age), n:String(r['student name']) }; })
+  const filas = prog.map(r => { const p = String(r.program || ''); return { r, tipo: /\bSEM\b/i.test(p) ? 'S' : /\bIN\b|\bINST/i.test(p) ? 'I' : '', ek:estacaDeTxt(r['stake district']), pk:estacaDeTxt(p), w:barrioCorto(r['ward branch']), t:parseInt(r['term number'], 10) || 0, edad:edadDe(r.age), n:String(r['student name']).trim() }; })
     .filter(x => x.tipo && (r => r.enrolled === undefined || si(r.enrolled))(x.r) && !si(x.r.dropped));
   // Periodo actual de cada programa: el último que trae Programados.
   const term = { S:Math.max(0, ...filas.filter(x => x.tipo === 'S').map(x => x.t)), I:Math.max(0, ...filas.filter(x => x.tipo === 'I').map(x => x.t)) };
@@ -3428,50 +3454,57 @@ function calcPresidentes(pot, prog, hoy){
   filas.forEach(x => {
     const cur = x.t === term[x.tipo];
     if(x.ek){
-      const per = persona(x.n, x.ek);
+      const per = persona(x.n, x.ek); nom.set(per, x.n);
       if(cur) actuales.add(per);
       if(x.w){ const b = B(E(x.ek), x.w);
         if(x.tipo === 'S') b.semEnr.add(per);
         else if(enEdad(x.edad, PRES_EDAD.i1)) b.i1Enr.add(per);
         else if(enEdad(x.edad, PRES_EDAD.i2)) b.i2Enr.add(per); }
     }
-    const pk = x.pk || x.ek, ins = norm(x.r.instructor);
+    const pk = x.pk || x.ek, mae = norm(x.r.instructor);
     if(!pk || !cur) return;
+    if(mae) ins.set(mae, String(x.r.instructor).trim());
     if(x.tipo === 'I'){
-      if(ins) E(pk).maeI.add(ins);
-      if(/missionary prep|preparaci.n misional/i.test(String(x.r.course || ''))){ E(pk).mp.add(persona(x.n, pk)); E(pk).mpCls.add([ins, norm(x.r.course), norm(x.r.section)].join('|')); }
-    } else if(ins && x.ek === pk && x.w){
+      if(mae) E(pk).maeI.add(mae);
+      if(/missionary prep|preparaci.n misional/i.test(String(x.r.course || ''))){
+        const per = persona(x.n, pk), c = [mae, norm(x.r.course), norm(x.r.section)].join('|');
+        nom.set(per, x.n); E(pk).mp.add(per); E(pk).mpCls.add(c);
+        cls.set(c, [String(x.r.course || '').trim(), String(x.r.section || '').trim(), String(x.r.instructor || '').trim()].filter(Boolean).join(' · '));
+      }
+    } else if(mae && x.ek === pk && x.w){
       // Cada maestro de Seminario cuenta en el barrio donde tiene más alumnos.
-      const key = pk + '|' + ins, m = maeSem.get(key) || new Map(); m.set(x.w, (m.get(x.w) || 0) + 1); maeSem.set(key, m);
+      const key = pk + '|' + mae, m = maeSem.get(key) || new Map(); m.set(x.w, (m.get(x.w) || 0) + 1); maeSem.set(key, m);
     }
   });
-  maeSem.forEach((m, key) => { const k = key.split('|')[0], w = [...m.entries()].sort((a, b) => b[1] - a[1])[0][0]; B(E(k), w).maeS++; });
+  maeSem.forEach((m, key) => { const i = key.indexOf('|'), k = key.slice(0, i), w = [...m.entries()].sort((a, b) => b[1] - a[1])[0][0]; B(E(k), w).maeS.add(key.slice(i + 1)); });
   // Potenciales: potencial por edad, nuevos conversos y misioneros retornados de los últimos 12 meses.
   const d = parseISO(hoy); d.setFullYear(d.getFullYear() - 1); const desde = iso(d);
   const vistos = new Set();
   pot.forEach(r => {
     const k = estacaDeTxt(r['stake district']), w = barrioCorto(r['ward branch']); if(!k || !w) return;
     const per = persona(r['student name'], k); if(vistos.has(per)) return; vistos.add(per);
+    nom.set(per, String(r['student name']).trim());
     const edad = edadDe(r.age), b = B(E(k), w), en = actuales.has(per);
-    if(enEdad(edad, PRES_EDAD.sem)) b.semPot++; else if(enEdad(edad, PRES_EDAD.i1)) b.i1Pot++; else if(enEdad(edad, PRES_EDAD.i2)) b.i2Pot++;
+    if(enEdad(edad, PRES_EDAD.sem)) b.semPot.add(per); else if(enEdad(edad, PRES_EDAD.i1)) b.i1Pot.add(per); else if(enEdad(edad, PRES_EDAD.i2)) b.i2Pot.add(per);
     const conf = xlFecha(r['confirmation date']);
     if(conf && conf >= desde && conf <= hoy){
-      if(enEdad(edad, PRES_EDAD.sem)){ b.nc1++; if(en) b.nc1Enr++; }
-      else if(enEdad(edad, PRES_EDAD.nc2)){ b.nc2++; if(en) b.nc2Enr++; }
+      if(enEdad(edad, PRES_EDAD.sem)){ b.nc1.add(per); if(en) b.nc1Enr.add(per); }
+      else if(enEdad(edad, PRES_EDAD.nc2)){ b.nc2.add(per); if(en) b.nc2Enr.add(per); }
     }
     const rm = xlFecha(r['mission release date']);
-    if(rm && rm >= desde && rm <= hoy){ b.rm++; if(en) b.rmEnr++; }
+    if(rm && rm >= desde && rm <= hoy){ b.rm.add(per); if(en) b.rmEnr.add(per); }
   });
   const porEstaca = {};
   Object.entries(out).forEach(([k, e]) => {
     porEstaca[k] = {
-      barrios: Object.entries(e.barrios).map(([w, b]) => ({ b:w, semPot:b.semPot, semEnr:b.semEnr.size, i1Pot:b.i1Pot, i1Enr:b.i1Enr.size, i2Pot:b.i2Pot, i2Enr:b.i2Enr.size,
-        nc1:b.nc1, nc1Enr:b.nc1Enr, nc2:b.nc2, nc2Enr:b.nc2Enr, rm:b.rm, rmEnr:b.rmEnr, maeS:b.maeS })).sort((a, b) => a.b.localeCompare(b.b, 'es')),
+      barrios: Object.entries(e.barrios).map(([w, b]) => ({ b:w, ...Object.fromEntries(COLS_SET.map(c => [c, b[c].size])) })).sort((a, b) => a.b.localeCompare(b.b, 'es')),
       mpEnr:e.mp.size, mpCls:e.mpCls.size, maeI:e.maeI.size };
   });
-  return { porEstaca, term };
+  return { porEstaca, term, det:{ est:out, nom, ins, cls } };
 }
-async function armarInformePresidentes(potFile, progFile){
+// Detalle con nombres de la última cuenta: solo en la memoria de esta página (se borra al salir del informe).
+let PRES_DET = null;
+async function armarInformePresidentes(potFile, progFile, { guardarNombres=false }={}){
   await loadScript(SHEETJS_URL);
   const leer = async f => xlFilas(XLSX.read(await f.arrayBuffer(), { type:'array', raw:true }));
   let pot = await leer(potFile), prog = await leer(progFile);
@@ -3479,11 +3512,12 @@ async function armarInformePresidentes(potFile, progFile){
   const R = calcPresidentes(pot, prog, hoy);
   pot = prog = null; // las edades y fechas no se guardan: se sueltan apenas se cuenta
   const meta = { fecha:hoy, pot:new Date(potFile.lastModified).toISOString(), prog:new Date(progFile.lastModified).toISOString(), term:R.term };
+  PRES_DET = guardarNombres ? { ...R.det, sello:meta.pot + '|' + meta.prog } : null;
   const ahora = new Date().toISOString();
   const filas = PROG_STAKES.map(k => ({ estaca:k, datos:{ ...meta, ...(R.porEstaca[k] || { barrios:[], mpEnr:0, mpCls:0, maeI:0 }) }, actualizado_en:ahora }));
   const { error } = await SB.client.from('informe_estacas').upsert(filas, { onConflict:'estaca' });
   if(error) throw error;
-  return { estacas:filas.length, fecha:hoy };
+  return { estacas:filas.length, fecha:hoy, meta };
 }
 // Busca Potenciales y Programados en la carpeta DEL DÍA vinculada (la misma del Class Roll).
 async function presArchivosCarpeta(interactive){
@@ -3504,8 +3538,55 @@ const sumaCols = filas => Object.fromEntries(PRES_COLS.map(c => [c, filas.reduce
 // Filas de la tabla: los barrios de una estaca, o las estacas (en "Todas").
 function presFilas(rows, k){
   const d = r => (r && r.datos) || {};
-  if(k){ const x = d(rows.find(r => r.estaca === k)); return { filas:(x.barrios || []).map(b => ({ ...b, n:b.b })), est:{ mpEnr:x.mpEnr || 0, mpCls:x.mpCls || 0, maeI:x.maeI || 0 } }; }
-  return { filas: PROG_STAKES.map(e => { const x = d(rows.find(r => r.estaca === e)); return { ...sumaCols(x.barrios || []), mpEnr:x.mpEnr || 0, mpCls:x.mpCls || 0, maeI:x.maeI || 0, n:stakeShort(e) }; }), est:null };
+  if(k){ const x = d(rows.find(r => r.estaca === k)); return { filas:(x.barrios || []).map(b => ({ ...b, n:b.b, k, w:b.b })), est:{ mpEnr:x.mpEnr || 0, mpCls:x.mpCls || 0, maeI:x.maeI || 0 } }; }
+  return { filas: PROG_STAKES.map(e => { const x = d(rows.find(r => r.estaca === e)); return { ...sumaCols(x.barrios || []), mpEnr:x.mpEnr || 0, mpCls:x.mpCls || 0, maeI:x.maeI || 0, n:stakeShort(e), k:e, w:'' }; }), est:null };
+}
+// Un número que se puede tocar para ver los nombres: columna · estaca ('' = todas) · barrio ('' = todos).
+const presDV = (col, k, w, v) => v ? ` data-v="${encodeURIComponent(col)}|${encodeURIComponent(k || '')}|${encodeURIComponent(w || '')}"` : '';
+const PRES_PAR = { semPot:'semEnr', i1Pot:'i1Enr', i2Pot:'i2Enr', nc1:'nc1Enr', nc2:'nc2Enr', rm:'rmEnr' };
+const PRES_TIT = { semPot:'Potencial de Seminario · 14 a 17 años', semEnr:'Enrolados en Seminario en el año', i1Pot:'Potencial de Instituto · 18 a 25 años', i1Enr:'Enrolados en Instituto · 18 a 25 años',
+  i2Pot:'Potencial de Instituto · 26 a 35 años', i2Enr:'Enrolados en Instituto · 26 a 35 años', mpEnr:'Enrolados en Preparación misional', mpCls:'Clases de Preparación misional',
+  nc1:'Nuevos conversos · 14 a 17 años', nc1Enr:'Nuevos conversos enrolados · 14 a 17 años', nc2:'Nuevos conversos · 18 a 35 años', nc2Enr:'Nuevos conversos enrolados · 18 a 35 años',
+  rm:'Misioneros retornados · últimos 12 meses', rmEnr:'Misioneros retornados enrolados', maeS:'Maestros llamados de Seminario', maeI:'Maestros llamados de Instituto' };
+const nombreBonito = n => prettyName(n).toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+// Quiénes están detrás de un número (con el detalle en memoria de la última cuenta).
+function presQuienes(det, col, k, w){
+  const ids = new Set(); let tipo = 'per';
+  (k ? [k] : PROG_STAKES).forEach(e => {
+    const x = det.est[e]; if(!x) return;
+    if(col === 'mpEnr') x.mp.forEach(i => ids.add(i));
+    else if(col === 'mpCls'){ tipo = 'cls'; x.mpCls.forEach(i => ids.add(i)); }
+    else if(col === 'maeI'){ tipo = 'ins'; x.maeI.forEach(i => ids.add(i)); }
+    else Object.entries(x.barrios).forEach(([bw, b]) => { if(!w || bw === w) (b[col] || []).forEach(i => ids.add(i)); });
+  });
+  if(col === 'maeS') tipo = 'ins';
+  const label = i => tipo === 'cls' ? (det.cls.get(i) || i) : nombreBonito(tipo === 'ins' ? det.ins.get(i) || i : det.nom.get(i) || i);
+  return [...ids].map(i => ({ id:i, n:label(i) })).sort((a, b) => a.n.localeCompare(b.n, 'es'));
+}
+function presVerNombres(det, col, k, w){
+  const lista = presQuienes(det, col, k, w), par = PRES_PAR[col];
+  const enr = par ? new Set(presQuienes(det, par, k, w).map(x => x.id)) : null;
+  const nEnr = enr ? lista.filter(x => enr.has(x.id)).length : 0;
+  const ini = n => n.split(' ').filter(Boolean).slice(0, 2).map(p => p[0]).join('').toUpperCase();
+  const quien = col === 'mpCls' ? 'clases' : /^mae/.test(col) ? 'maestros' : 'personas';
+  let filtro = 'todos';
+  sheet(`${sheetHead(esc(PRES_TIT[col] || col), esc([w, k ? stakeShort(k) : 'Todas las estacas'].filter(Boolean).join(' · ')))}
+    <div class="pn-sum"><span class="pn-tot"><b>${lista.length}</b> ${quien}</span>
+      ${enr ? `<button class="pn-chip on" data-f="todos">Todos · ${lista.length}</button><button class="pn-chip ok" data-f="si">✓ Enrolados · ${nEnr}</button><button class="pn-chip" data-f="no">Sin enrolar · ${lista.length - nEnr}</button>` : ''}</div>
+    ${lista.length > 8 ? `<input class="inp pn-q" id="pnQ" type="search" placeholder="Buscar nombre…" autocomplete="off">` : ''}
+    <ol class="pn-list" id="pnL">${lista.map((x, i) => { const ok = enr && enr.has(x.id); return `<li class="${ok ? 'ok' : ''}" data-ok="${ok ? 1 : 0}" data-n="${esc(norm(x.n))}"><span class="pn-av">${col === 'mpCls' ? i + 1 : esc(ini(x.n))}</span><span class="pn-n">${esc(x.n)}</span>${ok ? '<span class="pn-b">✓ Enrolado</span>' : ''}</li>`; }).join('') || '<li class="pn-vacio">Nadie en esta cifra.</li>'}</ol>
+    ${enr && enr.size > nEnr ? `<p class="hint" style="margin:10px 0 0">${enr.size - nEnr === 1 ? 'Hay 1 enrolado más que no está' : `Hay ${enr.size - nEnr} enrolados más que no están`} en este potencial (tiene${enr.size - nEnr === 1 ? '' : 'n'} otra edad o no figura${enr.size - nEnr === 1 ? '' : 'n'} en Potenciales). Toca el número de enrolados para ver la lista completa.</p>` : ''}
+    <p class="hint" style="margin:10px 0 0">Nombres leídos ahora de Potenciales y Programados. No se guardan: se olvidan al salir del informe.</p>
+    <div class="sh-foot"><button class="btn" id="pnCopy">${ICON.copy} Copiar lista</button><button class="btn primary" data-close>Cerrar</button></div>`, {
+    wide:true,
+    onMount(el){
+      const L = $('#pnL', el), q = $('#pnQ', el);
+      const aplicar = () => { const t = q ? norm(q.value) : ''; $$('li[data-n]', L).forEach(li => { li.hidden = (filtro === 'si' && li.dataset.ok !== '1') || (filtro === 'no' && li.dataset.ok === '1') || (t && !li.dataset.n.includes(t)); }); };
+      $$('.pn-chip', el).forEach(b => b.onclick = () => { filtro = b.dataset.f; $$('.pn-chip', el).forEach(x => x.classList.toggle('on', x === b)); aplicar(); });
+      if(q) q.oninput = aplicar;
+      $('#pnCopy', el).onclick = () => copyText([`${PRES_TIT[col] || col} · ${[w, k ? stakeShort(k) : 'Todas las estacas'].filter(Boolean).join(' · ')}`, ...$$('li[data-n]', L).filter(li => !li.hidden).map((li, i) => `${i + 1}. ${li.querySelector('.pn-n').textContent}${li.dataset.ok === '1' ? ' ✓' : ''}`)].join('\n'), 'Lista copiada');
+    }
+  });
 }
 async function renderInformePresidentes(){
   CUR = { type:'informe-pres', code:null };
@@ -3543,7 +3624,7 @@ async function renderInformePresidentes(){
       }
       if(!pot || !prog){ toast(`Falta ${!pot ? 'Potenciales.xlsx' : 'Programados.xlsx'}.`, 'warn', { ms:6000 }); return; }
       toast('Contando con Potenciales y Programados…');
-      await armarInformePresidentes(pot, prog);
+      await armarInformePresidentes(pot, prog, { guardarNombres:true });
       toast('Informe actualizado', 'ok');
       renderInformePresidentes();
     }catch(e){ console.error(e); toast(/informe_estacas|schema cache/i.test(String(e && e.message)) ? 'Falta actualizar la base de datos (migración 0034).' : errMsg(e), 'error', { ms:6000 }); }
@@ -3577,8 +3658,8 @@ async function renderInformePresidentes(){
     if(est) Object.assign(T, est);
     const n = filas.length;
     const celdas = (f, i) => PRES_COLS.map(c => {
-      if(est && PRES_ESTACA.includes(c)) return i === 0 ? `<td class="u" rowspan="${n}">${est[c]}</td>` : '';
-      return `<td>${f[c] || 0}</td>`;
+      if(est && PRES_ESTACA.includes(c)) return i === 0 ? `<td class="u" rowspan="${n}"${presDV(c, F.k, '', est[c])}>${est[c]}</td>` : '';
+      return `<td${presDV(c, f.k, f.w, f[c])}>${f[c] || 0}</td>`;
     }).join('');
     return `<div class="inf-scroll"><table class="pr-t">
       <thead>
@@ -3587,7 +3668,7 @@ async function renderInformePresidentes(){
         <tr class="sub">${PRES_SUB.map(s => `<th>${s}</th>`).join('')}</tr>
       </thead>
       <tbody>${n ? filas.map((f, i) => `<tr><td class="l">${esc(f.n)}</td>${celdas(f, i)}</tr>`).join('') : `<tr><td class="l" colspan="17">Todavía no hay datos de esta estaca.</td></tr>`}</tbody>
-      <tfoot><tr><td class="l">Total</td>${PRES_COLS.map(c => `<td>${T[c] || 0}</td>`).join('')}</tr>
+      <tfoot><tr><td class="l">Total</td>${PRES_COLS.map(c => `<td${presDV(c, F.k, '', T[c])}>${T[c] || 0}</td>`).join('')}</tr>
         <tr class="pct"><td class="l">% enrolado</td><td colspan="2">${pctTxt(T.semEnr, T.semPot)}</td><td colspan="2">${pctTxt(T.i1Enr, T.i1Pot)}</td><td colspan="2">${pctTxt(T.i2Enr, T.i2Pot)}</td><td colspan="2"></td><td colspan="2">${pctTxt(T.nc1Enr, T.nc1)}</td><td colspan="2">${pctTxt(T.nc2Enr, T.nc2)}</td><td colspan="2">${pctTxt(T.rmEnr, T.rm)}</td><td colspan="2"></td></tr></tfoot>
     </table></div>`;
   };
@@ -3607,7 +3688,7 @@ async function renderInformePresidentes(){
         const tp = filas.reduce((s, f) => s + val(f, p), 0), te = filas.reduce((s, f) => s + val(f, e), 0);
         return `<div class="pr-pan"><h3>${esc(t)}</h3><p class="hint" style="margin:0 0 8px">${te} de ${tp} ${que} · <b>${pctTxt(te, tp)}</b></p>
           ${filas.map(f => { const a = val(f, p), b = val(f, e); return `<div class="pr-bar" title="${esc(f.n)}: ${b} de ${a} ${que} (${pctTxt(b, a)})"><span class="nm">${esc(f.n)}</span>
-            <span class="tr"><i class="pot" style="width:${a / max * 100}%"></i><i class="enr" style="width:${b / max * 100}%"></i></span><span class="v">${b}/${a}</span></div>`; }).join('') || '<p class="hint">Sin datos.</p>'}</div>`;
+            <span class="tr"><i class="pot" style="width:${a / max * 100}%"${presDV(p, f.k, f.w, a)}></i><i class="enr" style="width:${b / max * 100}%"${presDV(e, f.k, f.w, b)}></i></span><span class="v">${b}/${a}</span></div>`; }).join('') || '<p class="hint">Sin datos.</p>'}</div>`;
       }).join('')}</div></section>`;
   };
   // Nuevos conversos: columnas por barrio (o estaca) · últimos 12 meses y enrolados en el periodo actual.
@@ -3618,7 +3699,7 @@ async function renderInformePresidentes(){
       const ta = filas.reduce((s, f) => s + (+f[a] || 0), 0), tb = filas.reduce((s, f) => s + (+f[b] || 0), 0);
       return `<div class="pr-pan"><h3>${esc(t)}</h3><p class="hint" style="margin:0 0 4px">${ta} en los últimos 12 meses · ${tb} enrolados en el periodo actual · <b>${pctTxt(tb, ta)}</b></p>
         <div class="pr-cols">${filas.map(f => { const x = +f[a] || 0, y = +f[b] || 0; return `<div class="g" title="${esc(f.n)}: ${x} conversos en los últimos 12 meses, ${y} enrolados en el periodo actual (${pctTxt(y, x)})"><div class="bars">
-          <div class="b a" style="height:${x / max * 100}%"><span>${x}</span></div><div class="b e" style="height:${y / max * 100}%"><span>${y}</span></div></div></div>`; }).join('')}</div>
+          <div class="b a" style="height:${x / max * 100}%"${presDV(a, f.k, f.w, x)}><span>${x}</span></div><div class="b e" style="height:${y / max * 100}%"${presDV(b, f.k, f.w, y)}><span>${y}</span></div></div></div>`; }).join('')}</div>
         <div class="pr-xl">${filas.map(f => `<div title="${esc(f.n)}">${esc(f.n)}</div>`).join('')}</div></div>`;
     };
     return `<section class="card"><div class="inf-top"><h2 style="margin:0">Nuevos conversos ${F.k ? 'por barrio' : 'por estaca'}</h2>
@@ -3683,7 +3764,7 @@ async function renderInformePresidentes(){
           <div class="btn-row" style="margin:0"><button class="btn primary" id="prAct">${ICON.refresh} Actualizar</button><button class="btn" id="prArch">${ICON.upload} Elegir archivos</button>${F.k ? `<button class="btn" id="prCab">${ICON.edit} Encabezado</button>` : ''}<button class="btn" id="prXls" ${D ? '' : 'disabled'}>${ICON.download} Excel</button></div>
           <input type="file" id="prFiles" accept=".xlsx" multiple hidden>
         </div>
-        <p class="hint" style="margin:10px 0 0"><b>Actualizar</b> lee <b>Potenciales.xlsx</b> y <b>Programados.xlsx</b> de la carpeta DEL DÍA (también se actualiza solo cuando cambian). Las edades y fechas se usan solo en este navegador para contar y se descartan: en la nube quedan únicamente los totales por barrio.</p>
+        <p class="hint" style="margin:10px 0 0"><b>Actualizar</b> lee <b>Potenciales.xlsx</b> y <b>Programados.xlsx</b> de la carpeta DEL DÍA (también se actualiza solo cuando cambian). Las edades y fechas se usan solo en este navegador para contar y se descartan: en la nube quedan únicamente los totales por barrio. <b>Toca un número o una barra</b> para ver los nombres (se leen en ese momento de los Excel y no se guardan).</p>
       </section>
       ${D ? `<section class="card pr-card">
         ${F.k ? `<div class="pr-cab">${kv('Estaca', stakeShort(F.k), '')}${kv('Presidente de estaca', c.presidente, 'sin escribir')}${kv('Fecha de informe', fmtDMY(todayISO()), '')}${kv('Nota', c.nota || notaDef(), '')}</div>` : ''}
@@ -3707,7 +3788,37 @@ async function renderInformePresidentes(){
     const pc = $('#prCab'); if(pc) pc.onclick = () => editarCab(F.k);
     $('#prXls').onclick = excel;
   };
+  // Tocar un número o una barra: los nombres se leen en ese momento de los Excel (solo en memoria).
+  let pedido = null;
+  const abrirNombres = async (v, archivos) => {
+    const [col, k, w] = v.split('|').map(decodeURIComponent);
+    try{
+      let pot, prog;
+      if(archivos){ pot = archivos.find(f => /potencial/i.test(f.name)); prog = archivos.find(f => /programad/i.test(f.name)); }
+      else if(!PRES_DET){
+        const r = await presArchivosCarpeta(true);
+        if(r.sinCarpeta || r.sinPermiso){ pedido = v; toast('Para ver los nombres elige Potenciales.xlsx y Programados.xlsx.', 'warn', { ms:6000 }); $('#prFiles').click(); return; }
+        pot = r.pot; prog = r.prog;
+      }
+      if(!PRES_DET || archivos){
+        if(!pot || !prog){ toast(`Falta ${!pot ? 'Potenciales.xlsx' : 'Programados.xlsx'}.`, 'warn', { ms:6000 }); return; }
+        toast('Leyendo los nombres…');
+        const r = await armarInformePresidentes(pot, prog, { guardarNombres:true });
+        // Si los Excel cambiaron desde la última cuenta, primero se muestran los totales nuevos.
+        if(!D || D.pot !== r.meta.pot || D.prog !== r.meta.prog){ ST.presAbrir = v; toast('Los totales se actualizaron con los Excel más recientes.', 'ok'); renderInformePresidentes(); return; }
+      }
+      presVerNombres(PRES_DET, col, k, w);
+    }catch(e){ console.error(e); toast(errMsg(e), 'error', { ms:6000 }); }
+  };
+  body.addEventListener('click', e => { const t = e.target.closest('[data-v]'); if(t && body.contains(t)) abrirNombres(t.dataset.v); });
+  body.addEventListener('change', e => {
+    if(e.target.id !== 'prFiles' || !pedido) return;
+    e.stopImmediatePropagation();
+    const fs = [...e.target.files], v = pedido; pedido = null; e.target.value = '';
+    if(fs.length) abrirNombres(v, fs);
+  }, true);
   paint();
+  if(ST.presAbrir && PRES_DET){ const v = ST.presAbrir; ST.presAbrir = null; abrirNombres(v); }
 }
 
 /* ---------- Solicitudes de acceso ---------- */
@@ -4149,6 +4260,8 @@ function route(){
   window.scrollTo(0,0);
   layer.innerHTML = '';
   SB.stopWatch();
+  // Los nombres del informe para presidentes solo viven mientras se está en ese informe.
+  if(!(parts[0] === 'informes' && parts[1] === 'presidentes')) PRES_DET = null;
   if(document.body.classList.contains('plan-full-on')) planillaGrande(false);
   if(SB.on() && !SB.ready){ app.innerHTML = topbar() + `<main class="wrap">${loadingHTML()}</main>`; return; }
   if(parts[0] === 'qr' && parts[1]) return renderQr(parts[1]);
