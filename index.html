@@ -639,6 +639,16 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .pr-bar .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0}
 .pr-bar .tr i.enr{top:3px;bottom:3px}
 .pr-bar .v{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:600;min-width:52px;text-align:right}
+.pr-ley .c12,.pr-cols .b.a{background:#E07A2E}
+.pr-cols .b.e{background:#1B4A63}
+.pr-cg{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px 34px;margin-top:14px}
+.pr-cols{display:flex;align-items:flex-end;gap:6px;height:210px;padding-top:22px;border-bottom:1px solid var(--border-2);margin-top:6px}
+.pr-cols .g{flex:1;min-width:0;height:100%;display:flex}
+.pr-cols .bars{flex:1;display:flex;align-items:flex-end;justify-content:center;gap:3px}
+.pr-cols .b{width:min(22px,42%);min-height:2px;position:relative;border-radius:4px 4px 0 0}
+.pr-cols .b span{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);padding-bottom:3px;font-size:12px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
+.pr-xl{display:flex;gap:6px;margin-top:6px}
+.pr-xl div{flex:1;min-width:0;font-size:11px;font-weight:700;text-transform:uppercase;text-align:center;color:var(--muted);line-height:1.2;overflow-wrap:anywhere}
 /* PC: páginas con filtros o encabezado grande (clase, informes) usan todo el ancho, con el contenido centrado. */
 @media(min-width:1000px){
   .wrap.full{max-width:1640px;padding-left:24px;padding-right:24px}
@@ -3588,7 +3598,6 @@ async function renderInformePresidentes(){
       ['Seminario · 14 a 17 años', 'semPot', 'semEnr', 'enrolados en el año'],
       ['Instituto · 18 a 25 años', 'i1Pot', 'i1Enr', 'enrolados en el año'],
       ['Instituto · 26 a 35 años', 'i2Pot', 'i2Enr', 'enrolados en el año'],
-      ['Nuevos conversos · últimos 12 meses', f => f.nc1 + f.nc2, f => f.nc1Enr + f.nc2Enr, 'enrolados en el periodo actual'],
       ['Misioneros retornados · últimos 12 meses', 'rm', 'rmEnr', 'enrolados en el periodo actual']];
     const val = (f, x) => typeof x === 'function' ? x(f) : (+f[x] || 0);
     return `<section class="card"><div class="inf-top"><h2 style="margin:0">Potencial y enrolados ${F.k ? 'por barrio' : 'por estaca'}</h2>
@@ -3600,6 +3609,21 @@ async function renderInformePresidentes(){
           ${filas.map(f => { const a = val(f, p), b = val(f, e); return `<div class="pr-bar" title="${esc(f.n)}: ${b} de ${a} ${que} (${pctTxt(b, a)})"><span class="nm">${esc(f.n)}</span>
             <span class="tr"><i class="pot" style="width:${a / max * 100}%"></i><i class="enr" style="width:${b / max * 100}%"></i></span><span class="v">${b}/${a}</span></div>`; }).join('') || '<p class="hint">Sin datos.</p>'}</div>`;
       }).join('')}</div></section>`;
+  };
+  // Nuevos conversos: columnas por barrio (o estaca) · últimos 12 meses y enrolados en el periodo actual.
+  const conversos = () => {
+    const { filas } = presFilas(rows, F.k);
+    const graf = (t, a, b) => {
+      const max = Math.max(1, ...filas.map(f => Math.max(+f[a] || 0, +f[b] || 0)));
+      const ta = filas.reduce((s, f) => s + (+f[a] || 0), 0), tb = filas.reduce((s, f) => s + (+f[b] || 0), 0);
+      return `<div class="pr-pan"><h3>${esc(t)}</h3><p class="hint" style="margin:0 0 4px">${ta} en los últimos 12 meses · ${tb} enrolados en el periodo actual · <b>${pctTxt(tb, ta)}</b></p>
+        <div class="pr-cols">${filas.map(f => { const x = +f[a] || 0, y = +f[b] || 0; return `<div class="g" title="${esc(f.n)}: ${x} conversos en los últimos 12 meses, ${y} enrolados en el periodo actual (${pctTxt(y, x)})"><div class="bars">
+          <div class="b a" style="height:${x / max * 100}%"><span>${x}</span></div><div class="b e" style="height:${y / max * 100}%"><span>${y}</span></div></div></div>`; }).join('')}</div>
+        <div class="pr-xl">${filas.map(f => `<div title="${esc(f.n)}">${esc(f.n)}</div>`).join('')}</div></div>`;
+    };
+    return `<section class="card"><div class="inf-top"><h2 style="margin:0">Nuevos conversos ${F.k ? 'por barrio' : 'por estaca'}</h2>
+        <div class="pr-ley"><span><i class="c12"></i>Últimos 12 meses</span><span><i class="enr"></i>Enrolados en el periodo actual</span></div></div>
+      ${filas.length ? `<div class="pr-cg">${graf('Conversos en Seminarios · 14 a 17 años', 'nc1', 'nc1Enr')}${graf('Conversos en Institutos · 18 a 35 años', 'nc2', 'nc2Enr')}</div>` : '<p class="hint">Sin datos.</p>'}</section>`;
   };
   const excel = async () => {
     try{
@@ -3666,6 +3690,7 @@ async function renderInformePresidentes(){
         ${tabla()}
         ${F.k ? `<div class="pr-cab pie">${kv('Responsable del informe', c.responsable, 'sin escribir')}${kv('Teléfono', c.telefono, '—')}${kv('Correo', c.correo, '—')}</div>` : ''}
       </section>
+      ${conversos()}
       ${graficos()}
       <details class="card" style="margin-top:14px"><summary><b>Cómo se cuenta cada columna</b></summary><ul class="hint" style="margin:8px 0 0;padding-left:18px;line-height:1.6">
         <li><b>Potencial</b>: jóvenes de Potenciales en ese rango de edad (Seminario 14 a 17; Instituto 18 a 25 y 26 a 35), por su barrio.</li>
