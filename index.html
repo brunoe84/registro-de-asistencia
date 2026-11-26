@@ -110,6 +110,22 @@ button:focus-visible,a:focus-visible,summary:focus-visible,label:focus-visible,[
 .section{margin-top:24px}
 .section-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 4px 10px}
 .section-h h2{font:800 12.5px/1.3 'Manrope';text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+/* Entornos: registro de administradores y tarjetas del administrador general */
+.adm-nuevo{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;margin-top:16px;padding-top:14px;border-top:1px dashed var(--border-2);font-size:13px;color:var(--muted)}
+.rg-h{margin:16px 0 6px;font:800 12.5px/1.3 'Manrope';text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.est-ed{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+.est-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center;gap:8px 12px}
+.est-chk{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;white-space:nowrap;cursor:pointer}
+.est-chk input{width:18px;height:18px;accent-color:var(--blue)}
+@media(max-width:560px){.est-row{grid-template-columns:auto auto 1fr}.est-row .inp{grid-column:1/-1}.est-row [data-quitar]{justify-self:end}}
+.est-tag{display:inline-flex;align-items:center;gap:6px;margin:2px 6px 2px 0;padding:3px 10px;border-radius:999px;background:var(--soft);border:1px solid var(--line);font-size:12.5px;font-weight:600}
+.est-tag small{color:var(--muted);font-weight:700}
+.adm-card+.adm-card{margin-top:12px}
+.adm-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+.adm-top h3{margin:0;font-size:17px}
+.adm-kv{grid-template-columns:170px 1fr}
+@media(max-width:560px){.adm-kv{grid-template-columns:1fr}.adm-kv dd{margin-bottom:6px}}
+.adm-acc{margin-top:14px}
 .ent-chip{font-size:11.5px;font-weight:700;color:var(--blue-2);background:var(--blue-50);border:1px solid var(--blue-100);border-radius:999px;padding:3px 10px;white-space:nowrap}
 .hint{color:var(--muted);font-size:12.5px}
 .opt{color:var(--faint);font-weight:500;font-size:12px}
@@ -1735,9 +1751,15 @@ const SB = {
   async refresh(){
     if(!this.user) return;
     const perfil = await this.fetchAll('perfiles', 'rol,nombre', [['id', this.user.id]]);
-    this.admin = !!(perfil[0] && perfil[0].rol === 'admin');
-    // Entorno en el que trabaja el administrador (programa, estacas, ajustes). Null antes de la migración 0036.
-    this.entorno = this.admin ? await this.rpc('mi_entorno').catch(() => null) : null;
+    let admin = !!(perfil[0] && perfil[0].rol === 'admin');
+    // Entorno en el que trabaja el administrador (programa, estacas, ajustes). Si su entorno está
+    // pendiente, rechazado o suspendido, no entra como administrador. Sin la migración 0036 sigue como antes.
+    this.entorno = null;
+    if(admin){
+      try{ this.entorno = await this.rpc('mi_entorno'); if(!this.entorno) admin = false; }
+      catch(e){ if(!/mi_entorno|schema cache|could not find/i.test(String(e && e.message))) console.warn('mi_entorno', e); }
+    }
+    this.admin = admin;
     this.mis = await this.rpc('mis_clases');
     if(!this.admin) await this.recuperarAccesos();
     await cargarWiseUlt();
@@ -1778,6 +1800,7 @@ const SB = {
         c.inscripciones = c.inscripciones_S + c.inscripciones_I;
       }catch(e){ console.warn('No se pudo contar inscritos', e); }
     }
+    if(c) c.entornos = (this.entorno && this.entorno.general && this.entorno.pendientes) || 0;
     this.counts = c; paintBadges();
   },
   async rpc(name, args){
@@ -2290,6 +2313,7 @@ function homeOnlineHTML(){
       <button class="item" data-go="#/retrasos"><span class="ico g">${ICON.eye}</span><span class="ii"><b>Audit · Clases con retraso</b><small>Lo que reporta Wise + retrasos de 8 días o más · filtra y escribe al maestro</small></span>${ICON.next}</button>
       <button class="item" data-go="#/wiseroll"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Class Roll de Wise</b><small>Lee la carpeta DEL DÍA · crea las clases de Wise · compara la asistencia</small></span>${ICON.next}</button>
       <button class="item" data-go="#/admin"><span class="ico t">${ICON.db}</span><span class="ii"><b>Base de personas y periodos</b><small>Subir la base actualizada, feriados y periodos</small></span>${ICON.next}</button>
+      ${SB.entorno && SB.entorno.general ? `<button class="item" data-go="#/administradores"><span class="ico g">${ICON.userPlus}</span><span class="ii"><b>Administradores</b><small>Entornos de cada programa · aprobar solicitudes de nuevos administradores</small></span><span class="num-badge alert-badge hide" data-badge="entornos"></span>${ICON.next}</button>` : ''}
     </section>` : ''}`;
 }
 function elegirOtroRol(){
@@ -2437,9 +2461,11 @@ async function guardarSesionDispositivo(){
   if(s && s.user && s.user.is_anonymous) LS.set('ca_sesion_dispositivo', { access_token:s.access_token, refresh_token:s.refresh_token });
 }
 function askAdminOnline(){
-  sheet(`${sheetHead('Acceso de administrador')}<form id="alf"><div class="field"><label>Correo</label><input id="aEm" type="email" autocomplete="username"></div><div class="field"><label>Contraseña</label><input id="aPw" type="password" autocomplete="current-password"></div></form><div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">Entrar</button></div>`, {
+  sheet(`${sheetHead('Acceso de administrador')}<form id="alf"><div class="field"><label>Correo</label><input id="aEm" type="email" autocomplete="username"></div><div class="field"><label>Contraseña</label><input id="aPw" type="password" autocomplete="current-password"></div></form><div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="ok">Entrar</button></div>
+    <div class="adm-nuevo"><span>¿Eres asistente administrativo de un programa?</span><button class="btn" id="aNuevo">${ICON.userPlus} Crear nuevo administrador</button></div>`, {
     onMount(el, close){
       setTimeout(() => $('#aEm', el).focus(), 250);
+      $('#aNuevo', el).onclick = () => { close(); setTimeout(() => openRegistroAdmin(), 250); };
       const tryIt = async () => {
         try{
           await guardarSesionDispositivo();
@@ -2447,12 +2473,207 @@ function askAdminOnline(){
           if(error) throw error;
           SB.user = data.user;
           await SB.refresh();
-          if(!SB.admin){ await SB.signOut(); toast('Esa cuenta no es de administrador.', 'error'); return; }
+          if(!SB.admin){
+            // Cuenta de un asistente que pidió su entorno: se le muestra cómo va su solicitud.
+            const correo = String((data.user && data.user.email) || '').toLowerCase();
+            let sol = null; try{ sol = await SB.rpc('mi_solicitud_entorno'); }catch(e){}
+            close();
+            if(sol){ await SB.signOut(); mostrarSolicitudEntorno(sol); return; }
+            if(DOMINIO_IGLESIA.test(correo)){ toast('Esta cuenta todavía no es de administrador: completa tu solicitud.', 'warn', { ms:5000 }); setTimeout(() => openRegistroAdmin({ sesion:true, correo }), 250); return; }
+            await SB.signOut(); toast('Esa cuenta no es de administrador.', 'error'); return;
+          }
           close(); toast('Bienvenido', 'ok'); go('#/todas');
-        }catch(e){ toast(/invalid/i.test(String(e.message)) ? 'Correo o contraseña incorrectos.' : errMsg(e), 'error'); }
+        }catch(e){ toast(/invalid/i.test(String(e.message)) ? 'Correo o contraseña incorrectos.' : /not confirmed/i.test(String(e.message)) ? 'Primero confirma tu correo: abre el mensaje que te enviamos al registrarte.' : errMsg(e), 'error', { ms:6000 }); }
       };
       $('#ok', el).onclick = tryIt;
       $('#alf', el).onsubmit = e => { e.preventDefault(); tryIt(); };
+    }
+  });
+}
+
+/* ---------- Entornos: "Crear nuevo administrador" y aprobación del administrador general ----------
+   Cada programa (asistente administrativo + coordinador) pide su entorno con su correo de la Iglesia.
+   El administrador general lo aprueba; recién ahí la cuenta pasa a ser administradora de ese entorno. */
+const DOMINIO_IGLESIA = /@churchofjesuschrist\.org$/i;
+// Estacas del formulario: filas { estaca, S, I }. Los pares del servidor ({ estaca, programa }) se agrupan por estaca.
+const paresAFilas = pares => { const m = new Map(); (pares || []).forEach(p => { const f = m.get(p.estaca) || { estaca:p.estaca, S:false, I:false }; f[p.programa] = true; m.set(p.estaca, f); }); return [...m.values()]; };
+function estacasEditorHTML(filas){
+  const fila = x => `<div class="est-row"><input class="inp" list="dlEstacas" placeholder="Ej.: Ica Perú Stake" value="${esc(x.estaca || '')}" autocomplete="off">
+    <label class="est-chk"><input type="checkbox" data-p="S" ${x.S ? 'checked' : ''}> Seminario</label>
+    <label class="est-chk"><input type="checkbox" data-p="I" ${x.I ? 'checked' : ''}> Instituto</label>
+    <button type="button" class="icon-btn sm" data-quitar aria-label="Quitar estaca" title="Quitar">${ICON.x}</button></div>`;
+  return `<div class="est-ed" data-fila="${esc(fila({ estaca:'', S:true, I:true }))}">${(filas && filas.length ? filas : [{ estaca:'', S:true, I:true }]).map(fila).join('')}</div>
+    <button type="button" class="btn sm" data-agregar-estaca>${ICON.plus} Agregar estaca</button>
+    <datalist id="dlEstacas">${PROG_STAKES.map(k => `<option value="${esc(k)}">`).join('')}</datalist>`;
+}
+function bindEstacasEditor(el){
+  const ed = $('.est-ed', el);
+  $('[data-agregar-estaca]', el).onclick = () => { ed.insertAdjacentHTML('beforeend', ed.dataset.fila); const ins = $$('.est-row input.inp', ed); ins[ins.length - 1].focus(); };
+  ed.onclick = e => { const b = e.target.closest('[data-quitar]'); if(b){ b.closest('.est-row').remove(); if(!$('.est-row', ed)) $('[data-agregar-estaca]', el).click(); } };
+}
+const leerEstacas = el => $$('.est-row', el).map(r => ({ estaca:$('input.inp', r).value.trim().replace(/\s+/g, ' '), S:$('[data-p="S"]', r).checked, I:$('[data-p="I"]', r).checked }))
+  .filter(x => x.estaca && (x.S || x.I));
+const estacasTxt = filas => filas.map(f => `${f.estaca} (${[f.S && 'Seminario', f.I && 'Instituto'].filter(Boolean).join(' e ')})`).join(' · ');
+
+// Formulario. sesion: la cuenta ya existe y entró con su contraseña (se envía con esa sesión).
+function openRegistroAdmin({ sesion=false, correo='' }={}){
+  let enviado = false;
+  const campo = (id, label, ph='', tipo='text', extra='') => `<div class="field"><label>${label}</label><input id="${id}" type="${tipo}" placeholder="${esc(ph)}" ${extra}></div>`;
+  sheet(`${sheetHead('Crear nuevo administrador', 'Para el asistente administrativo de un programa de Seminarios e Institutos')}
+    <p class="hint" style="margin-top:0">Completa los datos de tu programa. El administrador general revisará tu solicitud; cuando la apruebe tendrás tu propio entorno para sincronizar tus Class Roll, tu base de personas, Programados, Potenciales, el Audit y tus informes.</p>
+    <form id="rgf" autocomplete="on">
+      ${campo('rgProg', 'Nombre del programa', 'Ej.: Programa Arequipa')}
+      <h3 class="rg-h">Asistente administrativo</h3>
+      <div class="row2">${campo('rgAsN', 'Nombre y apellidos', '', 'text', 'autocomplete="name"')}${campo('rgAsC', 'Celular', '9XX XXX XXX', 'tel', 'inputmode="tel"')}</div>
+      <h3 class="rg-h">Coordinador</h3>
+      <div class="row2">${campo('rgCoN', 'Nombre y apellidos')}${campo('rgCoC', 'Celular', '9XX XXX XXX', 'tel', 'inputmode="tel"')}</div>
+      <h3 class="rg-h">Estacas a cargo</h3>
+      <p class="hint" style="margin:0 0 8px">Escríbelas como aparecen en Wise (por ejemplo «Ica Perú Stake») y marca si llevas Seminario, Instituto o los dos.</p>
+      ${estacasEditorHTML([])}
+      <h3 class="rg-h">Tu cuenta</h3>
+      ${sesion ? `<p class="hint" style="margin:0">Se enviará con tu cuenta <b>${esc(correo)}</b>.</p>` : `
+        ${campo('rgMail', 'Correo de la Iglesia', 'nombre@churchofjesuschrist.org', 'email', 'autocomplete="username"')}
+        <div class="row2">${campo('rgPw1', 'Contraseña', 'Mínimo 8 caracteres', 'password', 'autocomplete="new-password"')}${campo('rgPw2', 'Repite la contraseña', '', 'password', 'autocomplete="new-password"')}</div>
+        <p class="hint" style="margin:0">Solo se aceptan correos <b>@churchofjesuschrist.org</b>. Con este correo y contraseña entrarás en «Soy administrador».</p>`}
+    </form>
+    <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="rgOk">Enviar solicitud</button></div>`, {
+    wide:true,
+    onClose(){ if(sesion && !enviado) SB.signOut().catch(() => {}); },
+    onMount(el, close){
+      bindEstacasEditor(el);
+      setTimeout(() => $('#rgProg', el).focus(), 250);
+      const btn = $('#rgOk', el);
+      const enviar = async () => {
+        const v = id => ($('#' + id, el) ? $('#' + id, el).value.trim() : '');
+        const tel = s => s.replace(/[^0-9+]/g, '');
+        const datos = { programa:v('rgProg'), asistente_nombre:v('rgAsN'), asistente_celular:tel(v('rgAsC')), coordinador_nombre:v('rgCoN'), coordinador_celular:tel(v('rgCoC')), estacas:leerEstacas(el) };
+        const falta = !datos.programa ? 'el nombre del programa' : !datos.asistente_nombre ? 'el nombre del asistente administrativo' : datos.asistente_celular.replace('+', '').length < 9 ? 'el celular del asistente administrativo'
+          : !datos.coordinador_nombre ? 'el nombre del coordinador' : datos.coordinador_celular.replace('+', '').length < 9 ? 'el celular del coordinador' : !datos.estacas.length ? 'al menos una estaca (con Seminario o Instituto)' : '';
+        if(falta) return toast('Falta ' + falta + '.', 'warn');
+        const email = sesion ? correo : v('rgMail').toLowerCase(), pw = sesion ? '' : $('#rgPw1', el).value;
+        if(!sesion){
+          if(!DOMINIO_IGLESIA.test(email)) return toast('Usa tu correo @churchofjesuschrist.org.', 'warn');
+          if(pw.length < 8) return toast('La contraseña debe tener al menos 8 caracteres.', 'warn');
+          if(pw !== $('#rgPw2', el).value) return toast('Las contraseñas no coinciden.', 'warn');
+        }
+        btn.disabled = true;
+        try{
+          if(sesion){
+            const sol = await SB.rpc('solicitar_entorno', { datos });
+            enviado = true; close(); await SB.signOut();
+            return mostrarSolicitudEntorno(sol, { nueva:true });
+          }
+          await guardarSesionDispositivo();
+          const { data, error } = await SB.client.auth.signUp({ email, password:pw, options:{ data:{ nombre:datos.asistente_nombre, solicitud_entorno:datos } } });
+          if(error) throw error;
+          // Correo ya registrado: Supabase responde sin error pero sin identidades.
+          if(data && data.user && Array.isArray(data.user.identities) && !data.user.identities.length) throw new Error('already registered');
+          enviado = true; close();
+          // Sin confirmación por correo la cuenta queda abierta aquí: se vuelve a la sesión del dispositivo.
+          if(data && data.session) await SB.signOut();
+          sheet(`${sheetHead('✓ Solicitud enviada', esc(datos.programa))}
+            <p>El administrador general revisará tu solicitud y se comunicará contigo.</p>
+            ${data && data.session ? '' : '<div class="info-box">Te enviamos un correo para <b>confirmar tu cuenta</b>: ábrelo y confirma. Si no lo ves, revisa la carpeta de spam.</div>'}
+            <p class="hint">Cuando la aprueben, entra con <b>Soy administrador</b> (al pie de la página) usando <b>${esc(email)}</b> y tu contraseña.</p>
+            <div class="sh-foot"><button class="btn primary" data-close>Entendido</button></div>`);
+        }catch(e){
+          console.error(e);
+          const m = String((e && (e.message || e.code)) || '');
+          toast(/already registered|already been registered|user already exists/i.test(m) ? 'Ese correo ya tiene una cuenta: entra con «Soy administrador» y tu contraseña para ver o enviar tu solicitud.'
+            : /not authorized|email_address_not_authorized|sending confirmation|confirmation email/i.test(m) ? 'No se pudo enviar el correo de confirmación. Avisa al administrador general.'
+            : /password/i.test(m) && /weak|short|least/i.test(m) ? 'Esa contraseña es muy débil: usa letras y números (mínimo 8).'
+            : errMsg(e), 'error', { ms:8000 });
+        }finally{ btn.disabled = false; }
+      };
+      btn.onclick = enviar;
+      $('#rgf', el).onsubmit = e => { e.preventDefault(); enviar(); };
+    }
+  });
+}
+function mostrarSolicitudEntorno(sol, { nueva=false }={}){
+  const prog = esc((sol && sol.programa) || 'tu programa');
+  const txt = !sol ? 'No encontramos tu solicitud.'
+    : sol.estado === 'pendiente' ? `${nueva ? 'Recibimos' : 'Tenemos'} tu solicitud para <b>${prog}</b>. Está en revisión: cuando el administrador general la apruebe podrás entrar con «Soy administrador».`
+    : sol.estado === 'rechazado' ? `Tu solicitud para <b>${prog}</b> no fue aprobada. Comunícate con el administrador general.`
+    : sol.estado === 'suspendido' ? `El entorno <b>${prog}</b> está suspendido. Comunícate con el administrador general.`
+    : `Tu entorno <b>${prog}</b> ya está activo. Vuelve a entrar con «Soy administrador».`;
+  sheet(`${sheetHead(sol && sol.estado === 'pendiente' ? '⏳ Solicitud en revisión' : 'Solicitud de administrador')}<p>${txt}</p><div class="sh-foot"><button class="btn primary" data-close>Entendido</button></div>`);
+}
+
+/* ---------- Administradores y entornos (solo el administrador general) ---------- */
+async function renderAdministradores(){
+  CUR = { type:'administradores', code:null };
+  app.innerHTML = topbar({ back:'#/', title:'Administradores', sub:'Entornos de cada programa' }) + `<main class="wrap wide"><div id="admBody">${loadingHTML()}</div></main>`;
+  bindTop();
+  const body = $('#admBody');
+  let lista;
+  try{ lista = await SB.rpc('entornos_admin'); }
+  catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${/entornos_admin|schema cache|could not find/i.test(String(e && e.message)) ? 'Falta actualizar la base de datos (migración 0037).' : esc(errMsg(e))}</div>`; return; }
+  const ESTADO = { pendiente:['Pendiente', 'b-new'], activo:['Activo', 'b-ok'], rechazado:['Rechazado', 'b-ro'], suspendido:['Suspendido', 'b-ro'] };
+  const tel = (n, c) => c ? `${esc(n || '—')} · <a href="#" data-wa="${esc(c)}">${esc(c)}</a>` : esc(n || '—');
+  const tarjeta = x => {
+    const est = paresAFilas(x.estacas);
+    return `<section class="card adm-card" data-id="${x.id}">
+      <div class="adm-top"><div style="min-width:0"><h3>${esc(x.programa || 'Sin nombre')}</h3>
+        <p class="meta">${x.principal ? 'Entorno principal · ' : ''}${x.estado === 'pendiente' ? 'Solicitado el ' + esc(fmtDMY(String(x.creado_en).slice(0, 10))) : x.aprobado_en ? 'Activo desde el ' + esc(fmtDMY(String(x.aprobado_en).slice(0, 10))) : ''}${x.estado === 'activo' ? ` · ${x.clases} clase${x.clases === 1 ? '' : 's'}` : ''}</p></div>
+        <span class="badge ${ESTADO[x.estado][1]}">${ESTADO[x.estado][0]}</span></div>
+      <dl class="kv adm-kv">
+        <dt>Asistente administrativo</dt><dd>${tel(x.asistente_nombre, x.asistente_celular)}</dd>
+        <dt>Coordinador</dt><dd>${tel(x.coordinador_nombre, x.coordinador_celular)}</dd>
+        ${x.correo ? `<dt>Correo</dt><dd>${esc(x.correo)}</dd>` : ''}
+        ${x.admins.length ? `<dt>Administran</dt><dd>${x.admins.map(a => esc(a.nombre || a.correo) + (a.general ? ' (general)' : '')).join(' · ')}</dd>` : ''}
+        <dt>Estacas</dt><dd>${est.length ? est.map(f => `<span class="est-tag">${esc(f.estaca)}<small>${[f.S && 'S', f.I && 'I'].filter(Boolean).join(' · ')}</small></span>`).join('') : '<i class="muted">Ninguna</i>'}</dd>
+      </dl>
+      <div class="btn-row adm-acc">
+        ${x.estado === 'pendiente' ? `<button class="btn primary" data-acc="aprobar">${ICON.check} Aprobar</button><button class="btn" data-acc="editar">${ICON.edit} Editar</button><button class="btn" data-acc="rechazar">Rechazar</button>`
+          : x.estado === 'activo' ? `<button class="btn" data-acc="editar">${ICON.edit} Editar datos y estacas</button>${x.principal ? '' : '<button class="btn" data-acc="suspender">Suspender</button>'}`
+          : `<button class="btn" data-acc="aprobar">${ICON.check} ${x.estado === 'suspendido' ? 'Reactivar' : 'Aprobar'}</button><button class="btn" data-acc="editar">${ICON.edit} Editar</button>`}
+      </div></section>`;
+  };
+  const pend = lista.filter(x => x.estado === 'pendiente'), act = lista.filter(x => x.estado === 'activo'), otros = lista.filter(x => x.estado !== 'pendiente' && x.estado !== 'activo');
+  body.innerHTML = `<p class="hint" style="margin:0 2px 12px">Cada programa trabaja en su propio entorno con sus estacas. Las solicitudes llegan desde «Soy administrador → Crear nuevo administrador» (solo correos @churchofjesuschrist.org). Al aprobar, el entorno empieza con tus periodos.</p>
+    <div class="section-h"><h2>Por aprobar</h2></div>${pend.length ? pend.map(tarjeta).join('') : '<div class="empty">No hay solicitudes pendientes.</div>'}
+    <div class="section-h" style="margin-top:22px"><h2>Activos</h2></div>${act.map(tarjeta).join('')}
+    ${otros.length ? `<details class="section" style="margin-top:22px"><summary class="hint"><b>Rechazados y suspendidos (${otros.length})</b></summary>${otros.map(tarjeta).join('')}</details>` : ''}`;
+  $$('[data-wa]', body).forEach(a => a.onclick = e => { e.preventDefault(); waOpen('', a.dataset.wa); });
+  const recargar = () => { SB.rpc('mi_entorno').then(m => { if(m){ SB.entorno = m; if(SB.counts){ SB.counts.entornos = m.pendientes || 0; paintBadges(); } } }).catch(() => {}); renderAdministradores(); };
+  $$('[data-acc]', body).forEach(b => b.onclick = () => {
+    const x = lista.find(y => y.id === b.closest('[data-id]').dataset.id), acc = b.dataset.acc;
+    if(acc === 'editar') return editarEntorno(x, recargar);
+    const est = paresAFilas(x.estacas);
+    const msg = acc === 'aprobar' ? `<p>Se activará el entorno <b>${esc(x.programa)}</b>${x.correo ? ` y <b>${esc(x.correo)}</b> será su administrador` : ''}.</p><p class="hint">Estacas: ${esc(estacasTxt(est) || 'ninguna')}. Puedes corregirlas antes con «Editar».</p>`
+      : acc === 'rechazar' ? `<p>La solicitud de <b>${esc(x.programa)}</b> quedará rechazada. Podrás aprobarla después si fue un error.</p>`
+      : `<p>Los administradores de <b>${esc(x.programa)}</b> dejarán de entrar a su entorno hasta que lo reactives. Sus datos no se borran.</p>`;
+    sheet(`${sheetHead(acc === 'aprobar' ? (x.estado === 'suspendido' ? 'Reactivar entorno' : 'Aprobar entorno') : acc === 'rechazar' ? 'Rechazar solicitud' : 'Suspender entorno')}${msg}
+      <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn ${acc === 'aprobar' ? 'primary' : 'danger'}" id="admOk">${acc === 'aprobar' ? 'Aprobar' : acc === 'rechazar' ? 'Rechazar' : 'Suspender'}</button></div>`, {
+      onMount(el, close){
+        $('#admOk', el).onclick = async () => {
+          try{ await SB.rpc('resolver_entorno', { entorno:x.id, estado: acc === 'aprobar' ? 'activo' : acc === 'rechazar' ? 'rechazado' : 'suspendido' }); close(); toast(acc === 'aprobar' ? 'Entorno activo' : 'Listo', 'ok'); recargar(); }
+          catch(e){ console.error(e); toast(errMsg(e), 'error', { ms:6000 }); }
+        };
+      }
+    });
+  });
+}
+function editarEntorno(x, despues){
+  const campo = (id, label, v, tipo='text') => `<div class="field"><label>${label}</label><input id="${id}" type="${tipo}" value="${esc(v || '')}"></div>`;
+  sheet(`${sheetHead('Editar entorno', esc(x.programa || ''))}
+    ${campo('edProg', 'Nombre del programa', x.programa)}
+    <h3 class="rg-h">Asistente administrativo</h3><div class="row2">${campo('edAsN', 'Nombre y apellidos', x.asistente_nombre)}${campo('edAsC', 'Celular', x.asistente_celular, 'tel')}</div>
+    <h3 class="rg-h">Coordinador</h3><div class="row2">${campo('edCoN', 'Nombre y apellidos', x.coordinador_nombre)}${campo('edCoC', 'Celular', x.coordinador_celular, 'tel')}</div>
+    <h3 class="rg-h">Estacas</h3><p class="hint" style="margin:0 0 8px">Deben coincidir con el nombre de la estaca en Wise y en las clases (por ejemplo «Ica Perú Stake»).</p>
+    ${estacasEditorHTML(paresAFilas(x.estacas))}
+    <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="edOk">${ICON.save} Guardar</button></div>`, {
+    wide:true,
+    onMount(el, close){
+      bindEstacasEditor(el);
+      $('#edOk', el).onclick = async () => {
+        const v = id => $('#' + id, el).value.trim();
+        const datos = { programa:v('edProg'), asistente_nombre:v('edAsN'), asistente_celular:v('edAsC'), coordinador_nombre:v('edCoN'), coordinador_celular:v('edCoC'), estacas:leerEstacas(el) };
+        if(!datos.programa) return toast('Falta el nombre del programa.', 'warn');
+        try{ await SB.rpc('guardar_entorno', { entorno:x.id, datos }); close(); toast('Guardado', 'ok'); despues && despues(); }
+        catch(e){ console.error(e); toast(errMsg(e), 'error', { ms:6000 }); }
+      };
     }
   });
 }
@@ -4544,6 +4765,7 @@ function route(){
   if(parts[0] === 'terminos' || parts[0] === 'privacidad') return renderLegal(parts[0]);
   if(parts[0] === 'entrar') return renderEntrar();
   if(parts[0] === 'supervisor') return renderSupervisor();
+  if(parts[0] === 'administradores'){ if(SB.admin && SB.entorno && SB.entorno.general) return renderAdministradores(); go('#/'); return; }
   if(['todas','solicitudes','alertas','seguimiento','inscripciones','wiseroll','retrasos','informes'].includes(parts[0])){
     if(parts[0] === 'informes' && SB.admin) return parts[1] === 'jas' ? renderInformeJAS() : parts[1] === 'presidentes' ? renderInformePresidentes() : renderInformes();
     if(!SB.admin){ go('#/'); return; }
