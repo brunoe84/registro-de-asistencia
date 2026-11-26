@@ -110,6 +110,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,label:focus-visible,[
 .section{margin-top:24px}
 .section-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 4px 10px}
 .section-h h2{font:800 12.5px/1.3 'Manrope';text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.ent-chip{font-size:11.5px;font-weight:700;color:var(--blue-2);background:var(--blue-50);border:1px solid var(--blue-100);border-radius:999px;padding:3px 10px;white-space:nowrap}
 .hint{color:var(--muted);font-size:12.5px}
 .opt{color:var(--faint);font-weight:500;font-size:12px}
 .req{color:var(--red)}
@@ -1735,6 +1736,8 @@ const SB = {
     if(!this.user) return;
     const perfil = await this.fetchAll('perfiles', 'rol,nombre', [['id', this.user.id]]);
     this.admin = !!(perfil[0] && perfil[0].rol === 'admin');
+    // Entorno en el que trabaja el administrador (programa, estacas, ajustes). Null antes de la migración 0036.
+    this.entorno = this.admin ? await this.rpc('mi_entorno').catch(() => null) : null;
     this.mis = await this.rpc('mis_clases');
     if(!this.admin) await this.recuperarAccesos();
     await cargarWiseUlt();
@@ -1822,7 +1825,7 @@ const SB = {
     this.stopWatch();
     if(this.global){ try{ this.client.removeChannel(this.global); }catch(e){} this.global = null; }
     await this.client.auth.signOut({ scope:'local' });
-    this.user = null; this.admin = false; this.mis = []; this.solicitudes = []; this.barrios = null; this.counts = {solicitudes:0, alertas:0};
+    this.user = null; this.admin = false; this.entorno = null; this.mis = []; this.solicitudes = []; this.barrios = null; this.counts = {solicitudes:0, alertas:0};
     Object.keys(CLASSES).forEach(c => { if(CLASSES[c].remote) delete CLASSES[c]; }); saveClasses();
     // Vuelve la sesión que tenía este dispositivo antes de entrar como administrador,
     // para no perder las clases y accesos que ya tenía.
@@ -2278,7 +2281,7 @@ function homeOnlineHTML(){
     ${unirArriba ? '' : localesHTML()}
     ${mis.length || SB.admin ? '<section class="section" id="pushBox"></section>' : ''}
     ${(SB.solicitudes||[]).length ? `<section class="section">${SB.solicitudes.map(s => `<div class="pend-box"><div><b>Solicitud enviada</b><small>${esc(prettyName(s.maestro))} · ${esc(s.horario)}. El administrador la revisará.</small></div></div>`).join('')}</section>` : ''}
-    ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2></div>
+    ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2>${SB.entorno ? `<span class="ent-chip" title="Entorno en el que estás trabajando">${esc(SB.entorno.programa)}${SB.entorno.general ? ' · general' : ''}</span>` : ''}</div>
       <button class="item" data-go="#/todas"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Todas las clases</b><small>Por programa, estaca y maestro · asistencia en vivo</small></span>${ICON.next}</button>
       <button class="item" data-go="#/informes"><span class="ico t">${ICON.download}</span><span class="ii"><b>Informes</b><small>Asistencia de Centros JAS por estaca y semana · más informes con el tiempo</small></span>${ICON.next}</button>
       <button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b><small>Personas que piden entrar a una clase ya adoptada</small></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button>
@@ -3534,6 +3537,13 @@ function presDesempacar(rows){
   });
   return det;
 }
+// Cada entorno guarda sus filas por estaca (clave entorno + estaca; el entorno lo pone el servidor).
+// Antes de la migración 0036 la clave era solo la estaca.
+async function presGuardarEstacas(filas){
+  let r = await SB.client.from('informe_estacas').upsert(filas, { onConflict:'entorno_id,estaca' });
+  if(r.error && /no unique or exclusion constraint|entorno_id/i.test(String(r.error.message))) r = await SB.client.from('informe_estacas').upsert(filas, { onConflict:'estaca' });
+  return r;
+}
 async function armarInformePresidentes(potFile, progFile, { guardarNombres=false }={}){
   await loadScript(SHEETJS_URL);
   const leer = async f => xlFilas(XLSX.read(await f.arrayBuffer(), { type:'array', raw:true }));
@@ -3546,9 +3556,9 @@ async function armarInformePresidentes(potFile, progFile, { guardarNombres=false
   const ahora = new Date().toISOString();
   const sello = meta.pot + '|' + meta.prog;
   const filas = PROG_STAKES.map(k => ({ estaca:k, datos:{ ...meta, ...(R.porEstaca[k] || { barrios:[], mpEnr:0, mpCls:0, maeI:0 }) }, nombres:{ ...presEmpacar(R.det, k), s:sello }, actualizado_en:ahora }));
-  let { error } = await SB.client.from('informe_estacas').upsert(filas, { onConflict:'estaca' });
+  let { error } = await presGuardarEstacas(filas);
   // Sin la migración 0035 (columna "nombres") se guardan igual los totales.
-  if(error && /nombres/i.test(String(error.message))) ({ error } = await SB.client.from('informe_estacas').upsert(filas.map(({ nombres, ...f }) => f), { onConflict:'estaca' }));
+  if(error && /nombres/i.test(String(error.message))) ({ error } = await presGuardarEstacas(filas.map(({ nombres, ...f }) => f)));
   if(error) throw error;
   return { estacas:filas.length, fecha:hoy, meta };
 }
@@ -3719,7 +3729,7 @@ async function renderInformePresidentes(){
         $('#pcOk', el).onclick = async () => {
           const cab = { presidente:$('#pcPres', el).value.trim(), nota:$('#pcNota', el).value.trim(), responsable:$('#pcResp', el).value.trim(), telefono:$('#pcTel', el).value.trim(), correo:$('#pcMail', el).value.trim() };
           try{
-            const { error } = await SB.client.from('informe_estacas').upsert([{ estaca:k, cabecera:cab }], { onConflict:'estaca' });
+            const { error } = await presGuardarEstacas([{ estaca:k, cabecera:cab }]);
             if(error) throw error;
             const r = rows.find(x => x.estaca === k); if(r) r.cabecera = cab; else rows.push({ estaca:k, datos:{}, cabecera:cab });
             close(); toast('Guardado', 'ok'); paint();
