@@ -629,6 +629,18 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .inf-t .l{text-align:left}
 .inf-t td.l b{display:block;font-size:14px}
 .inf-t td.l small{display:block;color:var(--muted);font-weight:500;font-size:12px}
+/* Resumen regional y selector de programa en Informes */
+.inf-ent{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 18px;margin-bottom:14px}
+.inf-ent small{display:block;font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.inf-ent b{font-size:17px;color:var(--ink)}
+.inf-ent label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);min-width:220px}
+.rg-t th small{display:block;font-weight:500;font-size:11px;opacity:.85;white-space:nowrap}
+.rg-t td small{display:block;color:var(--muted);font-weight:500;font-size:11.5px;margin-top:1px}
+.rg-t td.l b{display:block}
+.rg-t td{vertical-align:top}
+.rg-mal{color:var(--red)}.rg-bien{color:var(--green)}
+.rg-load{color:var(--faint)}.rg-err{color:var(--red);font-size:12px;font-weight:600}
+.rg-det{margin-top:12px}.rg-det summary{cursor:pointer;font-size:14px}.rg-det .inf-scroll{margin-top:10px}
 /* Informe para presidentes de estaca */
 .pr-card{padding:0;overflow:hidden}
 .pr-cab{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 18px;padding:14px 18px}
@@ -1852,6 +1864,13 @@ const SB = {
   async rpc(name, args){
     if(!this.client) throw new Error('No hay conexión con el servidor. Revisa tu internet.');
     const { data, error } = await this.client.rpc(name, args || {});
+    if(error) throw error;
+    return data;
+  },
+  // Administrador general: la misma consulta, pero de otro entorno (encabezado x-entorno, migración 0039).
+  async rpcEn(entorno, name, args){
+    if(!this.client) throw new Error('No hay conexión con el servidor. Revisa tu internet.');
+    const { data, error } = await this.client.rpc(name, args || {}).setHeader('x-entorno', entorno);
     if(error) throw error;
     return data;
   },
@@ -3210,6 +3229,42 @@ function retrasoRoll(w, hoy){
   return { desde, sesiones: sin.length, completas, parciales: sin.length - completas, dias: Math.round((parseISO(hoy) - parseISO(desde)) / 864e5) };
 }
 let ABRIR_MSG = null;
+/* Clases con retraso: las del Audit de Wise + las que el Class Roll muestra sin marcar hace "dias" o más.
+   Cada una dice si ya se marcó como actualizada en Wise (y si un reporte nuevo la volvió a mostrar).
+   La usan la pantalla del Audit y el Resumen regional. */
+function armarRetrasos(A, wises, apps, hechas, dias){
+  const ms = t => { const v = Date.parse(t); return isNaN(v) ? 0 : v; };
+  const appPorId = new Map((apps || []).map(c => [c.id, c])), hoy = todayISO();
+  const auditEn = ms(A.archivo_en || A.actualizado_en);
+  const items = new Map(), usados = new Set();
+  (A.filas || []).forEach(a => {
+    const w = wiseDeAudit(a, wises, usados), key = w ? w.clave : 'a:' + norm([a.programa, a.estaca, a.curso + '-' + a.seccion, a.maestro].join('|'));
+    if(w) usados.add(w.clave);
+    const it = items.get(key) || { key, w, audit:null };
+    it.audit = a; items.set(key, it);
+  });
+  (wises || []).forEach(w => {
+    if(w.ignorada) return;
+    const r = retrasoRoll(w, hoy); if(!r) return;
+    const it = items.get(w.clave) || { key:w.clave, w, audit:null };
+    it.roll = r; items.set(w.clave, it);
+  });
+  return [...items.values()].map(it => {
+    const w = it.w, a = it.audit;
+    it.programa = (a || w).programa; it.estaca = (a || w).estaca;
+    it.maestro = w ? w.maestro : a.maestro;
+    it.det = w ? [w.horario, w.curso].filter(Boolean).join(' · ') : a.curso + '-' + a.seccion;
+    it.app = w && w.clase_id ? appPorId.get(w.clase_id) : null;
+    it.desde = a ? a.desde : it.roll ? it.roll.desde : '';
+    it.dias = it.desde ? Math.round((parseISO(hoy) - parseISO(it.desde)) / 864e5) : 0;
+    it.enRango = !!a || (it.roll && it.roll.dias >= dias);
+    const h = hechas[it.key], hm = ms(h);
+    const datosEn = Math.max(a ? auditEn : 0, it.roll && w ? ms(w.archivo_en || w.actualizado_en) : 0);
+    it.hecho = !!h && datosEn <= hm;          // los datos son de antes de la marca
+    it.volvio = !!h && !it.hecho ? h : '';   // un reporte nuevo la sigue mostrando con retraso
+    return it;
+  }).filter(it => it.enRango);
+}
 async function renderRetrasos(){
   CUR = { type:'retrasos', code:null };
   app.innerHTML = topbar({ back:'#/', title:'Audit · Clases con retraso', sub:'Administración' }) + `<main class="wrap rt-wide"><div id="rtBody">${loadingHTML()}</div></main>`;
@@ -3228,38 +3283,7 @@ async function renderRetrasos(){
   let hechas = LS.get('ca_rt_hechas', {}), sinMig = false;
   try{ const r = await SB.rpc('audit_actualizadas_admin'); hechas = {}; (r || []).forEach(x => { hechas[x.clave] = x.marcado_en; }); LS.set('ca_rt_hechas', hechas); }
   catch(e){ console.warn('audit_actualizadas_admin', e); sinMig = true; }
-  const ms = t => { const v = Date.parse(t); return isNaN(v) ? 0 : v; };
-  const auditEn = ms(A.archivo_en || A.actualizado_en);
-  const armar = () => {
-    const items = new Map(), usados = new Set();
-    (A.filas || []).forEach((a, i) => {
-      const w = wiseDeAudit(a, wises, usados), key = w ? w.clave : 'a:' + norm([a.programa, a.estaca, a.curso + '-' + a.seccion, a.maestro].join('|'));
-      if(w) usados.add(w.clave);
-      const it = items.get(key) || { key, w, audit:null };
-      it.audit = a; items.set(key, it);
-    });
-    wises.forEach(w => {
-      if(w.ignorada) return;
-      const r = retrasoRoll(w, hoy); if(!r) return;
-      const it = items.get(w.clave) || { key:w.clave, w, audit:null };
-      it.roll = r; items.set(w.clave, it);
-    });
-    return [...items.values()].map(it => {
-      const w = it.w, a = it.audit;
-      it.programa = (a || w).programa; it.estaca = (a || w).estaca;
-      it.maestro = w ? w.maestro : a.maestro;
-      it.det = w ? [w.horario, w.curso].filter(Boolean).join(' · ') : a.curso + '-' + a.seccion;
-      it.app = w && w.clase_id ? appPorId.get(w.clase_id) : null;
-      it.desde = a ? a.desde : it.roll ? it.roll.desde : '';
-      it.dias = it.desde ? Math.round((parseISO(hoy) - parseISO(it.desde)) / 864e5) : 0;
-      it.enRango = !!a || (it.roll && it.roll.dias >= F.dias);
-      const h = hechas[it.key], hm = ms(h);
-      const datosEn = Math.max(a ? auditEn : 0, it.roll && w ? ms(w.archivo_en || w.actualizado_en) : 0);
-      it.hecho = !!h && datosEn <= hm;          // los datos son de antes de la marca
-      it.volvio = !!h && !it.hecho ? h : '';   // un reporte nuevo la sigue mostrando con retraso
-      return it;
-    }).filter(it => it.enRango);
-  };
+  const armar = () => armarRetrasos(A, wises, apps, hechas, F.dias);
   const marcar = async (it, si) => {
     const antes = hechas[it.key];
     if(si) hechas[it.key] = new Date().toISOString(); else delete hechas[it.key];
@@ -3546,14 +3570,128 @@ async function renderWiseRoll(){
    Cada informe es una entrada de INFORMES con su pantalla #/informes/<id>. */
 const INFORMES = [
   { id:'jas', t:'Asistencia de Centros JAS', s:'Institutos · jóvenes que asistieron, por estaca y por semana del periodo', ico:'users' },
-  { id:'presidentes', t:'Presidentes de estaca', s:'Seminarios e Institutos por barrio · potencial, enrolados, preparación misional, nuevos conversos, misioneros retornados y maestros', ico:'grid' }
+  { id:'presidentes', t:'Presidentes de estaca', s:'Seminarios e Institutos por barrio · potencial, enrolados, preparación misional, nuevos conversos, misioneros retornados y maestros', ico:'grid' },
+  { id:'regional', t:'Resumen regional', s:'Todos los programas lado a lado · inscripción, Audit (% de retraso) y Centros JAS, con detalle por estaca', ico:'eye', general:true }
 ];
 function renderInformes(){
   CUR = { type:'informes', code:null };
+  const gen = !!(SB.entorno && SB.entorno.general);
+  const otros = gen ? ENT.lista.filter(e => e.id !== SB.entorno.id) : [];
   app.innerHTML = topbar({ back:'#/', title:'Informes', sub:'Administración' }) + `<main class="wrap">
-    <p class="hint" style="margin:0 2px 10px">Informes con los datos de la app y de Wise.</p>
-    <section class="section">${INFORMES.map(i => `<button class="item" data-go="#/informes/${i.id}"><span class="ico t">${ICON[i.ico] || ICON.grid}</span><span class="ii"><b>${esc(i.t)}</b><small>${esc(i.s)}</small></span>${ICON.next}</button>`).join('')}</section></main>`;
+    ${gen ? `<section class="card inf-ent"><div><small>Informes de</small><b>${esc(SB.entorno.programa)}</b></div>
+      ${otros.length ? `<label>Ver los de otro programa<select class="inp" id="infEnt"><option value="">Elegir…</option>${otros.map(e => `<option value="${e.id}">${esc(e.programa)}</option>`).join('')}</select></label>` : '<span class="hint">Cuando apruebes otros programas podrás ver sus informes desde aquí.</span>'}</section>` : ''}
+    <p class="hint" style="margin:0 2px 10px">Informes con los datos de la app y de Wise${SB.entorno ? ' de ' + esc(SB.entorno.programa) : ''}.</p>
+    <section class="section">${INFORMES.filter(i => !i.general || gen).map(i => `<button class="item" data-go="#/informes/${i.id}"><span class="ico t">${ICON[i.ico] || ICON.grid}</span><span class="ii"><b>${esc(i.t)}</b><small>${esc(i.s)}</small></span>${ICON.next}</button>`).join('')}</section></main>`;
   bindTop();
+  const sel = $('#infEnt');
+  if(sel) sel.onchange = () => {
+    if(!sel.value) return;
+    sel.disabled = true;
+    // Entra a ese programa: sus informes, estacas y periodos. Para volver, el chip del panel o este mismo selector.
+    SB.rpc('cambiar_entorno', { entorno:sel.value }).then(() => { location.hash = '#/informes'; location.reload(); })
+      .catch(e => { sel.disabled = false; console.error(e); toast(errMsg(e), 'error'); });
+  };
+}
+/* ---------- Resumen regional (solo el administrador general) ----------
+   Cada programa (entorno) lado a lado, calculado con las mismas funciones de sus propios informes:
+   inscripción (informe para presidentes), Audit (clases con retraso) y Centros JAS (jóvenes por semana).
+   Los datos de cada entorno se piden con SB.rpcEn (encabezado x-entorno, migración 0039). */
+const periodsDe = (ajustes, prog) => (((ajustes || {}).periods || {})[prog] || []).map((p, i) => Object.assign({ key: prog + i }, p)).filter(p => p.s && p.e);
+const periodoActualDe = (ajustes, prog) => { const t = todayISO(), l = periodsDe(ajustes, prog); return l.find(p => p.s <= t && t <= p.e) || l.filter(p => p.s <= t).pop() || l[0] || null; };
+// Totales del informe para presidentes de un entorno: por estaca y del programa.
+function resumenInscripcion(rows){
+  const porEst = (rows || []).filter(r => r.datos && Array.isArray(r.datos.barrios))
+    .map(r => ({ estaca:r.estaca, T:Object.assign(sumaCols(r.datos.barrios), { mpEnr:r.datos.mpEnr || 0, mpCls:r.datos.mpCls || 0, maeI:r.datos.maeI || 0 }) }))
+    .sort((a, b) => a.estaca.localeCompare(b.estaca, 'es'));
+  const ref = (rows || []).find(r => r.datos && r.datos.fecha);
+  return { porEst, T:sumaCols(porEst.map(x => x.T)), fecha:ref ? ref.datos.fecha : '' };
+}
+async function renderInformeRegional(){
+  CUR = { type:'informe-regional', code:null };
+  app.innerHTML = topbar({ back:'#/informes', title:'Resumen regional', sub:'Informes · todos los programas' }) + `<main class="wrap wide full"><div id="rgBody">${loadingHTML('Reuniendo los datos de cada programa…')}</div></main>`;
+  bindTop();
+  const body = $('#rgBody');
+  if(!(SB.entorno && SB.entorno.general)){ body.innerHTML = '<div class="warn-box">Este informe es solo para el administrador general.</div>'; return; }
+  await ENT.cargar();
+  const filas = ENT.lista.map(e => ({ e, ins:null, aud:null, jas:null, err:{} }));
+  if(!filas.length){ body.innerHTML = '<div class="empty">No hay programas activos.</div>'; return; }
+  const n = v => Number(v || 0).toLocaleString('es-PE');
+  const pct = (a, b) => b ? Math.round(a / b * 100) + ' %' : '—';
+  const cargando = '<span class="rg-load">…</span>', fallo = m => `<span class="rg-err" title="${esc(m)}">no se pudo</span>`;
+  const celda = (f, k, html) => f.err[k] ? fallo(f.err[k]) : f[k] ? html() : cargando;
+  const par = (a, b) => `<b>${n(a)}</b> / ${n(b)}<small>${pct(a, b)}</small>`;
+  const rango = w => w ? rangoCorto(w.desde, w.hasta) : '';
+  const paint = () => {
+    const ok = k => filas.filter(f => f[k] && !f.err[k]);
+    const sum = (k, fn) => ok(k).reduce((s, f) => s + (fn(f) || 0), 0);
+    body.innerHTML = `<section class="card">
+        <div class="inf-top"><div><h2 style="margin:0">Resumen regional</h2>
+          <p class="meta" style="margin:2px 0 0">${filas.length} programa${filas.length === 1 ? '' : 's'} activo${filas.length === 1 ? '' : 's'} · cada uno con sus propios datos de Wise, su Audit y su calendario.</p></div></div>
+        <div class="inf-scroll" style="margin-top:12px"><table class="inf-t rg-t">
+          <thead><tr><th class="l">Programa</th><th>Clases en la app<small>Seminario · Instituto</small></th><th>Seminario<small>enrolados / potencial</small></th><th>Instituto 18 a 25<small>enrolados / potencial</small></th><th>Instituto 26 a 35<small>enrolados / potencial</small></th><th>Audit<small>clases con retraso</small></th><th>Centros JAS<small>jóvenes por semana</small></th><th></th></tr></thead>
+          <tbody>${filas.map(f => `<tr>
+            <td class="l"><b>${esc(f.e.programa)}</b>${f.e.id === SB.entorno.id ? '<small>aquí estás</small>' : ''}${f.ins && f.ins.fecha ? `<small>Wise del ${esc(fmtDMY(f.ins.fecha))}</small>` : ''}</td>
+            <td>${celda(f, 'aud', () => `<b>${n(f.aud.S)}</b> · <b>${n(f.aud.I)}</b><small>${n(f.aud.alumnos)} alumnos</small>`)}</td>
+            <td>${celda(f, 'ins', () => f.ins.porEst.length ? par(f.ins.T.semEnr, f.ins.T.semPot) : '<span class="muted">sin datos</span>')}</td>
+            <td>${celda(f, 'ins', () => f.ins.porEst.length ? par(f.ins.T.i1Enr, f.ins.T.i1Pot) : '—')}</td>
+            <td>${celda(f, 'ins', () => f.ins.porEst.length ? par(f.ins.T.i2Enr, f.ins.T.i2Pot) : '—')}</td>
+            <td>${celda(f, 'aud', () => `<b class="${f.aud.pend ? 'rg-mal' : 'rg-bien'}">${pct(f.aud.pend, f.aud.tot)}</b><small>${n(f.aud.pend)} de ${n(f.aud.tot)} clases</small>`)}</td>
+            <td>${celda(f, 'jas', () => f.jas.sinPeriodo ? '<span class="muted">sin periodo de Instituto</span>' : `<b>${n(f.jas.pasada ? f.jas.pasada.n : 0)}</b> la semana ${esc(rango(f.jas.pasada && f.jas.pasada.w))}<small>${f.jas.esta ? `${n(f.jas.esta.n)} esta semana · ` : ''}${esc(f.jas.per.n)}</small>`)}</td>
+            <td>${f.e.id === SB.entorno.id ? '' : `<button class="btn sm" data-entrar="${f.e.id}">Entrar ${ICON.next}</button>`}</td></tr>`).join('')}</tbody>
+          ${filas.length > 1 ? `<tfoot><tr><td class="l"><b>Región</b></td>
+            <td><b>${n(sum('aud', f => f.aud.S))}</b> · <b>${n(sum('aud', f => f.aud.I))}</b></td>
+            <td>${par(sum('ins', f => f.ins.T.semEnr), sum('ins', f => f.ins.T.semPot))}</td>
+            <td>${par(sum('ins', f => f.ins.T.i1Enr), sum('ins', f => f.ins.T.i1Pot))}</td>
+            <td>${par(sum('ins', f => f.ins.T.i2Enr), sum('ins', f => f.ins.T.i2Pot))}</td>
+            <td><b>${pct(sum('aud', f => f.aud.pend), sum('aud', f => f.aud.tot))}</b><small>${n(sum('aud', f => f.aud.pend))} de ${n(sum('aud', f => f.aud.tot))} clases</small></td>
+            <td><b>${n(sum('jas', f => f.jas.pasada && f.jas.pasada.n))}</b><small>suma de la semana pasada</small></td><td></td></tr></tfoot>` : ''}
+        </table></div>
+        <p class="hint" style="margin:10px 0 0">Inscripción: del informe para presidentes de cada programa (Potenciales y Programados de su carpeta DEL DÍA). Audit: clases con retraso sin marcar como actualizadas, sobre todas sus clases. Centros JAS: jóvenes distintos presentes en clases de Instituto (app + Class Roll) en la última semana completa de su periodo actual. <b>Entrar</b> abre ese programa con todos sus informes y detalle.</p>
+      </section>
+      ${filas.filter(f => f.ins && f.ins.porEst.length).map(f => `<details class="card rg-det"><summary><b>${esc(f.e.programa)}</b> · por estaca</summary>
+        <div class="inf-scroll"><table class="inf-t rg-t"><thead><tr><th class="l">Estaca</th><th>Seminario<small>enrolados / potencial</small></th><th>Instituto 18 a 25</th><th>Instituto 26 a 35</th><th>Nuevos conversos<small>enrolados / últimos 12 meses</small></th><th>Misioneros retornados<small>enrolados / últimos 12 meses</small></th><th>Preparación misional<small>alumnos · clases</small></th><th>Maestros<small>Seminario · Instituto</small></th></tr></thead>
+        <tbody>${f.ins.porEst.map(x => `<tr><td class="l">${esc(stakeShort(x.estaca))}</td><td>${par(x.T.semEnr, x.T.semPot)}</td><td>${par(x.T.i1Enr, x.T.i1Pot)}</td><td>${par(x.T.i2Enr, x.T.i2Pot)}</td>
+          <td>${par(x.T.nc1Enr + x.T.nc2Enr, x.T.nc1 + x.T.nc2)}</td><td>${par(x.T.rmEnr, x.T.rm)}</td><td>${n(x.T.mpEnr)} · ${n(x.T.mpCls)}</td><td>${n(x.T.maeS)} · ${n(x.T.maeI)}</td></tr>`).join('')}</tbody></table></div></details>`).join('')}`;
+    $$('[data-entrar]', body).forEach(b => b.onclick = () => {
+      b.disabled = true;
+      SB.rpc('cambiar_entorno', { entorno:b.dataset.entrar }).then(() => { location.hash = '#/informes'; location.reload(); })
+        .catch(e => { b.disabled = false; console.error(e); toast(errMsg(e), 'error'); });
+    });
+  };
+  paint();
+  const vigente = () => CUR.type === 'informe-regional';
+  // De a un programa a la vez: los informes de cada uno piden bastantes datos.
+  for(const f of filas){
+    if(!vigente()) return;
+    const id = f.e.id, rpc = (nom, a) => SB.rpcEn(id, nom, a);
+    try{
+      const { data, error } = await SB.client.from('informe_estacas').select('estaca,datos').setHeader('x-entorno', id);
+      if(error) throw error;
+      f.ins = resumenInscripcion(data);
+    }catch(e){ console.warn('regional inscripción', f.e.programa, e); f.err.ins = /entorno_id|x-entorno|schema cache/i.test(String(e && e.message)) ? 'Falta la migración 0039' : errMsg(e); }
+    if(vigente()) conservarVista(body, paint);
+    try{
+      const [audit, wises, apps, marcadas] = await Promise.all([rpc('audit_admin'), rpc('wise_clases_admin'), rpc('resumen_clases'), rpc('audit_actualizadas_admin').catch(() => [])]);
+      const hechas = {}; (marcadas || []).forEach(x => { hechas[x.clave] = x.marcado_en; });
+      const items = armarRetrasos((audit || [])[0] || { filas:[] }, wises || [], apps || [], hechas, 8);
+      f.aud = { pend:items.filter(it => !it.hecho).length, tot:(apps || []).length,
+        S:(apps || []).filter(c => c.programa === 'S').length, I:(apps || []).filter(c => c.programa === 'I').length,
+        alumnos:(apps || []).reduce((s, c) => s + (+c.alumnos || 0), 0) };
+    }catch(e){ console.warn('regional audit', f.e.programa, e); f.err.aud = errMsg(e); }
+    if(vigente()) conservarVista(body, paint);
+    try{
+      const per = periodoActualDe(f.e.ajustes, 'I');
+      if(!per) f.jas = { sinPeriodo:true };
+      else {
+        const hoy = todayISO(), hasta = per.e < hoy ? per.e : hoy;
+        const d = await datosJAS(per, hasta, rpc, ENT.estacasDe(f.e));
+        const sem = d.semanas, i = sem.findIndex(w => w.lun <= hoy && hoy <= w.dom);
+        const esta = i >= 0 ? sem[i] : null, pasada = i > 0 ? sem[i - 1] : i < 0 && sem.length ? sem[sem.length - 1] : null;
+        f.jas = { per, esta:esta ? { w:esta, n:esta.ind.total.size } : null, pasada:pasada ? { w:pasada, n:pasada.ind.total.size } : null };
+      }
+    }catch(e){ console.warn('regional JAS', f.e.programa, e); f.err.jas = errMsg(e); }
+    if(vigente()) conservarVista(body, paint);
+  }
 }
 // Trae todas las filas de una consulta, de 1000 en 1000. build() arma la consulta (sin .range).
 async function traerTodo(build){
@@ -3581,6 +3719,52 @@ function semanasDelRango(s, e){
   return out;
 }
 const rangoCorto = (a, b) => { const x = parseISO(a), y = parseISO(b); return x.getMonth() === y.getMonth() ? `del ${x.getDate()} al ${y.getDate()}` : `del ${x.getDate()} ${MES[x.getMonth()]} al ${y.getDate()} ${MES[y.getMonth()]}`; };
+/* Asistencia de Centros JAS: jóvenes presentes en clases de Instituto por semana (app + Class Roll de Wise).
+   rpc: cómo pedir los datos (el Resumen regional lo pide para cada entorno); estacas: columnas del conteo. */
+async function datosJAS(per, hasta, rpc = (n, a) => SB.rpc(n, a), estacas = PROG_STAKES){
+  const [resumen, wisesTodas] = await Promise.all([rpc('resumen_clases'), rpc('wise_clases_admin').catch(e => { console.warn('wise_clases_admin', e); return []; })]);
+  const clases = (resumen || []).filter(c => c.programa === 'I');
+  const wises = (wisesTodas || []).filter(w => w.programa === 'I');
+  const estacaDe = new Map(clases.map(c => [c.id, c.estaca]));
+  const ids = clases.map(c => c.id), trozos = [];
+  for(let i = 0; i < ids.length; i += 80) trozos.push(ids.slice(i, i + 80));
+  const alumnos = [], marcas = [];
+  for(const t of trozos){
+    alumnos.push(...await traerTodo(() => SB.client.from('clase_alumnos').select('id,persona_id,clase_id,nombre').in('clase_id', t).order('id')));
+    if(per.s <= hasta) marcas.push(...await traerTodo(() => SB.client.from('asistencia').select('alumno_id,clase_id,fecha').in('clase_id', t).in('estado', ['P', 'T', 'M']).gte('fecha', per.s).lte('fecha', hasta).order('alumno_id').order('fecha')));
+  }
+  const claveNombre = n => wiseTokens(n).slice().sort().join(' ');
+  // Individuos: la misma persona en todas sus clases (su persona de la base o, si no tiene, su nombre).
+  const quien = new Map(alumnos.map(a => [a.id, a.persona_id || 'n:' + claveNombre(a.nombre)]));
+  const semanas = per.s <= hasta ? semanasDelRango(per.s, hasta) : [];
+  const porLunes = new Map(semanas.map(w => [w.lun, w]));
+  const conteo = () => ({ est:Object.fromEntries(estacas.map(k => [k, new Set()])), total:new Set(), app:new Set(), wise:new Set() });
+  // ind: personas distintas en la semana. asi ("En total"): cada asistencia a cada clase (clase + alumno + día);
+  // lo marcado en la app y en Wise para la misma clase y día es una sola asistencia.
+  semanas.forEach(w => { w.ind = conteo(); w.asi = conteo(); });
+  const sumar = (f, k, p, a, fuente) => {
+    if(!k || !/^\d{4}-\d\d-\d\d$/.test(f) || f < per.s || f > hasta) return;
+    const d = parseISO(f); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    const w = porLunes.get(iso(d)); if(!w) return;
+    [[w.ind, p], [w.asi, a + '|' + f]].forEach(([c, x]) => { (c.est[k] = c.est[k] || new Set()).add(x); c.total.add(x); c[fuente].add(x); });
+  };
+  // 1) Lo marcado en la app.
+  marcas.forEach(m => sumar(m.fecha, estacaDe.get(m.clase_id), quien.get(m.alumno_id) || m.alumno_id, m.clase_id + '|' + m.alumno_id, 'app'));
+  // 2) Los presentes del Class Roll de Wise. Cada alumno de Wise se empareja por nombre con el de la
+  //    clase vinculada de la app (como en la Planilla).
+  const porClase = new Map(); alumnos.forEach(a => { if(!porClase.has(a.clase_id)) porClase.set(a.clase_id, []); porClase.get(a.clase_id).push({ id:a.id, n:a.nombre }); });
+  let ultWise = '';
+  wises.forEach(w => {
+    const k = (w.clase_id && estacaDe.get(w.clase_id)) || w.estaca;
+    const lista = (w.alumnos || []).map(a => { const n = String(a.n || ''), i = n.indexOf(','); return { ap: i > 0 ? n.slice(0, i).trim() : '', no: i > 0 ? n.slice(i + 1).trim() : n, n, m: a.m || {} }; });
+    const R = cruzarWise(w.clase_id ? porClase.get(w.clase_id) || [] : [], lista);
+    const pares = [
+      ...R.match.map(x => [quien.get(x.s.id) || x.s.id, w.clase_id + '|' + x.s.id, x.w.m]),
+      ...R.sobran.map(x => ['n:' + claveNombre(x.n), 'w:' + w.clave + '|' + claveNombre(x.n), x.m])];
+    pares.forEach(([p, a, m]) => Object.entries(m).forEach(([f, v]) => { if(ATT_OK(v)){ sumar(f, k, p, a, 'wise'); if(f > ultWise) ultWise = f; } }));
+  });
+  return { semanas, nClases:clases.length, nWise:wises.length, ultWise, resumen:resumen || [] };
+}
 async function renderInformeJAS(){
   CUR = { type:'informe-jas', code:null };
   app.innerHTML = topbar({ back:'#/informes', title:'Asistencia de Centros JAS', sub:'Informes · Institutos' }) + `<main class="wrap wide full"><div id="infBody">${loadingHTML('Contando la asistencia…')}</div></main>`;
@@ -3594,48 +3778,8 @@ async function renderInformeJAS(){
   let datos;
   try{
     await SB.ensureSession();
-    const [resumen, wisesTodas] = await Promise.all([SB.rpc('resumen_clases'), SB.rpc('wise_clases_admin').catch(e => { console.warn('wise_clases_admin', e); return []; })]);
-    const clases = (SB.resumen = resumen || []).filter(c => c.programa === 'I');
-    const wises = (wisesTodas || []).filter(w => w.programa === 'I');
-    const estacaDe = new Map(clases.map(c => [c.id, c.estaca]));
-    const ids = clases.map(c => c.id), trozos = [];
-    for(let i = 0; i < ids.length; i += 80) trozos.push(ids.slice(i, i + 80));
-    const alumnos = [], marcas = [];
-    for(const t of trozos){
-      alumnos.push(...await traerTodo(() => SB.client.from('clase_alumnos').select('id,persona_id,clase_id,nombre').in('clase_id', t).order('id')));
-      if(per.s <= hasta) marcas.push(...await traerTodo(() => SB.client.from('asistencia').select('alumno_id,clase_id,fecha').in('clase_id', t).in('estado', ['P', 'T', 'M']).gte('fecha', per.s).lte('fecha', hasta).order('alumno_id').order('fecha')));
-    }
-    const claveNombre = n => wiseTokens(n).slice().sort().join(' ');
-    // Individuos: la misma persona en todas sus clases (su persona de la base o, si no tiene, su nombre).
-    const quien = new Map(alumnos.map(a => [a.id, a.persona_id || 'n:' + claveNombre(a.nombre)]));
-    const semanas = per.s <= hasta ? semanasDelRango(per.s, hasta) : [];
-    const porLunes = new Map(semanas.map(w => [w.lun, w]));
-    const conteo = () => ({ est:Object.fromEntries(PROG_STAKES.map(k => [k, new Set()])), total:new Set(), app:new Set(), wise:new Set() });
-    // ind: personas distintas en la semana. asi ("En total"): cada asistencia a cada clase (clase + alumno + día);
-    // lo marcado en la app y en Wise para la misma clase y día es una sola asistencia.
-    semanas.forEach(w => { w.ind = conteo(); w.asi = conteo(); });
-    const sumar = (f, k, p, a, fuente) => {
-      if(!k || !/^\d{4}-\d\d-\d\d$/.test(f) || f < per.s || f > hasta) return;
-      const d = parseISO(f); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-      const w = porLunes.get(iso(d)); if(!w) return;
-      [[w.ind, p], [w.asi, a + '|' + f]].forEach(([c, x]) => { (c.est[k] = c.est[k] || new Set()).add(x); c.total.add(x); c[fuente].add(x); });
-    };
-    // 1) Lo marcado en la app.
-    marcas.forEach(m => sumar(m.fecha, estacaDe.get(m.clase_id), quien.get(m.alumno_id) || m.alumno_id, m.clase_id + '|' + m.alumno_id, 'app'));
-    // 2) Los presentes del Class Roll de Wise. Cada alumno de Wise se empareja por nombre con el de la
-    //    clase vinculada de la app (como en la Planilla).
-    const porClase = new Map(); alumnos.forEach(a => { if(!porClase.has(a.clase_id)) porClase.set(a.clase_id, []); porClase.get(a.clase_id).push({ id:a.id, n:a.nombre }); });
-    let ultWise = '';
-    wises.forEach(w => {
-      const k = (w.clase_id && estacaDe.get(w.clase_id)) || w.estaca;
-      const lista = (w.alumnos || []).map(a => { const n = String(a.n || ''), i = n.indexOf(','); return { ap: i > 0 ? n.slice(0, i).trim() : '', no: i > 0 ? n.slice(i + 1).trim() : n, n, m: a.m || {} }; });
-      const R = cruzarWise(w.clase_id ? porClase.get(w.clase_id) || [] : [], lista);
-      const pares = [
-        ...R.match.map(x => [quien.get(x.s.id) || x.s.id, w.clase_id + '|' + x.s.id, x.w.m]),
-        ...R.sobran.map(x => ['n:' + claveNombre(x.n), 'w:' + w.clave + '|' + claveNombre(x.n), x.m])];
-      pares.forEach(([p, a, m]) => Object.entries(m).forEach(([f, v]) => { if(ATT_OK(v)){ sumar(f, k, p, a, 'wise'); if(f > ultWise) ultWise = f; } }));
-    });
-    datos = { semanas, nClases:clases.length, nWise:wises.length, ultWise };
+    datos = await datosJAS(per, hasta);
+    SB.resumen = datos.resumen;
   }catch(e){ console.error(e); body.innerHTML = `<div class="warn-box">${esc(errMsg(e))}</div>`; return; }
   const { semanas } = datos;
   const meses = [...new Set(semanas.map(w => w.mes))];
@@ -4827,7 +4971,7 @@ function route(){
   if(parts[0] === 'supervisor') return renderSupervisor();
   if(parts[0] === 'administradores'){ if(SB.admin && SB.entorno && SB.entorno.general) return renderAdministradores(); go('#/'); return; }
   if(['todas','solicitudes','alertas','seguimiento','inscripciones','wiseroll','retrasos','informes'].includes(parts[0])){
-    if(parts[0] === 'informes' && SB.admin) return parts[1] === 'jas' ? renderInformeJAS() : parts[1] === 'presidentes' ? renderInformePresidentes() : renderInformes();
+    if(parts[0] === 'informes' && SB.admin) return parts[1] === 'jas' ? renderInformeJAS() : parts[1] === 'presidentes' ? renderInformePresidentes() : parts[1] === 'regional' ? renderInformeRegional() : renderInformes();
     if(!SB.admin){ go('#/'); return; }
     if(parts[0] === 'wiseroll') return renderWiseRoll();
     if(parts[0] === 'retrasos') return renderRetrasos();
