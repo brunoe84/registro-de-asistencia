@@ -4114,6 +4114,18 @@ async function renderInformePresidentes(){
   const ref = rows.find(r => r.datos && r.datos.fecha);
   const D = ref ? ref.datos : null;
   const cabDe = k => ((rows.find(r => r.estaca === k) || {}).cabecera) || {};
+  // Encabezado: el presidente es de cada estaca. El Setenta de Área, la nota y el responsable del informe
+  // (nombre, teléfono y correo) son del programa: se escriben una vez (fila "*") y salen en todas las estacas.
+  const TODAS = '*';
+  const cabGen = () => {
+    const g = cabDe(TODAS);
+    if(g.setenta || g.nota || g.responsable || g.telefono || g.correo) return g;
+    // Antes se escribían en cada estaca: se usa la primera que los tenga.
+    const v = rows.filter(r => r.estaca !== TODAS).map(r => r.cabecera || {}).find(c => c.responsable || c.telefono || c.correo || c.nota) || {};
+    return { setenta:'', nota:v.nota || '', responsable:v.responsable || '', telefono:v.telefono || '', correo:v.correo || '' };
+  };
+  const cabFinal = k => { const g = cabGen(), c = k ? cabDe(k) : {}; return { presidente:c.presidente || '', setenta:g.setenta || '', nota:g.nota || c.nota || '',
+    responsable:g.responsable || c.responsable || '', telefono:g.telefono || c.telefono || '', correo:g.correo || c.correo || '' }; };
   const pS = currentPeriod('S'), pI = currentPeriod('I');
   const notaDef = () => [pS ? 'Sem: ' + pS.n : '', pI ? 'Inst: ' + pI.n : ''].filter(Boolean).join(' · ') || (D ? `Sem: periodo ${D.term.S} · Inst: periodo ${D.term.I}` : '');
   const actualizar = async (interactive, archivos) => {
@@ -4136,22 +4148,28 @@ async function renderInformePresidentes(){
     }catch(e){ console.error(e); toast(/informe_estacas|schema cache/i.test(String(e && e.message)) ? 'Falta actualizar la base de datos (migración 0034).' : errMsg(e), 'error', { ms:6000 }); }
     finally{ if(btn) btn.disabled = false; }
   };
+  // k = estaca (su presidente + los datos del programa) o '' en "Todas" (solo los datos del programa).
   const editarCab = k => {
-    const c = cabDe(k);
+    const c = cabFinal(k);
     const campo = (id, label, v, ph='') => `<div class="field"><label>${label}</label><input id="${id}" value="${esc(v || '')}" placeholder="${esc(ph)}" autocomplete="off"></div>`;
-    sheet(`${sheetHead('Datos del encabezado', esc(stakeShort(k)))}
-      ${campo('pcPres', 'Presidente de estaca', c.presidente)}
+    sheet(`${sheetHead('Datos del encabezado', esc(k ? stakeShort(k) : 'Todas las estacas'))}
+      ${k ? campo('pcPres', 'Presidente de estaca', c.presidente) : ''}
+      <h3 class="rg-h">Iguales para todas las estacas</h3>
+      ${campo('pcSet', 'Setenta de Área', c.setenta, 'Sale en el informe de «Todas»')}
       ${campo('pcNota', 'Nota', c.nota, notaDef())}
       ${campo('pcResp', 'Responsable del informe', c.responsable)}
       <div class="row2">${campo('pcTel', 'Teléfono', c.telefono)}${campo('pcMail', 'Correo', c.correo)}</div>
       <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="pcOk">${ICON.save} Guardar</button></div>`, {
       onMount(el, close){
         $('#pcOk', el).onclick = async () => {
-          const cab = { presidente:$('#pcPres', el).value.trim(), nota:$('#pcNota', el).value.trim(), responsable:$('#pcResp', el).value.trim(), telefono:$('#pcTel', el).value.trim(), correo:$('#pcMail', el).value.trim() };
+          const v = id => $('#' + id, el).value.trim();
+          const gen = { setenta:v('pcSet'), nota:v('pcNota'), responsable:v('pcResp'), telefono:v('pcTel'), correo:v('pcMail') };
+          const cambios = [{ estaca:TODAS, cabecera:gen }];
+          if(k) cambios.push({ estaca:k, cabecera:Object.assign({}, cabDe(k), { presidente:v('pcPres') }) });
           try{
-            const { error } = await presGuardarEstacas([{ estaca:k, cabecera:cab }]);
+            const { error } = await presGuardarEstacas(cambios);
             if(error) throw error;
-            const r = rows.find(x => x.estaca === k); if(r) r.cabecera = cab; else rows.push({ estaca:k, datos:{}, cabecera:cab });
+            cambios.forEach(x => { const r = rows.find(y => y.estaca === x.estaca); if(r) r.cabecera = x.cabecera; else rows.push({ estaca:x.estaca, datos:{}, cabecera:x.cabecera }); });
             close(); toast('Guardado', 'ok'); paint();
           }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
         };
@@ -4266,7 +4284,7 @@ async function renderInformePresidentes(){
       };
       const hoja = k => {
         const { filas, est } = presFilas(rows, k), T = sumaCols(filas); if(est) Object.assign(T, est);
-        const c = k ? cabDe(k) : {};
+        const c = cabFinal(k);
         const ws = wb.addWorksheet(k ? stakeShort(k) : 'Todas las estacas', { views:[{ showGridLines:false }], pageSetup:{ orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 } });
         ws.columns = [{ width:26 }, ...PRES_COLS.map(() => ({ width:11.5 }))];
         const put = (ref, v, s={}) => { const x = ws.getCell(ref); x.value = v; return estilo(x, s); };
@@ -4275,8 +4293,8 @@ async function renderInformePresidentes(){
         une('A1:Q1', 'INFORME DE SEMINARIO E INSTITUTO PARA LÍDERES DEL SACERDOCIO', { fill:AZ, color:W, b:true, size:18 }); ws.getRow(1).height = 34;
         put('A3', 'ESTACA', { h:'left', b:true, color:AZ, size:13 }); une('B3:G3', k ? stakeShort(k).toUpperCase() : 'TODAS', { fill:CL, b:true, size:13, color:AZ });
         une('N3:O3', 'FECHA DE INFORME:', { h:'right', b:true, color:AZ }); une('P3:Q3', fmtDMY(todayISO()), { fill:CL, b:true, i:true });
-        if(k){ put('A4', 'PRESIDENTE DE ESTACA', { h:'left', b:true, color:AZ, size:13 }); une('B4:G4', c.presidente || '', { fill:CL, b:true, color:AZ }); }
-        une('J5:K5', 'NOTA:', { h:'right', b:true, i:true, color:AZ }); une('L5:Q5', (k && c.nota) || notaDef(), { fill:CL, b:true, i:true });
+        put('A4', k ? 'PRESIDENTE DE ESTACA' : 'SETENTA DE ÁREA', { h:'left', b:true, color:AZ, size:13 }); une('B4:G4', (k ? c.presidente : c.setenta) || '', { fill:CL, b:true, color:AZ });
+        une('J5:K5', 'NOTA:', { h:'right', b:true, i:true, color:AZ }); une('L5:Q5', c.nota || notaDef(), { fill:CL, b:true, i:true });
         une('A6:A8', k ? 'BARRIOS' : 'ESTACAS', H); une('B6:C7', 'SEMINARIOS\n14 - 17 AÑOS', H); une('D6:G6', 'INSTITUTOS', H);
         une('D7:E7', 'Alumnos\n18 a 25 años', H); une('F7:G7', 'Alumnos\n26 a 35 años', H); une('H6:I7', 'PREPARACIÓN\nMISIONAL', H);
         une('J6:M6', 'NUEVOS CONVERSOS', H); une('J7:K7', 'SEMINARIOS\n14 - 17 AÑOS', H); une('L7:M7', 'INSTITUTOS\n18 - 35 AÑOS', H);
@@ -4304,13 +4322,11 @@ async function renderInformePresidentes(){
         put(tot.getCell(1).address, 'TOTAL', { fill:AZ, color:W, b:true });
         PRES_COLS.forEach((col, j) => put(tot.getCell(j + 2).address, T[col] || 0, { fill:AZ, color:W, b:true, size:12 }));
         une(`N${rt + 1}:Q${rt + 1}`, 'FUENTE: Wise (Potenciales y Programados)', { h:'right', b:true, i:true, size:10, color:AZ });
-        let fin = rt + 1;
-        if(k){
-          const rr = fin = rt + 2;
-          put(`A${rr}`, 'RESPONSABLE DEL INFORME:', { h:'left', b:true, color:AZ }); une(`B${rr}:G${rr}`, c.responsable || '', { fill:CL, b:true, color:AZ });
-          put(`H${rr}`, 'TELÉFONO:', { h:'right', b:true, color:AZ }); une(`I${rr}:K${rr}`, c.telefono || '', { fill:CL, b:true, color:AZ });
-          une(`L${rr}:M${rr}`, 'CORREO:', { h:'right', b:true, color:AZ }); une(`N${rr}:Q${rr}`, c.correo || '', { fill:CL, b:true, color:AZ });
-        }
+        // Responsable del informe: el mismo en todas las hojas (también en "Todas las estacas").
+        const rr = rt + 2, fin = rr;
+        put(`A${rr}`, 'RESPONSABLE DEL INFORME:', { h:'left', b:true, color:AZ }); une(`B${rr}:G${rr}`, c.responsable || '', { fill:CL, b:true, color:AZ });
+        put(`H${rr}`, 'TELÉFONO:', { h:'right', b:true, color:AZ }); une(`I${rr}:K${rr}`, c.telefono || '', { fill:CL, b:true, color:AZ });
+        une(`L${rr}:M${rr}`, 'CORREO:', { h:'right', b:true, color:AZ }); une(`N${rr}:Q${rr}`, c.correo || '', { fill:CL, b:true, color:AZ });
         if(N) une(`A${fin + 1}:Q${fin + 1}`, `Toca un número subrayado para ver los nombres en la hoja "${N.nombre}".`, { h:'left', i:true, size:10, color:AZ });
         // Gráficos como imagen, de dos en dos, debajo de la tabla.
         let fila = fin + 3;
@@ -4341,11 +4357,11 @@ async function renderInformePresidentes(){
     error:'Nombres: no se pudo revisar' })[NOM_EST] || '';
   const metaTxt = () => D ? `Datos de Wise: Potenciales del ${esc(fmtDMY(D.pot.slice(0, 10)))} y Programados del ${esc(fmtDMY(D.prog.slice(0, 10)))} · contado el ${esc(fmtDMY(D.fecha))} · periodo actual en Programados: Seminario ${D.term.S}, Instituto ${D.term.I}` : '';
   const informeHTML = () => {
-    const c = F.k ? cabDe(F.k) : {};
+    const c = cabFinal(F.k);
     return `<section class="card pr-card">
-        ${F.k ? `<div class="pr-cab">${kv('Estaca', stakeShort(F.k), '')}${kv('Presidente de estaca', c.presidente, 'sin escribir')}${kv('Fecha de informe', fmtDMY(todayISO()), '')}${kv('Nota', c.nota || notaDef(), '')}</div>` : ''}
+        <div class="pr-cab">${kv('Estaca', F.k ? stakeShort(F.k) : 'Todas', '')}${F.k ? kv('Presidente de estaca', c.presidente, 'sin escribir') : kv('Setenta de Área', c.setenta, 'sin escribir')}${kv('Fecha de informe', fmtDMY(todayISO()), '')}${kv('Nota', c.nota || notaDef(), '')}</div>
         ${tabla()}
-        ${F.k ? `<div class="pr-cab pie">${kv('Responsable del informe', c.responsable, 'sin escribir')}${kv('Teléfono', c.telefono, '—')}${kv('Correo', c.correo, '—')}</div>` : ''}
+        <div class="pr-cab pie">${kv('Responsable del informe', c.responsable, 'sin escribir')}${kv('Teléfono', c.telefono, '—')}${kv('Correo', c.correo, '—')}</div>
       </section>
       ${conversos()}
       ${graficos()}
@@ -4434,7 +4450,7 @@ document.addEventListener('keydown',function(ev){if(ev.key==='Escape')m.hidden=t
           ${D ? `<p class="meta" id="prNomEst" style="margin:2px 0 0">${estNombres()}</p>` : ''}</div></div>
         <div class="inf-f pr-f">
           <label>Estaca<select class="inp" id="prEst"><option value="">Todas</option>${PROG_STAKES.map(k => `<option value="${esc(k)}" ${F.k === k ? 'selected' : ''}>${esc(stakeShort(k))}</option>`).join('')}</select></label>
-          <div class="btn-row" style="margin:0"><button class="btn primary" id="prAct">${ICON.refresh} Actualizar</button><button class="btn" id="prArch">${ICON.upload} Elegir archivos</button>${F.k ? `<button class="btn" id="prCab">${ICON.edit} Encabezado</button>` : ''}<button class="btn" id="prXls" ${D ? '' : 'disabled'}>${ICON.download} Excel</button><button class="btn" id="prHtml" ${D ? '' : 'disabled'}>${ICON.share} HTML</button></div>
+          <div class="btn-row" style="margin:0"><button class="btn primary" id="prAct">${ICON.refresh} Actualizar</button><button class="btn" id="prArch">${ICON.upload} Elegir archivos</button><button class="btn" id="prCab">${ICON.edit} Encabezado</button><button class="btn" id="prXls" ${D ? '' : 'disabled'}>${ICON.download} Excel</button><button class="btn" id="prHtml" ${D ? '' : 'disabled'}>${ICON.share} HTML</button></div>
           <input type="file" id="prFiles" accept=".xlsx" multiple hidden>
         </div>
         <p class="hint" style="margin:10px 0 0"><b>Actualizar</b> lee <b>Potenciales.xlsx</b> y <b>Programados.xlsx</b> de la carpeta DEL DÍA (también se actualiza solo cuando cambian). Las edades y fechas se usan solo en este navegador para contar y se descartan: en la nube quedan los totales por barrio y las listas de nombres de cada cifra (sin edades ni fechas; solo las ve el administrador). <b>Toca un número o una barra</b> para ver los nombres, también desde el celular.</p>
