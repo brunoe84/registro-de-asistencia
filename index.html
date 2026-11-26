@@ -610,6 +610,29 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .inf-t .l{text-align:left}
 .inf-t td.l b{display:block;font-size:14px}
 .inf-t td.l small{display:block;color:var(--muted);font-weight:500;font-size:12px}
+/* PC: páginas con filtros o encabezado grande (clase, informes) usan todo el ancho, con el contenido centrado. */
+@media(min-width:1000px){
+  .wrap.full{max-width:1640px;padding-left:24px;padding-right:24px}
+  body:has(.wrap.full) .top-in{max-width:1640px;padding:0 24px}
+  .wrap.full .inf-f{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) auto;align-items:end;gap:10px 16px}
+  .wrap.full .inf-f label{min-width:0}
+  .wrap.full .inf-f select{width:100%}
+  .wrap.full .inf-f .btn-row{flex-wrap:nowrap;gap:8px}
+  .wrap.full .inf-f .btn-row>.btn{flex:0 0 auto}
+}
+/* Encabezado de la clase en una fila: título · código y botones · contador. */
+@media(min-width:1200px){
+  .cl-head{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px 22px;padding:14px 18px 14px 22px}
+  .cl-head>.eh-main{display:contents}
+  .cl-head>.eh-main>div:first-child{grid-column:1;grid-row:1}
+  .cl-head .counter{grid-column:3;grid-row:1;padding:6px 12px}
+  .cl-head .counter b{font-size:24px}
+  .cl-head>.code-row{grid-column:2;grid-row:1;margin-top:0;justify-content:flex-end}
+  .cl-head>.code-row .hint{flex:0 1 auto;min-width:0;max-width:200px}
+  .cl-head>.code-row #guiaBtn{margin-left:0!important}
+  .cl-head>:not(.eh-main):not(.code-row){grid-column:1/-1}
+}
+@media(min-width:1400px){.wrap.full .roll{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
 .inf-t .tot{font-weight:800}
 .inf-t th.tot{background:var(--gold);color:#1F1606}
 .inf-t tr.cur td{background:#FFF8EA}
@@ -3203,7 +3226,7 @@ function semanasDelRango(s, e){
 const rangoCorto = (a, b) => { const x = parseISO(a), y = parseISO(b); return x.getMonth() === y.getMonth() ? `del ${x.getDate()} al ${y.getDate()}` : `del ${x.getDate()} ${MES[x.getMonth()]} al ${y.getDate()} ${MES[y.getMonth()]}`; };
 async function renderInformeJAS(){
   CUR = { type:'informe-jas', code:null };
-  app.innerHTML = topbar({ back:'#/informes', title:'Asistencia de Centros JAS', sub:'Informes · Institutos' }) + `<main class="wrap wide"><div id="infBody">${loadingHTML('Contando la asistencia…')}</div></main>`;
+  app.innerHTML = topbar({ back:'#/informes', title:'Asistencia de Centros JAS', sub:'Informes · Institutos' }) + `<main class="wrap wide full"><div id="infBody">${loadingHTML('Contando la asistencia…')}</div></main>`;
   bindTop();
   const body = $('#infBody');
   const pers = periodsOf('I');
@@ -5780,8 +5803,8 @@ function renderClass(code){
   CUR = { type:'class', code };
   const m = cls.meta;
   const daysTxt = (m.days||[]).slice().sort((a,b)=>((a||7)-(b||7))).map(d => DOW[d]).join(', ');
-  app.innerHTML = topbar({ back:classBack(cls), title:cls.remote ? prettyName(m.teacher) : m.title, sub:cls.remote ? m.title : m.teacher }) + `<main class="wrap wide${classOnline(cls) ? '' : ' has-savebar'}">
-    <section class="card ev-head">
+  app.innerHTML = topbar({ back:classBack(cls), title:cls.remote ? prettyName(m.teacher) : m.title, sub:cls.remote ? m.title : m.teacher }) + `<main class="wrap wide full${classOnline(cls) ? '' : ' has-savebar'}">
+    <section class="card ev-head cl-head">
       <div class="eh-main"><div style="min-width:0"><span class="badge ${m.program==='S'?'b-sem':'b-inst'}">${progLabel(m.program)}</span> ${cls.canEdit ? '' : '<span class="badge b-ro">'+ICON.lock.replace('<svg','<svg style="width:12px;height:12px"')+' Solo lectura</span>'}
         <h1 style="margin-top:6px">${esc(m.title)}</h1><p class="meta">Maestro: <b>${esc(cls.remote ? prettyName(m.teacher) : m.teacher)}</b>${m.stake ? ' · '+esc(m.ward || (cls.remote ? stakeShort(m.stake) : m.stake)) : ''} · ${esc(daysTxt)}</p></div>
       <div class="counter"><b id="clCount">0</b><span>alumnos</span></div></div>
