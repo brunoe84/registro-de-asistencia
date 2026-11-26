@@ -610,6 +610,35 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .inf-t .l{text-align:left}
 .inf-t td.l b{display:block;font-size:14px}
 .inf-t td.l small{display:block;color:var(--muted);font-weight:500;font-size:12px}
+/* Informe para presidentes de estaca */
+.pr-card{padding:0;overflow:hidden}
+.pr-cab{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 18px;padding:14px 18px}
+.pr-cab.pie{border-top:1px solid var(--line)}
+.pr-cab span{display:block;font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.pr-cab b{display:block;font-size:14.5px;color:var(--ink)}
+.pr-t{border-collapse:collapse;width:100%;font-size:14px;min-width:1100px}
+.pr-t th{background:#1B4A63;color:#fff;font-size:12px;font-weight:700;padding:7px 6px;text-align:center;border:1px solid rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.02em}
+.pr-t th small{display:block;font-weight:500;text-transform:none;font-size:11.5px;opacity:.9}
+.pr-t tr.sub th{font-weight:500;text-transform:none;font-size:11.5px;line-height:1.25}
+.pr-t td{padding:8px 6px;text-align:center;border-bottom:1px dotted #9DB4C2;border-right:1px dotted #9DB4C2;font-variant-numeric:tabular-nums;font-weight:600}
+.pr-t td.l,.pr-t th.l{text-align:left;padding-left:12px}
+.pr-t td.l{text-transform:uppercase;font-weight:700;white-space:nowrap}
+.pr-t td.u{background:#F3F7FA;font-size:17px}
+.pr-t tfoot td{background:#1B4A63;color:#fff;font-weight:800;border-color:rgba(255,255,255,.3)}
+.pr-t tfoot tr.pct td{background:#EAF1F5;color:#1B4A63;font-weight:700;font-size:13px}
+.pr-ley{display:flex;gap:14px;font-size:12.5px;color:var(--muted);align-items:center}
+.pr-ley i,.pr-bar i{display:inline-block;border-radius:4px}
+.pr-ley i{width:12px;height:12px;margin-right:5px;vertical-align:-1px}
+.pr-ley .pot,.pr-bar .pot{background:#C9D9E4}
+.pr-ley .enr,.pr-bar .enr{background:#1B4A63}
+.pr-graf{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px 26px;margin-top:14px}
+.pr-pan h3{margin:0 0 2px;font-size:15px}
+.pr-bar{display:grid;grid-template-columns:minmax(0,120px) minmax(0,1fr) auto;align-items:center;gap:8px;padding:3px 0;font-size:12.5px}
+.pr-bar .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.pr-bar .tr{position:relative;height:14px}
+.pr-bar .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0}
+.pr-bar .tr i.enr{top:3px;bottom:3px}
+.pr-bar .v{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:600;min-width:52px;text-align:right}
 /* PC: páginas con filtros o encabezado grande (clase, informes) usan todo el ancho, con el contenido centrado. */
 @media(min-width:1000px){
   .wrap.full{max-width:1640px;padding-left:24px;padding-right:24px}
@@ -619,6 +648,7 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
   .wrap.full .inf-f select{width:100%}
   .wrap.full .inf-f .btn-row{flex-wrap:nowrap;gap:8px}
   .wrap.full .inf-f .btn-row>.btn{flex:0 0 auto}
+  .wrap.full .inf-f.pr-f{grid-template-columns:minmax(0,300px) auto;justify-content:start}
 }
 /* Encabezado de la clase en una fila: título · código y botones · contador. */
 @media(min-width:1200px){
@@ -2652,7 +2682,7 @@ async function rollArchivos(dir, ruta, out, prof){
   for await (const [name, h] of dir.entries()){
     const p = ruta + '/' + name;
     if(h.kind === 'directory'){ if(prof < 3) await rollArchivos(h, p, out, prof + 1); }
-    else if(/\.xlsx$/i.test(name) && !/^~\$/.test(name) && (/class roll|audit/i.test(p) || /^potenciales/i.test(name))) out.push({ path:p, handle:h });
+    else if(/\.xlsx$/i.test(name) && !/^~\$/.test(name) && (/class roll|audit/i.test(p) || /^(potenciales|programados)/i.test(name))) out.push({ path:p, handle:h });
   }
   return out;
 }
@@ -2692,17 +2722,19 @@ async function leerClassRoll({ interactive=false, force=false, archivos=null, on
     const ahora = Date.now(), recientes = archivos || interactive ? [] : lista.filter(x => ahora - x.file.lastModified < ROLL_RECIENTE);
     if(recientes.length){ lista = lista.filter(x => !recientes.includes(x)); recientes.forEach(x => fallidos.push(`${x.file.name}: se está actualizando, se leerá en unos minutos`)); setTimeout(() => { rollAuto.t = 0; rollAuto(); }, ROLL_RECIENTE + 30e3); }
     // El Audit (clases con retraso) va aparte: solo cuenta la versión más reciente.
-    const esAudit = x => /audit/i.test(x.path), esPot = x => /^potenciales/i.test(x.file.name);
+    const esAudit = x => /audit/i.test(x.path), esPot = x => /^potenciales/i.test(x.file.name), esProg = x => /^programados/i.test(x.file.name);
     const ultimo = arr => arr.sort((a, b) => b.file.lastModified - a.file.lastModified)[0] || null;
-    const audit = ultimo(lista.filter(esAudit)), pot = ultimo(lista.filter(esPot));
-    lista = lista.filter(x => !esAudit(x) && !esPot(x));
+    const audit = ultimo(lista.filter(esAudit)), pot = ultimo(lista.filter(esPot)), prog = ultimo(lista.filter(esProg));
+    lista = lista.filter(x => !esAudit(x) && !esPot(x) && !esProg(x));
     if(!lista.length && !audit && !pot) return { vacia:true };
     const vistos = LS.get('ca_roll_files', {});
     const cambio = x => !!x && (force || !!archivos || vistos[x.path] !== x.file.lastModified);
     const cambiados = force || archivos ? lista : lista.filter(x => vistos[x.path] !== x.file.lastModified);
     const auditCambio = cambio(audit), potCambio = cambio(pot);
+    // Informe para presidentes de estaca: se vuelve a contar cuando cambia Potenciales o Programados.
+    const presiSello = pot && prog ? pot.file.lastModified + "|" + prog.file.lastModified : "", presiCambio = !!presiSello && (force || !!archivos || vistos.__presi !== presiSello);
     const nTot = lista.length + (audit ? 1 : 0) + (pot ? 1 : 0);
-    if(!cambiados.length && !auditCambio && !potCambio) return { sinCambios:true, total:nTot, fallidos, ultimo:Math.max(0, ...lista.map(x => x.file.lastModified), audit ? audit.file.lastModified : 0, pot ? pot.file.lastModified : 0) };
+    if(!cambiados.length && !auditCambio && !potCambio && !presiCambio) return { sinCambios:true, total:nTot, fallidos, ultimo:Math.max(0, ...lista.map(x => x.file.lastModified), audit ? audit.file.lastModified : 0, pot ? pot.file.lastModified : 0) };
     est('Cargando el lector de Excel…');
     await conTiempo(loadScript(SHEETJS_URL), 30e3, 'no se pudo cargar el lector de Excel (revisa el internet)');
     // Base de personas (Potenciales de Wise): se complementa sola cada día; no borra a nadie.
@@ -2720,6 +2752,11 @@ async function leerClassRoll({ interactive=false, force=false, archivos=null, on
         nAudit = await conTiempo(SB.rpc('cargar_audit', { filas:filasA, archivo:audit.file.name, archivo_en:new Date(audit.file.lastModified).toISOString() }), 60e3, 'el servidor no respondió');
         vistos[audit.path] = audit.file.lastModified; LS.set('ca_roll_files', vistos);
       }catch(e){ console.warn('Audit', e); fallidos.push(`${audit.file.name}: ${e.message || e}`); }
+    }
+    if(presiCambio){
+      est('Contando el informe para presidentes de estaca (Potenciales + Programados)…');
+      try{ await conTiempo(armarInformePresidentes(pot.file, prog.file), 120e3, 'tardó demasiado'); vistos.__presi = presiSello; LS.set('ca_roll_files', vistos); }
+      catch(e){ console.warn('Informe presidentes', e); fallidos.push(`Informe para presidentes de estaca: ${/informe_estacas|schema cache/i.test(String(e && e.message)) ? 'falta la migración 0034' : (e.message || e)}`); }
     }
     if(!cambiados.length){ LS.set('ca_roll_ultima', Date.now()); return { leidos:0, total:nTot, clases:0, avisos:[], vinculadas:0, pendientes:0, audit:nAudit, base, fallidos }; }
     // Cada Excel por separado: si uno está a medio escribir o dañado, los demás igual se guardan.
@@ -3189,12 +3226,13 @@ async function renderWiseRoll(){
 /* ---------- Informes (administrador) ----------
    Cada informe es una entrada de INFORMES con su pantalla #/informes/<id>. */
 const INFORMES = [
-  { id:'jas', t:'Asistencia de Centros JAS', s:'Institutos · jóvenes que asistieron, por estaca y por semana del periodo', ico:'users' }
+  { id:'jas', t:'Asistencia de Centros JAS', s:'Institutos · jóvenes que asistieron, por estaca y por semana del periodo', ico:'users' },
+  { id:'presidentes', t:'Presidentes de estaca', s:'Seminarios e Institutos por barrio · potencial, enrolados, preparación misional, nuevos conversos, misioneros retornados y maestros', ico:'grid' }
 ];
 function renderInformes(){
   CUR = { type:'informes', code:null };
   app.innerHTML = topbar({ back:'#/', title:'Informes', sub:'Administración' }) + `<main class="wrap">
-    <p class="hint" style="margin:0 2px 10px">Informes con la asistencia que se marca en la app.</p>
+    <p class="hint" style="margin:0 2px 10px">Informes con los datos de la app y de Wise.</p>
     <section class="section">${INFORMES.map(i => `<button class="item" data-go="#/informes/${i.id}"><span class="ico t">${ICON[i.ico] || ICON.grid}</span><span class="ii"><b>${esc(i.t)}</b><small>${esc(i.s)}</small></span>${ICON.next}</button>`).join('')}</section></main>`;
   bindTop();
 }
@@ -3333,6 +3371,316 @@ async function renderInformeJAS(){
         XLSX.writeFile(wb, `Asistencia Centros JAS - ${per.n} - ${hoy}.xlsx`);
       }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
     };
+  };
+  paint();
+}
+
+/* ---------- Informe para presidentes de estaca ----------
+   Se arma con Potenciales.xlsx y Programados.xlsx de Wise (carpeta DEL DÍA). Las edades y las fechas de
+   confirmación y de regreso de la misión se usan solo aquí, en la memoria del navegador, para contar.
+   A la nube (tabla informe_estacas, solo administrador) van únicamente los totales por barrio y estaca. */
+const PRES_EDAD = { sem:[14, 17], i1:[18, 25], i2:[26, 35], nc2:[18, 35] };
+const enEdad = (e, [a, b]) => e != null && e >= a && e <= b;
+// Primera hoja de un export de Wise → objetos con los encabezados normalizados ("stake district", "term number"…).
+function xlFilas(wb){
+  const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, raw:true, defval:'' });
+  const hi = aoa.findIndex(r => r.some(c => /^student name$/i.test(String(c).trim())));
+  if(hi < 0) throw new Error('no tiene la columna "Student Name"');
+  const H = aoa[hi].map(h => norm(h));
+  return aoa.slice(hi + 1).map(r => { const o = {}; H.forEach((h, i) => { if(h) o[h] = r[i]; }); return o; })
+    .filter(o => String(o['student name'] || '').trim() && !/^filtros/i.test(String(o['student name'])));
+}
+// Fecha de Excel (número de serie o texto) → AAAA-MM-DD.
+function xlFecha(v){
+  if(v === '' || v == null) return '';
+  if(typeof v === 'number') return v > 1000 ? new Date(Math.round((v - 25569) * 864e5)).toISOString().slice(0, 10) : '';
+  if(v instanceof Date) return iso(v);
+  const s = String(v).trim(); let m;
+  if((m = s.match(/^(\d{4})-(\d\d)-(\d\d)/))) return m[0];
+  if((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/))){ const a = +m[1], b = +m[2], [mo, d] = a > 12 ? [b, a] : [a, b]; return `${m[3]}-${pad2(mo)}-${pad2(d)}`; }
+  const d = new Date(s); return isNaN(d) ? '' : iso(d);
+}
+const estacaDeTxt = s => { const n = norm(s); if(!n) return ''; return PROG_STAKES.find(k => norm(k) === n) || PROG_STAKES.find(k => norm(k).split(' ')[0] === n.split(' ')[0]) || ''; };
+const barrioCorto = w => { const s = String(w || '').trim(); return /\bbranch$/i.test(s) ? s.replace(/\s*branch$/i, '') + ' (Rama)' : s.replace(/\s*ward$/i, ''); };
+function calcPresidentes(pot, prog, hoy){
+  const persona = (n, k) => wiseTokens(n).slice().sort().join(' ') + '|' + k;
+  const edadDe = v => { const n = parseInt(v, 10); return isNaN(n) ? null : n; };
+  const out = {};
+  const E = k => out[k] = out[k] || { barrios:{}, mp:new Set(), mpCls:new Set(), maeI:new Set() };
+  const B = (e, w) => e.barrios[w] = e.barrios[w] || { semPot:0, semEnr:new Set(), i1Pot:0, i1Enr:new Set(), i2Pot:0, i2Enr:new Set(), nc1:0, nc1Enr:0, nc2:0, nc2Enr:0, rm:0, rmEnr:0, maeS:0 };
+  const si = v => /^(yes|si|sí|1|true)$/i.test(String(v).trim());
+  // Programados: alumnos enrolados en el año escolar, sin los que se retiraron.
+  const filas = prog.map(r => { const p = String(r.program || ''); return { r, tipo: /\bSEM\b/i.test(p) ? 'S' : /\bIN\b|\bINST/i.test(p) ? 'I' : '', ek:estacaDeTxt(r['stake district']), pk:estacaDeTxt(p), w:barrioCorto(r['ward branch']), t:parseInt(r['term number'], 10) || 0, edad:edadDe(r.age), n:String(r['student name']) }; })
+    .filter(x => x.tipo && (r => r.enrolled === undefined || si(r.enrolled))(x.r) && !si(x.r.dropped));
+  // Periodo actual de cada programa: el último que trae Programados.
+  const term = { S:Math.max(0, ...filas.filter(x => x.tipo === 'S').map(x => x.t)), I:Math.max(0, ...filas.filter(x => x.tipo === 'I').map(x => x.t)) };
+  const actuales = new Set(), maeSem = new Map();
+  filas.forEach(x => {
+    const cur = x.t === term[x.tipo];
+    if(x.ek){
+      const per = persona(x.n, x.ek);
+      if(cur) actuales.add(per);
+      if(x.w){ const b = B(E(x.ek), x.w);
+        if(x.tipo === 'S') b.semEnr.add(per);
+        else if(enEdad(x.edad, PRES_EDAD.i1)) b.i1Enr.add(per);
+        else if(enEdad(x.edad, PRES_EDAD.i2)) b.i2Enr.add(per); }
+    }
+    const pk = x.pk || x.ek, ins = norm(x.r.instructor);
+    if(!pk || !cur) return;
+    if(x.tipo === 'I'){
+      if(ins) E(pk).maeI.add(ins);
+      if(/missionary prep|preparaci.n misional/i.test(String(x.r.course || ''))){ E(pk).mp.add(persona(x.n, pk)); E(pk).mpCls.add([ins, norm(x.r.course), norm(x.r.section)].join('|')); }
+    } else if(ins && x.ek === pk && x.w){
+      // Cada maestro de Seminario cuenta en el barrio donde tiene más alumnos.
+      const key = pk + '|' + ins, m = maeSem.get(key) || new Map(); m.set(x.w, (m.get(x.w) || 0) + 1); maeSem.set(key, m);
+    }
+  });
+  maeSem.forEach((m, key) => { const k = key.split('|')[0], w = [...m.entries()].sort((a, b) => b[1] - a[1])[0][0]; B(E(k), w).maeS++; });
+  // Potenciales: potencial por edad, nuevos conversos y misioneros retornados de los últimos 12 meses.
+  const d = parseISO(hoy); d.setFullYear(d.getFullYear() - 1); const desde = iso(d);
+  const vistos = new Set();
+  pot.forEach(r => {
+    const k = estacaDeTxt(r['stake district']), w = barrioCorto(r['ward branch']); if(!k || !w) return;
+    const per = persona(r['student name'], k); if(vistos.has(per)) return; vistos.add(per);
+    const edad = edadDe(r.age), b = B(E(k), w), en = actuales.has(per);
+    if(enEdad(edad, PRES_EDAD.sem)) b.semPot++; else if(enEdad(edad, PRES_EDAD.i1)) b.i1Pot++; else if(enEdad(edad, PRES_EDAD.i2)) b.i2Pot++;
+    const conf = xlFecha(r['confirmation date']);
+    if(conf && conf >= desde && conf <= hoy){
+      if(enEdad(edad, PRES_EDAD.sem)){ b.nc1++; if(en) b.nc1Enr++; }
+      else if(enEdad(edad, PRES_EDAD.nc2)){ b.nc2++; if(en) b.nc2Enr++; }
+    }
+    const rm = xlFecha(r['mission release date']);
+    if(rm && rm >= desde && rm <= hoy){ b.rm++; if(en) b.rmEnr++; }
+  });
+  const porEstaca = {};
+  Object.entries(out).forEach(([k, e]) => {
+    porEstaca[k] = {
+      barrios: Object.entries(e.barrios).map(([w, b]) => ({ b:w, semPot:b.semPot, semEnr:b.semEnr.size, i1Pot:b.i1Pot, i1Enr:b.i1Enr.size, i2Pot:b.i2Pot, i2Enr:b.i2Enr.size,
+        nc1:b.nc1, nc1Enr:b.nc1Enr, nc2:b.nc2, nc2Enr:b.nc2Enr, rm:b.rm, rmEnr:b.rmEnr, maeS:b.maeS })).sort((a, b) => a.b.localeCompare(b.b, 'es')),
+      mpEnr:e.mp.size, mpCls:e.mpCls.size, maeI:e.maeI.size };
+  });
+  return { porEstaca, term };
+}
+async function armarInformePresidentes(potFile, progFile){
+  await loadScript(SHEETJS_URL);
+  const leer = async f => xlFilas(XLSX.read(await f.arrayBuffer(), { type:'array', raw:true }));
+  let pot = await leer(potFile), prog = await leer(progFile);
+  const hoy = todayISO();
+  const R = calcPresidentes(pot, prog, hoy);
+  pot = prog = null; // las edades y fechas no se guardan: se sueltan apenas se cuenta
+  const meta = { fecha:hoy, pot:new Date(potFile.lastModified).toISOString(), prog:new Date(progFile.lastModified).toISOString(), term:R.term };
+  const ahora = new Date().toISOString();
+  const filas = PROG_STAKES.map(k => ({ estaca:k, datos:{ ...meta, ...(R.porEstaca[k] || { barrios:[], mpEnr:0, mpCls:0, maeI:0 }) }, actualizado_en:ahora }));
+  const { error } = await SB.client.from('informe_estacas').upsert(filas, { onConflict:'estaca' });
+  if(error) throw error;
+  return { estacas:filas.length, fecha:hoy };
+}
+// Busca Potenciales y Programados en la carpeta DEL DÍA vinculada (la misma del Class Roll).
+async function presArchivosCarpeta(interactive){
+  const dir = await conTiempo(fsGet('rollDir'), 10e3, 'el navegador no devolvió la carpeta vinculada').catch(() => null);
+  if(!dir) return { sinCarpeta:true };
+  let perm = await dir.queryPermission({ mode:'read' });
+  if(perm !== 'granted' && interactive) perm = await conTiempo(dir.requestPermission({ mode:'read' }), 90e3, 'no se respondió el permiso para leer la carpeta');
+  if(perm !== 'granted') return { sinPermiso:true };
+  const hs = await conTiempo(rollArchivos(dir, dir.name, [], 0), 60e3, 'la carpeta tardó demasiado en responder');
+  const ultimo = async re => { let best = null; for(const h of hs.filter(h => re.test(h.path.split('/').pop()))){ const f = await h.handle.getFile(); if(!best || f.lastModified > best.lastModified) best = f; } return best; };
+  return { pot: await ultimo(/^potenciales/i), prog: await ultimo(/^programados/i) };
+}
+const PRES_COLS = ['semPot', 'semEnr', 'i1Pot', 'i1Enr', 'i2Pot', 'i2Enr', 'mpEnr', 'mpCls', 'nc1', 'nc1Enr', 'nc2', 'nc2Enr', 'rm', 'rmEnr', 'maeS', 'maeI'];
+const PRES_SUB = ['Potencial', 'Enrolados en el año', 'Potencial 18 a 25', 'Enrolados 18 a 25 en el año', 'Potencial 26 a 35', 'Enrolados 26 a 35 en el año', 'Enrolados en el periodo actual', 'Número de clases',
+  'Últimos 12 meses', 'Enrolados en el periodo actual', 'Últimos 12 meses', 'Enrolados en el periodo actual', 'Últimos 12 meses', 'Enrolados en el periodo actual', 'Seminarios', 'Institutos'];
+const PRES_ESTACA = ['mpEnr', 'mpCls', 'maeI']; // se cuentan por estaca (celda unida en la tabla de una estaca)
+const sumaCols = filas => Object.fromEntries(PRES_COLS.map(c => [c, filas.reduce((s, f) => s + (+f[c] || 0), 0)]));
+// Filas de la tabla: los barrios de una estaca, o las estacas (en "Todas").
+function presFilas(rows, k){
+  const d = r => (r && r.datos) || {};
+  if(k){ const x = d(rows.find(r => r.estaca === k)); return { filas:(x.barrios || []).map(b => ({ ...b, n:b.b })), est:{ mpEnr:x.mpEnr || 0, mpCls:x.mpCls || 0, maeI:x.maeI || 0 } }; }
+  return { filas: PROG_STAKES.map(e => { const x = d(rows.find(r => r.estaca === e)); return { ...sumaCols(x.barrios || []), mpEnr:x.mpEnr || 0, mpCls:x.mpCls || 0, maeI:x.maeI || 0, n:stakeShort(e) }; }), est:null };
+}
+async function renderInformePresidentes(){
+  CUR = { type:'informe-pres', code:null };
+  app.innerHTML = topbar({ back:'#/informes', title:'Presidentes de estaca', sub:'Informes · Seminarios e Institutos' }) + `<main class="wrap wide full"><div id="prBody">${loadingHTML('Cargando el informe…')}</div></main>`;
+  bindTop();
+  const body = $('#prBody');
+  let rows;
+  try{
+    await SB.ensureSession();
+    const { data, error } = await SB.client.from('informe_estacas').select('estaca,datos,cabecera,actualizado_en');
+    if(error) throw error;
+    rows = data || [];
+  }catch(e){
+    console.error(e);
+    body.innerHTML = `<div class="warn-box">${/informe_estacas|schema cache|does not exist|42P01/i.test(String(e && (e.message || e.code))) ? 'Falta actualizar la base de datos (migración 0034).' : esc(errMsg(e))}</div>`;
+    return;
+  }
+  const F = { k: ST.presEst || '' };
+  const ref = rows.find(r => r.datos && r.datos.fecha);
+  const D = ref ? ref.datos : null;
+  const cabDe = k => ((rows.find(r => r.estaca === k) || {}).cabecera) || {};
+  const pS = currentPeriod('S'), pI = currentPeriod('I');
+  const notaDef = () => [pS ? 'Sem: ' + pS.n : '', pI ? 'Inst: ' + pI.n : ''].filter(Boolean).join(' · ') || (D ? `Sem: periodo ${D.term.S} · Inst: periodo ${D.term.I}` : '');
+  const actualizar = async (interactive, archivos) => {
+    const btn = $('#prAct'); if(btn) btn.disabled = true;
+    try{
+      let pot, prog;
+      if(archivos){
+        pot = archivos.find(f => /potencial/i.test(f.name)); prog = archivos.find(f => /programad/i.test(f.name));
+      } else {
+        const r = await presArchivosCarpeta(interactive);
+        if(r.sinCarpeta){ toast('Primero vincula la carpeta DEL DÍA en Class Roll de Wise, o elige los dos archivos.', 'warn', { ms:6000 }); return; }
+        if(r.sinPermiso){ toast('El navegador no dio permiso para leer la carpeta DEL DÍA.', 'warn'); return; }
+        pot = r.pot; prog = r.prog;
+      }
+      if(!pot || !prog){ toast(`Falta ${!pot ? 'Potenciales.xlsx' : 'Programados.xlsx'}.`, 'warn', { ms:6000 }); return; }
+      toast('Contando con Potenciales y Programados…');
+      await armarInformePresidentes(pot, prog);
+      toast('Informe actualizado', 'ok');
+      renderInformePresidentes();
+    }catch(e){ console.error(e); toast(/informe_estacas|schema cache/i.test(String(e && e.message)) ? 'Falta actualizar la base de datos (migración 0034).' : errMsg(e), 'error', { ms:6000 }); }
+    finally{ if(btn) btn.disabled = false; }
+  };
+  const editarCab = k => {
+    const c = cabDe(k);
+    const campo = (id, label, v, ph='') => `<div class="field"><label>${label}</label><input id="${id}" value="${esc(v || '')}" placeholder="${esc(ph)}" autocomplete="off"></div>`;
+    sheet(`${sheetHead('Datos del encabezado', esc(stakeShort(k)))}
+      ${campo('pcPres', 'Presidente de estaca', c.presidente)}
+      ${campo('pcNota', 'Nota', c.nota, notaDef())}
+      ${campo('pcResp', 'Responsable del informe', c.responsable)}
+      <div class="row2">${campo('pcTel', 'Teléfono', c.telefono)}${campo('pcMail', 'Correo', c.correo)}</div>
+      <div class="sh-foot"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="pcOk">${ICON.save} Guardar</button></div>`, {
+      onMount(el, close){
+        $('#pcOk', el).onclick = async () => {
+          const cab = { presidente:$('#pcPres', el).value.trim(), nota:$('#pcNota', el).value.trim(), responsable:$('#pcResp', el).value.trim(), telefono:$('#pcTel', el).value.trim(), correo:$('#pcMail', el).value.trim() };
+          try{
+            const { error } = await SB.client.from('informe_estacas').upsert([{ estaca:k, cabecera:cab }], { onConflict:'estaca' });
+            if(error) throw error;
+            const r = rows.find(x => x.estaca === k); if(r) r.cabecera = cab; else rows.push({ estaca:k, datos:{}, cabecera:cab });
+            close(); toast('Guardado', 'ok'); paint();
+          }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+        };
+      }
+    });
+  };
+  const pctTxt = (a, b) => b ? Math.round(a / b * 100) + ' %' : '—';
+  const tabla = () => {
+    const { filas, est } = presFilas(rows, F.k), T = sumaCols(filas);
+    if(est) Object.assign(T, est);
+    const n = filas.length;
+    const celdas = (f, i) => PRES_COLS.map(c => {
+      if(est && PRES_ESTACA.includes(c)) return i === 0 ? `<td class="u" rowspan="${n}">${est[c]}</td>` : '';
+      return `<td>${f[c] || 0}</td>`;
+    }).join('');
+    return `<div class="inf-scroll"><table class="pr-t">
+      <thead>
+        <tr><th rowspan="3" class="l">${F.k ? 'Barrios' : 'Estacas'}</th><th colspan="2" rowspan="2">Seminarios<small>14 - 17 años</small></th><th colspan="4">Institutos</th><th colspan="2" rowspan="2">Preparación misional</th><th colspan="4">Nuevos conversos</th><th colspan="2" rowspan="2">Misioneros retornados</th><th colspan="2" rowspan="2">Maestros llamados</th></tr>
+        <tr><th colspan="2">Alumnos<small>18 a 25 años</small></th><th colspan="2">Alumnos<small>26 a 35 años</small></th><th colspan="2">Seminarios<small>14 - 17 años</small></th><th colspan="2">Institutos<small>18 - 35 años</small></th></tr>
+        <tr class="sub">${PRES_SUB.map(s => `<th>${s}</th>`).join('')}</tr>
+      </thead>
+      <tbody>${n ? filas.map((f, i) => `<tr><td class="l">${esc(f.n)}</td>${celdas(f, i)}</tr>`).join('') : `<tr><td class="l" colspan="17">Todavía no hay datos de esta estaca.</td></tr>`}</tbody>
+      <tfoot><tr><td class="l">Total</td>${PRES_COLS.map(c => `<td>${T[c] || 0}</td>`).join('')}</tr>
+        <tr class="pct"><td class="l">% enrolado</td><td colspan="2">${pctTxt(T.semEnr, T.semPot)}</td><td colspan="2">${pctTxt(T.i1Enr, T.i1Pot)}</td><td colspan="2">${pctTxt(T.i2Enr, T.i2Pot)}</td><td colspan="2"></td><td colspan="2">${pctTxt(T.nc1Enr, T.nc1)}</td><td colspan="2">${pctTxt(T.nc2Enr, T.nc2)}</td><td colspan="2">${pctTxt(T.rmEnr, T.rm)}</td><td colspan="2"></td></tr></tfoot>
+    </table></div>`;
+  };
+  // Gráficos: por barrio (o por estaca), la barra clara es el potencial y la oscura los enrolados.
+  const graficos = () => {
+    const { filas } = presFilas(rows, F.k);
+    const paneles = [
+      ['Seminario · 14 a 17 años', 'semPot', 'semEnr', 'enrolados en el año'],
+      ['Instituto · 18 a 25 años', 'i1Pot', 'i1Enr', 'enrolados en el año'],
+      ['Instituto · 26 a 35 años', 'i2Pot', 'i2Enr', 'enrolados en el año'],
+      ['Nuevos conversos · últimos 12 meses', f => f.nc1 + f.nc2, f => f.nc1Enr + f.nc2Enr, 'enrolados en el periodo actual'],
+      ['Misioneros retornados · últimos 12 meses', 'rm', 'rmEnr', 'enrolados en el periodo actual']];
+    const val = (f, x) => typeof x === 'function' ? x(f) : (+f[x] || 0);
+    return `<section class="card"><div class="inf-top"><h2 style="margin:0">Potencial y enrolados ${F.k ? 'por barrio' : 'por estaca'}</h2>
+        <div class="pr-ley"><span><i class="pot"></i>Potencial</span><span><i class="enr"></i>Enrolados</span></div></div>
+      <div class="pr-graf">${paneles.map(([t, p, e, que]) => {
+        const max = Math.max(1, ...filas.map(f => val(f, p)), ...filas.map(f => val(f, e)));
+        const tp = filas.reduce((s, f) => s + val(f, p), 0), te = filas.reduce((s, f) => s + val(f, e), 0);
+        return `<div class="pr-pan"><h3>${esc(t)}</h3><p class="hint" style="margin:0 0 8px">${te} de ${tp} ${que} · <b>${pctTxt(te, tp)}</b></p>
+          ${filas.map(f => { const a = val(f, p), b = val(f, e); return `<div class="pr-bar" title="${esc(f.n)}: ${b} de ${a} ${que} (${pctTxt(b, a)})"><span class="nm">${esc(f.n)}</span>
+            <span class="tr"><i class="pot" style="width:${a / max * 100}%"></i><i class="enr" style="width:${b / max * 100}%"></i></span><span class="v">${b}/${a}</span></div>`; }).join('') || '<p class="hint">Sin datos.</p>'}</div>`;
+      }).join('')}</div></section>`;
+  };
+  const excel = async () => {
+    try{
+      toast('Generando Excel…');
+      const ExcelJS = await excelLib(), wb = new ExcelJS.Workbook();
+      const AZ = 'FF1B4A63', CL = 'FFDDEBF7', W = 'FFFFFFFF';
+      const hoja = k => {
+        const { filas, est } = presFilas(rows, k), T = sumaCols(filas); if(est) Object.assign(T, est);
+        const c = k ? cabDe(k) : {};
+        const ws = wb.addWorksheet(k ? stakeShort(k) : 'Todas las estacas', { views:[{ showGridLines:false }], pageSetup:{ orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 } });
+        ws.columns = [{ width:26 }, ...PRES_COLS.map(() => ({ width:11.5 }))];
+        const put = (ref, v, s={}) => { const x = ws.getCell(ref); x.value = v; x.alignment = { vertical:'middle', horizontal:s.h || 'center', wrapText:true }; x.font = { name:'Calibri', size:s.size || 11, bold:!!s.b, italic:!!s.i, color:{ argb:s.color || 'FF000000' } }; if(s.fill) x.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:s.fill } }; if(s.border) x.border = s.border; return x; };
+        const une = (rng, v, s) => { ws.mergeCells(rng); put(rng.split(':')[0], v, s); };
+        const H = { fill:AZ, color:W, b:true, border:{ top:{ style:'thin', color:{ argb:W } }, left:{ style:'thin', color:{ argb:W } }, right:{ style:'thin', color:{ argb:W } }, bottom:{ style:'thin', color:{ argb:W } } } };
+        une('A1:Q1', 'INFORME DE SEMINARIO E INSTITUTO PARA LÍDERES DEL SACERDOCIO', { fill:AZ, color:W, b:true, size:18 }); ws.getRow(1).height = 34;
+        put('A3', 'ESTACA', { h:'left', b:true, color:AZ, size:13 }); une('B3:G3', k ? stakeShort(k).toUpperCase() : 'TODAS', { fill:CL, b:true, size:13, color:AZ });
+        une('N3:O3', 'FECHA DE INFORME:', { h:'right', b:true, color:AZ }); une('P3:Q3', fmtDMY(todayISO()), { fill:CL, b:true, i:true });
+        if(k){ put('A4', 'PRESIDENTE DE ESTACA', { h:'left', b:true, color:AZ, size:13 }); une('B4:G4', c.presidente || '', { fill:CL, b:true, color:AZ }); }
+        une('J5:K5', 'NOTA:', { h:'right', b:true, i:true, color:AZ }); une('L5:Q5', (k && c.nota) || notaDef(), { fill:CL, b:true, i:true });
+        une('A6:A8', k ? 'BARRIOS' : 'ESTACAS', H); une('B6:C7', 'SEMINARIOS\n14 - 17 AÑOS', H); une('D6:G6', 'INSTITUTOS', H);
+        une('D7:E7', 'Alumnos\n18 a 25 años', H); une('F7:G7', 'Alumnos\n26 a 35 años', H); une('H6:I7', 'PREPARACIÓN\nMISIONAL', H);
+        une('J6:M6', 'NUEVOS CONVERSOS', H); une('J7:K7', 'SEMINARIOS\n14 - 17 AÑOS', H); une('L7:M7', 'INSTITUTOS\n18 - 35 AÑOS', H);
+        une('N6:O7', 'MISIONEROS\nRETORNADOS', H); une('P6:Q7', 'MAESTROS\nLLAMADOS', H);
+        PRES_SUB.forEach((s, i) => put(ws.getRow(8).getCell(i + 2).address, s === 'Seminarios' || s === 'Institutos' ? s.toUpperCase() : s, { ...H, b:false, size:10 }));
+        ws.getRow(6).height = 24; ws.getRow(7).height = 36; ws.getRow(8).height = 44;
+        const borde = { bottom:{ style:'dotted', color:{ argb:'FF1B4A63' } }, right:{ style:'dotted', color:{ argb:'FF1B4A63' } } };
+        const r0 = 9;
+        filas.forEach((f, i) => {
+          const row = ws.getRow(r0 + i); row.height = 22;
+          put(row.getCell(1).address, f.n.toUpperCase(), { h:'left', size:12, border:borde });
+          PRES_COLS.forEach((col, j) => { if(!(est && PRES_ESTACA.includes(col) && i > 0)) put(row.getCell(j + 2).address, est && PRES_ESTACA.includes(col) ? est[col] : (f[col] || 0), { size:12, border:borde }); });
+        });
+        if(est && filas.length > 1) PRES_ESTACA.forEach(col => { const L = ws.getColumn(PRES_COLS.indexOf(col) + 2).letter; ws.mergeCells(`${L}${r0}:${L}${r0 + filas.length - 1}`); });
+        const rt = r0 + filas.length, tot = ws.getRow(rt); tot.height = 22;
+        put(tot.getCell(1).address, 'TOTAL', { fill:AZ, color:W, b:true });
+        PRES_COLS.forEach((col, j) => put(tot.getCell(j + 2).address, T[col] || 0, { fill:AZ, color:W, b:true, size:12 }));
+        une(`N${rt + 1}:Q${rt + 1}`, 'FUENTE: Wise (Potenciales y Programados)', { h:'right', b:true, i:true, size:10, color:AZ });
+        if(k){
+          const rr = rt + 2;
+          put(`A${rr}`, 'RESPONSABLE DEL INFORME:', { h:'left', b:true, color:AZ }); une(`B${rr}:G${rr}`, c.responsable || '', { fill:CL, b:true, color:AZ });
+          put(`H${rr}`, 'TELÉFONO:', { h:'right', b:true, color:AZ }); une(`I${rr}:K${rr}`, c.telefono || '', { fill:CL, b:true, color:AZ });
+          une(`L${rr}:M${rr}`, 'CORREO:', { h:'right', b:true, color:AZ }); une(`N${rr}:Q${rr}`, c.correo || '', { fill:CL, b:true, color:AZ });
+        }
+      };
+      if(F.k) hoja(F.k); else { hoja(''); PROG_STAKES.forEach(hoja); }
+      downloadBlob(await xlBlob(wb), `Informe presidentes de estaca - ${F.k ? stakeShort(F.k) : 'Todas'} - ${todayISO()}.xlsx`);
+    }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+  };
+  const paint = () => {
+    const c = F.k ? cabDe(F.k) : {};
+    const kv = (l, v, falta) => `<div><span>${l}</span><b>${v ? esc(v) : `<i class="muted">${falta}</i>`}</b></div>`;
+    body.innerHTML = `<section class="card">
+        <div class="inf-top"><div><h2 style="margin:0">Informe para presidentes de estaca</h2>
+          <p class="meta" style="margin:2px 0 0">${D ? `Datos de Wise: Potenciales del ${esc(fmtDMY(D.pot.slice(0, 10)))} y Programados del ${esc(fmtDMY(D.prog.slice(0, 10)))} · contado el ${esc(fmtDMY(D.fecha))} · periodo actual en Programados: Seminario ${D.term.S}, Instituto ${D.term.I}` : 'Todavía no se ha contado. Toca <b>Actualizar</b>.'}</p></div></div>
+        <div class="inf-f pr-f">
+          <label>Estaca<select class="inp" id="prEst"><option value="">Todas</option>${PROG_STAKES.map(k => `<option value="${esc(k)}" ${F.k === k ? 'selected' : ''}>${esc(stakeShort(k))}</option>`).join('')}</select></label>
+          <div class="btn-row" style="margin:0"><button class="btn primary" id="prAct">${ICON.refresh} Actualizar</button><button class="btn" id="prArch">${ICON.upload} Elegir archivos</button>${F.k ? `<button class="btn" id="prCab">${ICON.edit} Encabezado</button>` : ''}<button class="btn" id="prXls" ${D ? '' : 'disabled'}>${ICON.download} Excel</button></div>
+          <input type="file" id="prFiles" accept=".xlsx" multiple hidden>
+        </div>
+        <p class="hint" style="margin:10px 0 0"><b>Actualizar</b> lee <b>Potenciales.xlsx</b> y <b>Programados.xlsx</b> de la carpeta DEL DÍA (también se actualiza solo cuando cambian). Las edades y fechas se usan solo en este navegador para contar y se descartan: en la nube quedan únicamente los totales por barrio.</p>
+      </section>
+      ${D ? `<section class="card pr-card">
+        ${F.k ? `<div class="pr-cab">${kv('Estaca', stakeShort(F.k), '')}${kv('Presidente de estaca', c.presidente, 'sin escribir')}${kv('Fecha de informe', fmtDMY(todayISO()), '')}${kv('Nota', c.nota || notaDef(), '')}</div>` : ''}
+        ${tabla()}
+        ${F.k ? `<div class="pr-cab pie">${kv('Responsable del informe', c.responsable, 'sin escribir')}${kv('Teléfono', c.telefono, '—')}${kv('Correo', c.correo, '—')}</div>` : ''}
+      </section>
+      ${graficos()}
+      <details class="card" style="margin-top:14px"><summary><b>Cómo se cuenta cada columna</b></summary><ul class="hint" style="margin:8px 0 0;padding-left:18px;line-height:1.6">
+        <li><b>Potencial</b>: jóvenes de Potenciales en ese rango de edad (Seminario 14 a 17; Instituto 18 a 25 y 26 a 35), por su barrio.</li>
+        <li><b>Enrolados en el año</b>: alumnos distintos de Programados en el año escolar (sin los retirados). Seminario cuenta a todos sus alumnos; Instituto, por edad.</li>
+        <li><b>Preparación misional</b>: alumnos de los cursos "Missionary Preparation" del periodo actual de Instituto y cuántas clases (maestro + sección) hay. Se cuenta por estaca.</li>
+        <li><b>Nuevos conversos</b>: en Potenciales, con fecha de confirmación en los últimos 12 meses (14 a 17 → Seminarios; 18 a 35 → Institutos). <b>Enrolados</b>: los que están en Programados en el periodo actual.</li>
+        <li><b>Misioneros retornados</b>: en Potenciales, con fecha de regreso de la misión en los últimos 12 meses; enrolados igual que arriba.</li>
+        <li><b>Maestros llamados</b>: maestros distintos del periodo actual en Programados. Seminario: en el barrio donde tiene más alumnos. Instituto: por estaca.</li>
+        <li>Los alumnos de Programados se emparejan con Potenciales por nombre (en cualquier orden) dentro de la estaca.</li></ul></details>` : ''}`;
+    $('#prEst').onchange = e => { F.k = ST.presEst = e.target.value; paint(); };
+    $('#prAct').onclick = () => actualizar(true);
+    const fi = $('#prFiles'); $('#prArch').onclick = () => fi.click();
+    fi.onchange = () => { const fs = [...fi.files]; fi.value = ''; if(fs.length) actualizar(true, fs); };
+    const pc = $('#prCab'); if(pc) pc.onclick = () => editarCab(F.k);
+    $('#prXls').onclick = excel;
   };
   paint();
 }
@@ -3786,7 +4134,7 @@ function route(){
   if(parts[0] === 'entrar') return renderEntrar();
   if(parts[0] === 'supervisor') return renderSupervisor();
   if(['todas','solicitudes','alertas','seguimiento','inscripciones','wiseroll','retrasos','informes'].includes(parts[0])){
-    if(parts[0] === 'informes' && SB.admin) return parts[1] === 'jas' ? renderInformeJAS() : renderInformes();
+    if(parts[0] === 'informes' && SB.admin) return parts[1] === 'jas' ? renderInformeJAS() : parts[1] === 'presidentes' ? renderInformePresidentes() : renderInformes();
     if(!SB.admin){ go('#/'); return; }
     if(parts[0] === 'wiseroll') return renderWiseRoll();
     if(parts[0] === 'retrasos') return renderRetrasos();
