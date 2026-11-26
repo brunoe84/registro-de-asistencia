@@ -127,6 +127,8 @@ button:focus-visible,a:focus-visible,summary:focus-visible,label:focus-visible,[
 @media(max-width:560px){.adm-kv{grid-template-columns:1fr}.adm-kv dd{margin-bottom:6px}}
 .adm-acc{margin-top:14px}
 .ent-chip{font-size:11.5px;font-weight:700;color:var(--blue-2);background:var(--blue-50);border:1px solid var(--blue-100);border-radius:999px;padding:3px 10px;white-space:nowrap}
+button.ent-chip{cursor:pointer;font-family:inherit}
+button.ent-chip:hover{background:var(--blue-100)}
 .hint{color:var(--muted);font-size:12.5px}
 .opt{color:var(--faint);font-weight:500;font-size:12px}
 .req{color:var(--red)}
@@ -1714,8 +1716,48 @@ async function uniqueCode(prefix, coll){
 /* ============================================================
    CLASES EN LÍNEA (Supabase)
    ============================================================ */
-const PROG_STAKES = ['Cañete Perú Stake','Chincha Perú Stake','Ica Perú Stake','Nazca Perú District','Pisco Perú Stake'];
-const stakeShort = s => { const w = String(s||'').split(' ')[0]; return w === 'Nazca' ? 'Nasca' : w; };
+let PROG_STAKES = ['Cañete Perú Stake','Chincha Perú Stake','Ica Perú Stake','Nazca Perú District','Pisco Perú Stake'];
+// Nombre corto: sin "Perú", "Stake", "District"... ("Ica Perú Stake" → "Ica"; "Lima Perú Los Olivos Stake" → "Lima Los Olivos").
+const stakeShort = s => { const t = String(s || '').replace(/(^|\s)(per[uú]|stake|district|distrito|estaca)(?=\s|$)/gi, ' ').replace(/\s+/g, ' ').trim() || String(s || '').split(' ')[0]; return /^nazca$/i.test(t) ? 'Nasca' : t; };
+// Núcleo de una estaca para compararlas ("Ica", "Ica Peru Stake" e "Ica Perú Stake" son la misma). Igual que nucleo_estaca() en la base.
+const nucleoEstaca = s => norm(s).replace(/\bnasca\b/g, 'nazca').split(' ').filter(w => w && !['peru', 'stake', 'district', 'distrito', 'estaca'].includes(w)).join(' ');
+// La estaca de la lista que corresponde a un texto de Wise ("Ica Peru Stake IN (61151)" → "Ica Perú Stake").
+function estacaCanon(txt, lista = PROG_STAKES){
+  const n = nucleoEstaca(txt); if(!n) return '';
+  let best = '', len = 0;
+  lista.forEach(k => { const c = nucleoEstaca(k); if(c && (n === c || n.startsWith(c + ' ')) && c.length > len){ best = k; len = c.length; } });
+  return best;
+}
+/* ---------- Entornos en la app ----------
+   Cada programa (entorno) tiene sus estacas, periodos y feriados. El administrador trabaja con los de su
+   entorno; maestros y jóvenes ven las estacas de todos los entornos activos y el calendario del entorno
+   de su clase. Sin la migración 0038 todo sigue con los valores de Programa Ica. */
+const ESTACAS_BASE = PROG_STAKES.slice();
+const ENT = {
+  lista: LS.get('ca_entornos', null) || [],
+  activo: null,
+  async cargar(){
+    try{ const l = await SB.rpc('entornos_publicos'); if(Array.isArray(l)){ this.lista = l; LS.set('ca_entornos', l); } }catch(e){ /* sin 0038: se queda la lista guardada */ }
+    return this.lista;
+  },
+  estacasDe(e){ return [...new Set(((e && e.estacas) || []).map(x => x.estaca))].sort((a, b) => a.localeCompare(b, 'es')); },
+  todas(){ const s = [...new Set(this.lista.flatMap(e => this.estacasDe(e)))].sort((a, b) => a.localeCompare(b, 'es')); return s.length ? s : ESTACAS_BASE.slice(); },
+  // Entorno de una estaca y programa (el más antiguo que la tiene, como en la base).
+  dePar(estaca, programa){ const n = nucleoEstaca(estaca); if(!n) return null; return this.lista.find(e => (e.estacas || []).some(x => nucleoEstaca(x.estaca) === n && (!programa || x.programa === programa))) || null; },
+  porId(id){ return this.lista.find(e => e.id === id) || null; },
+  // Periodos y feriados de un entorno (si los tiene configurados).
+  usarCalendario(e){
+    if(!e || !e.ajustes || !e.ajustes.periods || this.activo === e.id) return;
+    SETTINGS = Object.assign(defaultSettings(), e.ajustes); HOL_CACHE = {}; this.activo = e.id;
+  },
+  // Estacas para formularios y filtros: el administrador, las de su entorno; los demás, las de todos.
+  usarEstacas(e){ const l = e ? this.estacasDe(e) : this.todas(); PROG_STAKES = l.length ? l : ESTACAS_BASE.slice(); },
+  aplicar(){
+    if(SB.admin && SB.entorno){ this.usarEstacas(SB.entorno); this.usarCalendario(SB.entorno); return; }
+    this.usarEstacas(null);
+  }
+};
+if(ENT.lista.length) ENT.usarEstacas(null);
 const ATT_OK = v => v === 'P' || v === 'T' || v === 'M';
 const ATT_TXT = { P:'✓', F:'✗', T:'T', M:'M' };
 const attNote = v => v === 'T' ? ' · Tarde' : v === 'M' ? ' · M' : '';
@@ -1734,6 +1776,8 @@ const SB = {
         this.client = window.supabase.createClient(window.CA_CONFIG.supabaseUrl, window.CA_CONFIG.supabaseKey, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:false } });
         const { data } = await this.client.auth.getSession();
         this.user = data && data.session ? data.session.user : null;
+        // Sin sesión: igual se cargan las estacas y calendarios de los programas (para crear una clase, inscribirse...).
+        if(!this.user){ await ENT.cargar(); ENT.aplicar(); }
         await this.volver();
       }catch(e){ console.error(e); }
       this.ready = true;
@@ -1760,6 +1804,8 @@ const SB = {
       catch(e){ if(!/mi_entorno|schema cache|could not find/i.test(String(e && e.message))) console.warn('mi_entorno', e); }
     }
     this.admin = admin;
+    // Estacas y calendario del entorno (el administrador) o de todos los programas (maestros).
+    await ENT.cargar(); ENT.aplicar();
     this.mis = await this.rpc('mis_clases');
     if(!this.admin) await this.recuperarAccesos();
     await cargarWiseUlt();
@@ -1848,7 +1894,7 @@ const SB = {
     this.stopWatch();
     if(this.global){ try{ this.client.removeChannel(this.global); }catch(e){} this.global = null; }
     await this.client.auth.signOut({ scope:'local' });
-    this.user = null; this.admin = false; this.entorno = null; this.mis = []; this.solicitudes = []; this.barrios = null; this.counts = {solicitudes:0, alertas:0};
+    this.user = null; this.admin = false; this.entorno = null; ENT.activo = null; loadSettings(); ENT.aplicar(); this.mis = []; this.solicitudes = []; this.barrios = null; this.counts = {solicitudes:0, alertas:0};
     Object.keys(CLASSES).forEach(c => { if(CLASSES[c].remote) delete CLASSES[c]; }); saveClasses();
     // Vuelve la sesión que tenía este dispositivo antes de entrar como administrador,
     // para no perder las clases y accesos que ya tenía.
@@ -2304,7 +2350,7 @@ function homeOnlineHTML(){
     ${unirArriba ? '' : localesHTML()}
     ${mis.length || SB.admin ? '<section class="section" id="pushBox"></section>' : ''}
     ${(SB.solicitudes||[]).length ? `<section class="section">${SB.solicitudes.map(s => `<div class="pend-box"><div><b>Solicitud enviada</b><small>${esc(prettyName(s.maestro))} · ${esc(s.horario)}. El administrador la revisará.</small></div></div>`).join('')}</section>` : ''}
-    ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2>${SB.entorno ? `<span class="ent-chip" title="Entorno en el que estás trabajando">${esc(SB.entorno.programa)}${SB.entorno.general ? ' · general' : ''}</span>` : ''}</div>
+    ${SB.admin ? `<section class="section"><div class="section-h"><h2>Administración</h2>${SB.entorno ? (SB.entorno.general ? `<button class="ent-chip" data-go="#/administradores" title="Entorno en el que estás trabajando · toca para cambiar">${esc(SB.entorno.programa)} · general ⇄</button>` : `<span class="ent-chip" title="Entorno en el que estás trabajando">${esc(SB.entorno.programa)}</span>`) : ''}</div>
       <button class="item" data-go="#/todas"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Todas las clases</b><small>Por programa, estaca y maestro · asistencia en vivo</small></span>${ICON.next}</button>
       <button class="item" data-go="#/informes"><span class="ico t">${ICON.download}</span><span class="ii"><b>Informes</b><small>Asistencia de Centros JAS por estaca y semana · más informes con el tiempo</small></span>${ICON.next}</button>
       <button class="item" data-go="#/solicitudes"><span class="ico g">${ICON.lock}</span><span class="ii"><b>Solicitudes de acceso</b><small>Personas que piden entrar a una clase ya adoptada</small></span><span class="num-badge alert-badge hide" data-badge="solicitudes"></span>${ICON.next}</button>
@@ -2504,10 +2550,13 @@ function estacasEditorHTML(filas){
     <button type="button" class="icon-btn sm" data-quitar aria-label="Quitar estaca" title="Quitar">${ICON.x}</button></div>`;
   return `<div class="est-ed" data-fila="${esc(fila({ estaca:'', S:true, I:true }))}">${(filas && filas.length ? filas : [{ estaca:'', S:true, I:true }]).map(fila).join('')}</div>
     <button type="button" class="btn sm" data-agregar-estaca>${ICON.plus} Agregar estaca</button>
-    <datalist id="dlEstacas">${PROG_STAKES.map(k => `<option value="${esc(k)}">`).join('')}</datalist>`;
+    <datalist id="dlEstacas">${estacasConocidas().map(k => `<option value="${esc(k)}">`).join('')}</datalist>`;
 }
+// Nombres completos que ya existen (de todos los programas): "Ica" se convierte en "Ica Perú Stake".
+const estacasConocidas = () => [...new Set([...ENT.todas(), ...ESTACAS_BASE])].sort((a, b) => a.localeCompare(b, 'es'));
 function bindEstacasEditor(el){
   const ed = $('.est-ed', el);
+  ed.addEventListener('change', e => { const i = e.target.closest('input.inp'); if(!i) return; const n = nucleoEstaca(i.value); const k = n && estacasConocidas().find(x => nucleoEstaca(x) === n); if(k) i.value = k; });
   $('[data-agregar-estaca]', el).onclick = () => { ed.insertAdjacentHTML('beforeend', ed.dataset.fila); const ins = $$('.est-row input.inp', ed); ins[ins.length - 1].focus(); };
   ed.onclick = e => { const b = e.target.closest('[data-quitar]'); if(b){ b.closest('.est-row').remove(); if(!$('.est-row', ed)) $('[data-agregar-estaca]', el).click(); } };
 }
@@ -2615,7 +2664,7 @@ async function renderAdministradores(){
     const est = paresAFilas(x.estacas);
     return `<section class="card adm-card" data-id="${x.id}">
       <div class="adm-top"><div style="min-width:0"><h3>${esc(x.programa || 'Sin nombre')}</h3>
-        <p class="meta">${x.principal ? 'Entorno principal · ' : ''}${x.estado === 'pendiente' ? 'Solicitado el ' + esc(fmtDMY(String(x.creado_en).slice(0, 10))) : x.aprobado_en ? 'Activo desde el ' + esc(fmtDMY(String(x.aprobado_en).slice(0, 10))) : ''}${x.estado === 'activo' ? ` · ${x.clases} clase${x.clases === 1 ? '' : 's'}` : ''}</p></div>
+        <p class="meta">${x.actual ? '<b>Aquí estás</b> · ' : ''}${x.principal ? 'Entorno principal · ' : ''}${x.estado === 'pendiente' ? 'Solicitado el ' + esc(fmtDMY(String(x.creado_en).slice(0, 10))) : x.aprobado_en ? 'Activo desde el ' + esc(fmtDMY(String(x.aprobado_en).slice(0, 10))) : ''}${x.estado === 'activo' ? ` · ${x.clases} clase${x.clases === 1 ? '' : 's'}` : ''}</p></div>
         <span class="badge ${ESTADO[x.estado][1]}">${ESTADO[x.estado][0]}</span></div>
       <dl class="kv adm-kv">
         <dt>Asistente administrativo</dt><dd>${tel(x.asistente_nombre, x.asistente_celular)}</dd>
@@ -2626,7 +2675,7 @@ async function renderAdministradores(){
       </dl>
       <div class="btn-row adm-acc">
         ${x.estado === 'pendiente' ? `<button class="btn primary" data-acc="aprobar">${ICON.check} Aprobar</button><button class="btn" data-acc="editar">${ICON.edit} Editar</button><button class="btn" data-acc="rechazar">Rechazar</button>`
-          : x.estado === 'activo' ? `<button class="btn" data-acc="editar">${ICON.edit} Editar datos y estacas</button>${x.principal ? '' : '<button class="btn" data-acc="suspender">Suspender</button>'}`
+          : x.estado === 'activo' ? `${x.actual ? '' : `<button class="btn primary" data-acc="entrar">${ICON.next} Entrar a este entorno</button>`}<button class="btn" data-acc="editar">${ICON.edit} Editar datos y estacas</button>${x.principal ? '' : '<button class="btn" data-acc="suspender">Suspender</button>'}`
           : `<button class="btn" data-acc="aprobar">${ICON.check} ${x.estado === 'suspendido' ? 'Reactivar' : 'Aprobar'}</button><button class="btn" data-acc="editar">${ICON.edit} Editar</button>`}
       </div></section>`;
   };
@@ -2640,6 +2689,12 @@ async function renderAdministradores(){
   $$('[data-acc]', body).forEach(b => b.onclick = () => {
     const x = lista.find(y => y.id === b.closest('[data-id]').dataset.id), acc = b.dataset.acc;
     if(acc === 'editar') return editarEntorno(x, recargar);
+    if(acc === 'entrar'){
+      // Trabajar en otro entorno: la app se vuelve a abrir con sus estacas, periodos, clases e informes.
+      b.disabled = true;
+      return SB.rpc('cambiar_entorno', { entorno:x.id }).then(() => { location.hash = '#/'; location.reload(); })
+        .catch(e => { b.disabled = false; console.error(e); toast(errMsg(e), 'error'); });
+    }
     const est = paresAFilas(x.estacas);
     const msg = acc === 'aprobar' ? `<p>Se activará el entorno <b>${esc(x.programa)}</b>${x.correo ? ` y <b>${esc(x.correo)}</b> será su administrador` : ''}.</p><p class="hint">Estacas: ${esc(estacasTxt(est) || 'ninguna')}. Puedes corregirlas antes con «Editar».</p>`
       : acc === 'rechazar' ? `<p>La solicitud de <b>${esc(x.programa)}</b> quedará rechazada. Podrás aprobarla después si fue un error.</p>`
@@ -2826,7 +2881,7 @@ function rollName(n){
   if(i > 0 && norm(nom).endsWith(norm(ape))) nom = nom.split(/\s+/).slice(0, -ape.split(/\s+/).length).join(' ') || nom;
   return `${ape}, ${nom}`;
 }
-function rollStake(u){ const w = norm(u).split(' ')[0]; return ({ canete:PROG_STAKES[0], chincha:PROG_STAKES[1], ica:PROG_STAKES[2], nazca:PROG_STAKES[3], nasca:PROG_STAKES[3], pisco:PROG_STAKES[4] })[w] || ''; }
+function rollStake(u){ return estacaCanon(u); }
 function parseRollWorkbook(wb, progDefault){
   const clases = [], avisos = [];
   wb.SheetNames.forEach(sn => {
@@ -3664,7 +3719,7 @@ function xlFecha(v){
   if((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/))){ const a = +m[1], b = +m[2], [mo, d] = a > 12 ? [b, a] : [a, b]; return `${m[3]}-${pad2(mo)}-${pad2(d)}`; }
   const d = new Date(s); return isNaN(d) ? '' : iso(d);
 }
-const estacaDeTxt = s => { const n = norm(s); if(!n) return ''; return PROG_STAKES.find(k => norm(k) === n) || PROG_STAKES.find(k => norm(k).split(' ')[0] === n.split(' ')[0]) || ''; };
+const estacaDeTxt = s => estacaCanon(s);
 const barrioCorto = w => { const s = String(w || '').trim(); return /\bbranch$/i.test(s) ? s.replace(/\s*branch$/i, '') + ' (Rama)' : s.replace(/\s*ward$/i, ''); };
 function calcPresidentes(pot, prog, hoy){
   const persona = (n, k) => wiseTokens(n).slice().sort().join(' ') + '|' + k;
@@ -4398,17 +4453,22 @@ async function descifrarConLlave(priv, cif){
 }
 // Celular del joven: cifra lo sensible antes de enviar. Sin llave creada (o sin WebCrypto) va como antes
 // y el administrador lo cifra al abrir sus inscripciones.
-let LLAVE_PUB;
+// Cada programa (entorno) tiene su llave: se reconoce por el token de la página (enlace de inscripción,
+// QR de la clase o ficha). Se guarda una por token.
+let LLAVE_PUB, LLAVE_TOKEN = '';
+const LLAVES_PUB = {};
 async function cifrarDatosInscripcion(datos, prog){
   try{
     if(!(globalThis.crypto && crypto.subtle)) return datos;
-    if(LLAVE_PUB === undefined) LLAVE_PUB = (await SB.rpc('llave_publica_inscripciones')) || null;
+    const t = LLAVE_TOKEN || '';
+    if(!(t in LLAVES_PUB)) LLAVES_PUB[t] = (await SB.rpc('llave_publica_inscripciones', t ? { token:t } : {})) || null;
+    const pub = LLAVES_PUB[t];
     const sens = soloSensibles(datos);
-    if(!LLAVE_PUB || !Object.keys(sens).length) return datos;
+    if(!pub || !Object.keys(sens).length) return datos;
     const rest = Object.fromEntries(Object.entries(datos).filter(([k]) => !SENSIBLES.includes(k)));
     // "*" solo para pasar las validaciones del servidor: no se guardan.
     const marcas = prog === 'S' ? { nacimiento:'*', celular:'*', tutor:'*', tutor_celular:'*' } : { nacimiento:'*', celular:'*' };
-    return Object.assign(rest, marcas, { cifrado: await cifrarConLlave(LLAVE_PUB, sens) });
+    return Object.assign(rest, marcas, { cifrado: await cifrarConLlave(pub, sens) });
   }catch(e){ console.warn('No se pudo cifrar', e); return datos; }
 }
 // Administrador: estado de la llave en este dispositivo.
@@ -4443,7 +4503,7 @@ function bindLlaveCard(atendidas){
     try{
       const { datos, priv } = await crearLlaveInscripciones(p1);
       await SB.rpc('guardar_llave_inscripciones', { datos, reemplazar: !!reemplazar });
-      LLAVE.info = Object.assign({}, datos); LLAVE.priv = priv; LLAVE_PUB = datos.publica;
+      LLAVE.info = Object.assign({}, datos); LLAVE.priv = priv; LLAVE_PUB = datos.publica; Object.keys(LLAVES_PUB).forEach(k => delete LLAVES_PUB[k]);
       await idbGuardar(llaveIdbKey(LLAVE.info), priv);
       toast('🔒 Listo: los datos de inscripción ahora viajan cifrados', 'ok', { ms:4500 });
       re();
@@ -6188,7 +6248,7 @@ const QRC = { token:'', c:null, head:'' };
 const misClasesQr = () => LS.get('ca_qr_clase', {});
 async function renderQrClase(token){
   CUR = { type:'qr', code:null };
-  QRC.token = token;
+  QRC.token = token; LLAVE_TOKEN = token;
   pedirAlmacenPersistente();
   app.innerHTML = qrShell(loadingHTML('Abriendo la clase…'));
   const yo = miYo(), rec = misClasesQr()[token];
@@ -6349,7 +6409,7 @@ const INSC_P = { token:'', prog:'S', head:'' };
 const nomProgDe = p => p === 'S' ? 'Seminario' : 'Instituto';
 async function renderInscripcionPublica(token){
   CUR = { type:'qr', code:null };
-  INSC_P.token = token;
+  INSC_P.token = token; LLAVE_TOKEN = token;
   pedirAlmacenPersistente();
   app.innerHTML = qrShell(loadingHTML('Abriendo la inscripción…'));
   let r;
@@ -6357,6 +6417,8 @@ async function renderInscripcionPublica(token){
   catch(e){ console.error(e); $('#qrMain').innerHTML = `<div class="empty">No se pudo abrir la inscripción. Revisa tu internet.<br><br><button class="btn primary" id="qrRe">Intentar otra vez</button></div>`; $('#qrRe').onclick = () => renderInscripcionPublica(token); return; }
   if(!r || r.estado !== 'abierto'){ $('#qrMain').innerHTML = `<div class="empty">Este enlace de inscripción ya no está activo. Pide el enlace actualizado.</div>`; return; }
   INSC_P.prog = r.programa;
+  // Estacas y calendario del programa (entorno) del enlace.
+  if(r.entorno){ await ENT.cargar(); const e = ENT.porId(r.entorno); if(e){ ENT.usarEstacas(e); ENT.usarCalendario(e); } }
   INSC_P.head = `<section class="card qr-ev"><small>Seminarios e Institutos de Religión</small><h1>Inscripción en ${nomProgDe(r.programa)}</h1><p class="meta">Busca tu nombre, completa tus datos y acepta el acuerdo de inscripción.</p></section>`;
   inscBuscar();
 }
@@ -6450,7 +6512,7 @@ async function inscUnirClase(inscId, c){
 const FICHA_P = { token:'', prog:'S', head:'', r:null };
 async function renderFichaPublica(token){
   CUR = { type:'qr', code:null };
-  FICHA_P.token = token;
+  FICHA_P.token = token; LLAVE_TOKEN = token;
   pedirAlmacenPersistente();
   app.innerHTML = qrShell(loadingHTML('Abriendo tu ficha…'));
   let r;
@@ -6458,6 +6520,7 @@ async function renderFichaPublica(token){
   catch(e){ console.error(e); $('#qrMain').innerHTML = `<div class="empty">No se pudo abrir tu ficha. Revisa tu internet.<br><br><button class="btn primary" id="qrRe">Intentar otra vez</button></div>`; $('#qrRe').onclick = () => renderFichaPublica(token); return; }
   if(!r || r.estado === 'no_existe'){ $('#qrMain').innerHTML = `<div class="empty">Este enlace todavía no está listo o ya no existe.<br>Espera unos minutos y vuelve a abrirlo, o pide a tu maestro que te lo envíe otra vez.<br><br><button class="btn primary" id="qrRe">Intentar otra vez</button></div>`; $('#qrRe').onclick = () => renderFichaPublica(token); return; }
   FICHA_P.r = r; FICHA_P.prog = r.programa === 'I' ? 'I' : 'S';
+  { await ENT.cargar(); const e = ENT.dePar(r.estaca, FICHA_P.prog); if(e){ ENT.usarEstacas(e); ENT.usarCalendario(e); } }
   FICHA_P.head = `<section class="card qr-ev"><small>Seminarios e Institutos de Religión</small><h1>Ficha de inscripción en ${nomProgDe(FICHA_P.prog)}</h1><p class="meta">${esc(prettyName(r.nombre))}${r.maestro ? ' · clase de ' + esc(prettyName(r.maestro)) : ''}</p></section>`;
   if(r.estado === 'inscrito'){ $('#qrMain').innerHTML = FICHA_P.head + `<section class="card qr-done">${OK_ANIM}<h2>¡Ya estás inscrito!</h2><p>${esc(prettyName(r.nombre))}, tu inscripción en ${nomProgDe(FICHA_P.prog)} ya fue registrada.</p></section>`; return; }
   if(r.estado === 'completa'){
@@ -6783,6 +6846,8 @@ function renderClass(code){
   if(CUR.code !== code){ ST.classDate = null; ST.planMonth = null; ST.cq = ''; ST.cscope = null; ST.cf = null; if(!classStudents(cls).length && cls.canEdit) ST.ctab = 'alumnos'; else if(ST.ctab === 'alumnos' && !cls.canEdit) ST.ctab = 'hoy'; }
   CUR = { type:'class', code };
   const m = cls.meta;
+  // Feriados y periodos del programa (entorno) de esta clase; el administrador ya trabaja con los de su entorno.
+  if(!SB.admin) ENT.usarCalendario(ENT.dePar(m.stake, m.program));
   const daysTxt = (m.days||[]).slice().sort((a,b)=>((a||7)-(b||7))).map(d => DOW[d]).join(', ');
   app.innerHTML = topbar({ back:classBack(cls), title:cls.remote ? prettyName(m.teacher) : m.title, sub:cls.remote ? m.title : m.teacher }) + `<main class="wrap wide full${classOnline(cls) ? '' : ' has-savebar'}">
     <section class="card ev-head cl-head">
@@ -8832,7 +8897,7 @@ function renderAdmin(){
     draft.holidays = (draft.holidays||[]).filter(h => h.d !== d).concat([{ d, n: n || 'Día no laborable' }]).sort((a,b) => a.d.localeCompare(b.d));
     $('#hD').value = ''; $('#hN').value = ''; paintHol();
   };
-  $('#perSave').onclick = () => {
+  $('#perSave').onclick = async () => {
     let bad = '';
     $$('#perCard .per-row[data-pg]').forEach(r => {
       const p = draft.periods[r.dataset.pg][+r.dataset.i];
@@ -8842,7 +8907,14 @@ function renderAdmin(){
     });
     if(bad){ toast(`Revisa las fechas de “${bad}”: necesita inicio y fin, y el fin debe ser posterior.`, 'error', {ms:4500}); return; }
     saveSettingsLocal(draft);
-    toast('Periodos y feriados guardados ✓', 'ok');
+    // En línea: los periodos y feriados son del entorno (los ven sus maestros y sus informes).
+    if(SB.on() && SB.admin && SB.entorno){
+      try{
+        const a = await SB.rpc('guardar_ajustes_entorno', { ajustes:draft });
+        SB.entorno.ajustes = a; const e = ENT.porId(SB.entorno.id); if(e) e.ajustes = a;
+        toast(`Periodos y feriados de ${SB.entorno.programa} guardados ✓`, 'ok');
+      }catch(e){ console.error(e); toast(/guardar_ajustes_entorno|schema cache|could not find/i.test(String(e && e.message)) ? 'Guardados en este dispositivo. Falta la migración 0038 para guardarlos en el entorno.' : 'Guardados en este dispositivo, pero no en el entorno: ' + errMsg(e), 'warn', { ms:6000 }); }
+    } else toast('Periodos y feriados guardados ✓', 'ok');
     renderAdmin();
   };
   renderNewcomers();
