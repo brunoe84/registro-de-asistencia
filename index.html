@@ -3588,6 +3588,49 @@ function presVerNombres(det, col, k, w){
     }
   });
 }
+// Dibuja un gráfico en una imagen PNG (para el Excel). tipo 'h': barras de potencial con enrolados encima;
+// tipo 'v': columnas lado a lado. filas: [{ n, a, b }].
+function presGraficoPNG({ titulo, sub, filas, tipo, colA, colB, leyA, leyB }){
+  const S = 2, W = 620, H = tipo === 'h' ? 100 + filas.length * 26 : 340;
+  const cv = document.createElement('canvas'); cv.width = W * S; cv.height = H * S;
+  const g = cv.getContext('2d'); g.scale(S, S);
+  const F = (t, s, b, col, al='left') => { g.font = `${b ? 'bold ' : ''}${s}px Calibri, Arial, sans-serif`; g.fillStyle = col; g.textAlign = al; return t; };
+  const caja = (x, y, w, h, r) => { if(w <= 0 || h <= 0) return; g.beginPath(); if(g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h); g.fill(); };
+  g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, W, H);
+  g.fillText(F(titulo, 17, true, '#13233F'), 16, 28);
+  g.fillText(F(sub, 12.5, false, '#6B7280'), 16, 47);
+  let lx = 16;
+  [[colA, leyA], [colB, leyB]].forEach(([c, t]) => { g.fillStyle = c; caja(lx, 58, 12, 12, 3); g.fillText(F(t, 12, false, '#374151'), lx + 17, 68); lx += 17 + g.measureText(t).width + 20; });
+  const max = Math.max(1, ...filas.map(f => Math.max(f.a, f.b)));
+  const corta = (t, ancho) => { let s = String(t); while(s.length > 3 && g.measureText(s).width > ancho) s = s.slice(0, -2) + '…'; return s; };
+  if(tipo === 'h'){
+    const x0 = 160, x1 = W - 74, y0 = 86;
+    filas.forEach((f, i) => {
+      const y = y0 + i * 26;
+      F('', 12.5, false, '#1F2937'); g.fillText(corta(f.n, 138), 16, y + 11);
+      g.fillStyle = colA; caja(x0, y, (x1 - x0) * f.a / max, 14, 4);
+      g.fillStyle = colB; caja(x0, y + 3, (x1 - x0) * f.b / max, 8, 3);
+      g.fillText(F(`${f.b}/${f.a}`, 12, true, '#4B5563', 'right'), W - 16, y + 11);
+    });
+  } else {
+    const x0 = 20, x1 = W - 16, yb = H - 58, yt = 104, n = Math.max(filas.length, 1), gw = (x1 - x0) / n, bw = Math.min(24, gw * .32);
+    g.strokeStyle = '#D2CABC'; g.lineWidth = 1; g.beginPath(); g.moveTo(x0, yb + .5); g.lineTo(x1, yb + .5); g.stroke();
+    filas.forEach((f, i) => {
+      const cx = x0 + gw * i + gw / 2;
+      [[f.a, colA, cx - bw - 1.5], [f.b, colB, cx + 1.5]].forEach(([v, c, x]) => {
+        const h = (yb - yt) * v / max;
+        g.fillStyle = c; caja(x, yb - h, bw, h, [4, 4, 0, 0]);
+        g.fillText(F(String(v), 12, true, '#1F2937', 'center'), x + bw / 2, yb - h - 5);
+      });
+      F('', 10.5, true, '#4B5563', 'center');
+      const pal = String(f.n).toUpperCase().split(' '), lin = [''];
+      pal.forEach(p => { const t = (lin[lin.length - 1] + ' ' + p).trim(); if(g.measureText(t).width > gw - 6 && lin[lin.length - 1]) lin.push(p); else lin[lin.length - 1] = t; });
+      lin.slice(0, 3).forEach((t, j) => g.fillText(corta(t, gw - 4), cx, yb + 16 + j * 13));
+    });
+  }
+  g.textAlign = 'left';
+  return { url:cv.toDataURL('image/png'), w:W, h:H };
+}
 async function renderInformePresidentes(){
   CUR = { type:'informe-pres', code:null };
   app.innerHTML = topbar({ back:'#/informes', title:'Presidentes de estaca', sub:'Informes · Seminarios e Institutos' }) + `<main class="wrap wide full"><div id="prBody">${loadingHTML('Cargando el informe…')}</div></main>`;
@@ -3706,17 +3749,64 @@ async function renderInformePresidentes(){
         <div class="pr-ley"><span><i class="c12"></i>Últimos 12 meses</span><span><i class="enr"></i>Enrolados en el periodo actual</span></div></div>
       ${filas.length ? `<div class="pr-cg">${graf('Conversos en Seminarios · 14 a 17 años', 'nc1', 'nc1Enr')}${graf('Conversos en Institutos · 18 a 35 años', 'nc2', 'nc2Enr')}</div>` : '<p class="hint">Sin datos.</p>'}</section>`;
   };
-  const excel = async () => {
+  // Los gráficos que van como imagen en el Excel (Excel no recibe gráficos nativos desde el navegador).
+  const graficosPNG = filas => {
+    const P = (titulo, a, b, que, tipo, colA, leyA, leyB) => {
+      const fs = filas.map(f => ({ n:f.n, a:+f[a] || 0, b:+f[b] || 0 }));
+      const ta = fs.reduce((s, f) => s + f.a, 0), tb = fs.reduce((s, f) => s + f.b, 0);
+      return presGraficoPNG({ titulo, sub:`${tb} de ${ta} ${que} · ${pctTxt(tb, ta)}`, filas:fs, tipo, colA, colB:'#1B4A63', leyA, leyB });
+    };
+    return [
+      P('Conversos en Seminarios · 14 a 17 años', 'nc1', 'nc1Enr', 'enrolados en el periodo actual', 'v', '#E07A2E', 'Últimos 12 meses', 'Enrolados en el periodo actual'),
+      P('Conversos en Institutos · 18 a 35 años', 'nc2', 'nc2Enr', 'enrolados en el periodo actual', 'v', '#E07A2E', 'Últimos 12 meses', 'Enrolados en el periodo actual'),
+      P('Seminario · 14 a 17 años', 'semPot', 'semEnr', 'enrolados en el año', 'h', '#C9D9E4', 'Potencial', 'Enrolados'),
+      P('Instituto · 18 a 25 años', 'i1Pot', 'i1Enr', 'enrolados en el año', 'h', '#C9D9E4', 'Potencial', 'Enrolados'),
+      P('Instituto · 26 a 35 años', 'i2Pot', 'i2Enr', 'enrolados en el año', 'h', '#C9D9E4', 'Potencial', 'Enrolados'),
+      P('Misioneros retornados · últimos 12 meses', 'rm', 'rmEnr', 'enrolados en el periodo actual', 'h', '#C9D9E4', 'Potencial', 'Enrolados')];
+  };
+  const excel = async det => {
     try{
       toast('Generando Excel…');
       const ExcelJS = await excelLib(), wb = new ExcelJS.Workbook();
       const AZ = 'FF1B4A63', CL = 'FFDDEBF7', W = 'FFFFFFFF';
+      const estilo = (x, s={}) => { x.alignment = { vertical:'middle', horizontal:s.h || 'center', wrapText:true }; x.font = { name:'Calibri', size:s.size || 11, bold:!!s.b, italic:!!s.i, underline:!!s.u, color:{ argb:s.color || 'FF000000' } }; if(s.fill) x.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:s.fill } }; if(s.border) x.border = s.border; return x; };
+      // Hoja "Nombres <estaca>": una sección por cada número de la tabla; cada número del informe enlaza a su sección.
+      const hojaNombres = (k, hojaMain, dirMain) => {
+        const ws2 = wb.addWorksheet(('Nombres ' + stakeShort(k)).slice(0, 31), { views:[{ showGridLines:false }] });
+        ws2.columns = [{ width:7 }, { width:46 }, { width:16 }];
+        const pos = new Map(); let r = 1;
+        ws2.mergeCells('A1:C1'); estilo(ws2.getCell('A1'), { fill:AZ, color:W, b:true, size:15 }).value = `NOMBRES · ${stakeShort(k).toUpperCase()}`; ws2.getRow(1).height = 28;
+        estilo(ws2.getCell('A2'), { h:'left', i:true, size:10, color:'FF6B7280' }).value = 'Toca "↑ Volver" para regresar al número del informe.'; ws2.mergeCells('A2:C2');
+        r = 4;
+        const seccion = (key, col, w, lista, enr) => {
+          pos.set(key, r);
+          ws2.mergeCells(`A${r}:B${r}`);
+          estilo(ws2.getCell(`A${r}`), { fill:AZ, color:W, b:true, h:'left' }).value = `${w ? w.toUpperCase() + ' · ' : ''}${PRES_TIT[col] || col} (${lista.length})`;
+          const back = ws2.getCell(`C${r}`); back.value = { text:'↑ Volver', hyperlink:`#'${hojaMain}'!${dirMain(col, w)}` }; estilo(back, { fill:AZ, color:W, b:true, u:true });
+          ws2.getRow(r).height = 20; r++;
+          lista.forEach((x, i) => {
+            const ok = enr && enr.has(x.id);
+            estilo(ws2.getCell(`A${r}`), { color:'FF6B7280', size:10 }).value = i + 1;
+            estilo(ws2.getCell(`B${r}`), { h:'left', b:ok, border:{ bottom:{ style:'dotted', color:{ argb:'FFB8C7D1' } } } }).value = x.n;
+            estilo(ws2.getCell(`C${r}`), { color:'FF1F7A4D', b:true, size:10 }).value = ok ? '✓ Enrolado' : '';
+            r++;
+          });
+          r++;
+        };
+        const x = det.est[k] || { barrios:{} };
+        Object.keys(x.barrios).sort((a, b) => a.localeCompare(b, 'es')).forEach(w => PRES_COLS.filter(c => !PRES_ESTACA.includes(c)).forEach(col => {
+          const l = presQuienes(det, col, k, w); if(!l.length) return;
+          const par = PRES_PAR[col]; seccion(col + '|' + w, col, w, l, par ? new Set(presQuienes(det, par, k, w).map(z => z.id)) : null);
+        }));
+        PRES_ESTACA.forEach(col => { const l = presQuienes(det, col, k, ''); if(l.length) seccion(col + '|', col, '', l, null); });
+        return { nombre:ws2.name, pos };
+      };
       const hoja = k => {
         const { filas, est } = presFilas(rows, k), T = sumaCols(filas); if(est) Object.assign(T, est);
         const c = k ? cabDe(k) : {};
         const ws = wb.addWorksheet(k ? stakeShort(k) : 'Todas las estacas', { views:[{ showGridLines:false }], pageSetup:{ orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 } });
         ws.columns = [{ width:26 }, ...PRES_COLS.map(() => ({ width:11.5 }))];
-        const put = (ref, v, s={}) => { const x = ws.getCell(ref); x.value = v; x.alignment = { vertical:'middle', horizontal:s.h || 'center', wrapText:true }; x.font = { name:'Calibri', size:s.size || 11, bold:!!s.b, italic:!!s.i, color:{ argb:s.color || 'FF000000' } }; if(s.fill) x.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:s.fill } }; if(s.border) x.border = s.border; return x; };
+        const put = (ref, v, s={}) => { const x = ws.getCell(ref); x.value = v; return estilo(x, s); };
         const une = (rng, v, s) => { ws.mergeCells(rng); put(rng.split(':')[0], v, s); };
         const H = { fill:AZ, color:W, b:true, border:{ top:{ style:'thin', color:{ argb:W } }, left:{ style:'thin', color:{ argb:W } }, right:{ style:'thin', color:{ argb:W } }, bottom:{ style:'thin', color:{ argb:W } } } };
         une('A1:Q1', 'INFORME DE SEMINARIO E INSTITUTO PARA LÍDERES DEL SACERDOCIO', { fill:AZ, color:W, b:true, size:18 }); ws.getRow(1).height = 34;
@@ -3732,41 +3822,56 @@ async function renderInformePresidentes(){
         ws.getRow(6).height = 24; ws.getRow(7).height = 36; ws.getRow(8).height = 44;
         const borde = { bottom:{ style:'dotted', color:{ argb:'FF1B4A63' } }, right:{ style:'dotted', color:{ argb:'FF1B4A63' } } };
         const r0 = 9;
+        const letra = col => ws.getColumn(PRES_COLS.indexOf(col) + 2).letter;
+        const filaDe = new Map(filas.map((f, i) => [f.w, r0 + i]));
+        const N = det && k ? hojaNombres(k, ws.name, (col, w) => `${letra(col)}${PRES_ESTACA.includes(col) ? r0 : filaDe.get(w) || r0}`) : null;
         filas.forEach((f, i) => {
           const row = ws.getRow(r0 + i); row.height = 22;
           put(row.getCell(1).address, f.n.toUpperCase(), { h:'left', size:12, border:borde });
-          PRES_COLS.forEach((col, j) => { if(!(est && PRES_ESTACA.includes(col) && i > 0)) put(row.getCell(j + 2).address, est && PRES_ESTACA.includes(col) ? est[col] : (f[col] || 0), { size:12, border:borde }); });
+          PRES_COLS.forEach((col, j) => {
+            const deEstaca = est && PRES_ESTACA.includes(col);
+            if(deEstaca && i > 0) return;
+            const v = deEstaca ? est[col] : (f[col] || 0);
+            const fila = N && N.pos.get(col + '|' + (deEstaca ? '' : f.w));
+            put(row.getCell(j + 2).address, fila ? { text:String(v), hyperlink:`#'${N.nombre}'!A${fila}` } : v, { size:12, border:borde, u:!!fila, color:fila ? 'FF1B4A63' : undefined, b:!!fila });
+          });
         });
-        if(est && filas.length > 1) PRES_ESTACA.forEach(col => { const L = ws.getColumn(PRES_COLS.indexOf(col) + 2).letter; ws.mergeCells(`${L}${r0}:${L}${r0 + filas.length - 1}`); });
+        if(est && filas.length > 1) PRES_ESTACA.forEach(col => { const L = letra(col); ws.mergeCells(`${L}${r0}:${L}${r0 + filas.length - 1}`); });
         const rt = r0 + filas.length, tot = ws.getRow(rt); tot.height = 22;
         put(tot.getCell(1).address, 'TOTAL', { fill:AZ, color:W, b:true });
         PRES_COLS.forEach((col, j) => put(tot.getCell(j + 2).address, T[col] || 0, { fill:AZ, color:W, b:true, size:12 }));
         une(`N${rt + 1}:Q${rt + 1}`, 'FUENTE: Wise (Potenciales y Programados)', { h:'right', b:true, i:true, size:10, color:AZ });
+        let fin = rt + 1;
         if(k){
-          const rr = rt + 2;
+          const rr = fin = rt + 2;
           put(`A${rr}`, 'RESPONSABLE DEL INFORME:', { h:'left', b:true, color:AZ }); une(`B${rr}:G${rr}`, c.responsable || '', { fill:CL, b:true, color:AZ });
           put(`H${rr}`, 'TELÉFONO:', { h:'right', b:true, color:AZ }); une(`I${rr}:K${rr}`, c.telefono || '', { fill:CL, b:true, color:AZ });
           une(`L${rr}:M${rr}`, 'CORREO:', { h:'right', b:true, color:AZ }); une(`N${rr}:Q${rr}`, c.correo || '', { fill:CL, b:true, color:AZ });
+        }
+        if(N) une(`A${fin + 1}:Q${fin + 1}`, `Toca un número subrayado para ver los nombres en la hoja "${N.nombre}".`, { h:'left', i:true, size:10, color:AZ });
+        // Gráficos como imagen, de dos en dos, debajo de la tabla.
+        let fila = fin + 3;
+        const gs = graficosPNG(filas);
+        for(let i = 0; i < gs.length; i += 2){
+          let alto = 0;
+          gs.slice(i, i + 2).forEach((g, j) => {
+            const id = wb.addImage({ base64:g.url, extension:'png' });
+            const w = 600, h = Math.round(g.h * w / g.w); alto = Math.max(alto, h);
+            ws.addImage(id, { tl:{ col: j ? 8.2 : 0, row:fila - 1 }, ext:{ width:w, height:h } });
+          });
+          fila += Math.ceil(alto / 20) + 2;
         }
       };
       if(F.k) hoja(F.k); else { hoja(''); PROG_STAKES.forEach(hoja); }
       downloadBlob(await xlBlob(wb), `Informe presidentes de estaca - ${F.k ? stakeShort(F.k) : 'Todas'} - ${todayISO()}.xlsx`);
     }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
   };
-  const paint = () => {
+  // El informe (tabla, gráficos y explicación): el mismo HTML en la app y en el archivo HTML que se descarga.
+  const kv = (l, v, falta) => `<div><span>${l}</span><b>${v ? esc(v) : `<i class="muted">${falta}</i>`}</b></div>`;
+  const metaTxt = () => D ? `Datos de Wise: Potenciales del ${esc(fmtDMY(D.pot.slice(0, 10)))} y Programados del ${esc(fmtDMY(D.prog.slice(0, 10)))} · contado el ${esc(fmtDMY(D.fecha))} · periodo actual en Programados: Seminario ${D.term.S}, Instituto ${D.term.I}` : '';
+  const informeHTML = () => {
     const c = F.k ? cabDe(F.k) : {};
-    const kv = (l, v, falta) => `<div><span>${l}</span><b>${v ? esc(v) : `<i class="muted">${falta}</i>`}</b></div>`;
-    body.innerHTML = `<section class="card">
-        <div class="inf-top"><div><h2 style="margin:0">Informe para presidentes de estaca</h2>
-          <p class="meta" style="margin:2px 0 0">${D ? `Datos de Wise: Potenciales del ${esc(fmtDMY(D.pot.slice(0, 10)))} y Programados del ${esc(fmtDMY(D.prog.slice(0, 10)))} · contado el ${esc(fmtDMY(D.fecha))} · periodo actual en Programados: Seminario ${D.term.S}, Instituto ${D.term.I}` : 'Todavía no se ha contado. Toca <b>Actualizar</b>.'}</p></div></div>
-        <div class="inf-f pr-f">
-          <label>Estaca<select class="inp" id="prEst"><option value="">Todas</option>${PROG_STAKES.map(k => `<option value="${esc(k)}" ${F.k === k ? 'selected' : ''}>${esc(stakeShort(k))}</option>`).join('')}</select></label>
-          <div class="btn-row" style="margin:0"><button class="btn primary" id="prAct">${ICON.refresh} Actualizar</button><button class="btn" id="prArch">${ICON.upload} Elegir archivos</button>${F.k ? `<button class="btn" id="prCab">${ICON.edit} Encabezado</button>` : ''}<button class="btn" id="prXls" ${D ? '' : 'disabled'}>${ICON.download} Excel</button></div>
-          <input type="file" id="prFiles" accept=".xlsx" multiple hidden>
-        </div>
-        <p class="hint" style="margin:10px 0 0"><b>Actualizar</b> lee <b>Potenciales.xlsx</b> y <b>Programados.xlsx</b> de la carpeta DEL DÍA (también se actualiza solo cuando cambian). Las edades y fechas se usan solo en este navegador para contar y se descartan: en la nube quedan únicamente los totales por barrio. <b>Toca un número o una barra</b> para ver los nombres (se leen en ese momento de los Excel y no se guardan).</p>
-      </section>
-      ${D ? `<section class="card pr-card">
+    return `<section class="card pr-card">
         ${F.k ? `<div class="pr-cab">${kv('Estaca', stakeShort(F.k), '')}${kv('Presidente de estaca', c.presidente, 'sin escribir')}${kv('Fecha de informe', fmtDMY(todayISO()), '')}${kv('Nota', c.nota || notaDef(), '')}</div>` : ''}
         ${tabla()}
         ${F.k ? `<div class="pr-cab pie">${kv('Responsable del informe', c.responsable, 'sin escribir')}${kv('Teléfono', c.telefono, '—')}${kv('Correo', c.correo, '—')}</div>` : ''}
@@ -3780,45 +3885,133 @@ async function renderInformePresidentes(){
         <li><b>Nuevos conversos</b>: en Potenciales, con fecha de confirmación en los últimos 12 meses (14 a 17 → Seminarios; 18 a 35 → Institutos). <b>Enrolados</b>: los que están en Programados en el periodo actual.</li>
         <li><b>Misioneros retornados</b>: en Potenciales, con fecha de regreso de la misión en los últimos 12 meses; enrolados igual que arriba.</li>
         <li><b>Maestros llamados</b>: maestros distintos del periodo actual en Programados. Seminario: en el barrio donde tiene más alumnos. Instituto: por estaca.</li>
-        <li>Los alumnos de Programados se emparejan con Potenciales por nombre (en cualquier orden) dentro de la estaca.</li></ul></details>` : ''}`;
+        <li>Los alumnos de Programados se emparejan con Potenciales por nombre (en cualquier orden) dentro de la estaca.</li></ul></details>`;
+  };
+  // Archivo HTML: se abre en cualquier navegador, sin la app. Con nombres, cada número y barra abre su lista.
+  const descargarHTML = det => {
+    try{
+      let cuerpo = informeHTML();
+      const datos = {};
+      if(det){
+        [...new Set([...cuerpo.matchAll(/data-v="([^"]+)"/g)].map(m => m[1]))].forEach(v => {
+          const [col, k, w] = v.split('|').map(decodeURIComponent);
+          const lista = presQuienes(det, col, k, w), par = PRES_PAR[col];
+          const enr = par ? new Set(presQuienes(det, par, k, w).map(x => x.id)) : null;
+          const nEnr = enr ? lista.filter(x => enr.has(x.id)).length : 0;
+          datos[v] = { t:PRES_TIT[col] || col, s:[w, k ? stakeShort(k) : 'Todas las estacas'].filter(Boolean).join(' · '), q:col === 'mpCls' ? 'clases' : /^mae/.test(col) ? 'maestros' : 'personas',
+            p:!!enr, c:col === 'mpCls', x:enr && enr.size > nEnr ? enr.size - nEnr : 0, l:lista.map(x => enr && enr.has(x.id) ? [x.n, 1] : [x.n]) };
+        });
+      } else cuerpo = cuerpo.replace(/ data-v="[^"]*"/g, '');
+      const css = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n');
+      const fuentes = [...document.querySelectorAll('link[rel="stylesheet"]')].filter(l => /fonts\.googleapis/.test(l.href)).map(l => `<link rel="stylesheet" href="${esc(l.href)}">`).join('');
+      const titulo = `Informe para presidentes de estaca · ${F.k ? stakeShort(F.k) : 'Todas las estacas'}`;
+      const json = JSON.stringify(datos).replace(/</g, '\\u003c');
+      const doc = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(titulo)}</title>${fuentes}
+<style>${css}
+body{background:#F2F0EB}.pr-top h1{margin:0;font:800 22px/1.25 'Manrope',system-ui,sans-serif;color:#fff}.pr-top{background:#13233F;color:#fff;padding:18px 0;margin-bottom:18px}.pr-top p{margin:4px 0 0;color:#C9D6EA;font-size:13px}
+.pnm{position:fixed;inset:0;background:rgba(19,35,63,.5);display:grid;place-items:center;padding:16px;z-index:50}.pnm[hidden]{display:none}
+.pnm-c{background:#fff;border-radius:22px;width:min(780px,100%);max-height:92vh;overflow:auto;padding:20px 20px 16px;box-shadow:0 24px 70px rgba(0,0,0,.3)}
+.pnm-h{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}.pnm-h h3{margin:0;font:800 19px/1.3 'Manrope',system-ui,sans-serif;color:#13233F}.pnm-h small{color:#6B7280;font-size:13px}
+.pnm-x{border:0;background:#F2F0EB;width:38px;height:38px;border-radius:12px;font-size:22px;line-height:1;cursor:pointer;flex-shrink:0}
+@media print{.pnm{display:none}}</style></head>
+<body><header class="pr-top"><div class="wrap wide full" style="padding-top:0;padding-bottom:0"><h1>${esc(titulo)}</h1><p>${metaTxt()}${det ? ' · Toca un número o una barra para ver los nombres.' : ''}</p></div></header>
+<main class="wrap wide full">${cuerpo}<p class="hint" style="margin:14px 2px">Generado el ${esc(fmtDMY(todayISO()))} desde Registro de asistencia · Seminarios e Institutos.${det ? ' Este archivo contiene nombres de jóvenes: compártelo solo con los líderes que corresponda.' : ''}</p></main>
+<div class="pnm" id="pnM" hidden></div>
+<script>(function(){var N=${json};var m=document.getElementById('pnM');
+function e(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function ini(n){return n.split(' ').filter(Boolean).slice(0,2).map(function(p){return p[0]}).join('').toUpperCase()}
+function nn(s){return s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase()}
+function abrir(d){var ok=d.l.filter(function(x){return x[1]}).length,f='todos';
+m.innerHTML='<div class="pnm-c" role="dialog" aria-modal="true"><div class="pnm-h"><div><h3>'+e(d.t)+'</h3><small>'+e(d.s)+'</small></div><button class="pnm-x" data-x aria-label="Cerrar">×</button></div>'
++'<div class="pn-sum"><span class="pn-tot"><b>'+d.l.length+'</b> '+d.q+'</span>'+(d.p?'<button class="pn-chip on" data-f="todos">Todos · '+d.l.length+'</button><button class="pn-chip ok" data-f="si">✓ Enrolados · '+ok+'</button><button class="pn-chip" data-f="no">Sin enrolar · '+(d.l.length-ok)+'</button>':'')+'</div>'
++(d.l.length>8?'<input class="inp pn-q" type="search" placeholder="Buscar nombre…">':'')
++'<ol class="pn-list">'+(d.l.map(function(x,i){return '<li class="'+(x[1]?'ok':'')+'" data-ok="'+(x[1]?1:0)+'" data-n="'+e(nn(x[0]))+'"><span class="pn-av">'+(d.c?i+1:e(ini(x[0])))+'</span><span class="pn-n">'+e(x[0])+'</span>'+(x[1]?'<span class="pn-b">✓ Enrolado</span>':'')+'</li>'}).join('')||'<li class="pn-vacio">Nadie en esta cifra.</li>')+'</ol>'
++(d.x?'<p class="hint" style="margin:10px 0 0">'+(d.x===1?'Hay 1 enrolado más que no está':'Hay '+d.x+' enrolados más que no están')+' en este potencial (otra edad o no figura en Potenciales).</p>':'')+'</div>';
+m.hidden=false;var q=m.querySelector('.pn-q');
+function ap(){var t=q?nn(q.value):'';m.querySelectorAll('li[data-n]').forEach(function(li){li.hidden=(f==='si'&&li.dataset.ok!=='1')||(f==='no'&&li.dataset.ok==='1')||(t&&li.dataset.n.indexOf(t)<0)})}
+m.querySelectorAll('.pn-chip').forEach(function(b){b.onclick=function(){f=b.dataset.f;m.querySelectorAll('.pn-chip').forEach(function(x){x.classList.toggle('on',x===b)});ap()}});
+if(q)q.oninput=ap;}
+document.addEventListener('click',function(ev){var t=ev.target.closest('[data-v]');if(t&&N[t.dataset.v]){abrir(N[t.dataset.v]);return}if(ev.target===m||ev.target.closest('[data-x]'))m.hidden=true});
+document.addEventListener('keydown',function(ev){if(ev.key==='Escape')m.hidden=true});})();<\/script></body></html>`;
+      downloadBlob(new Blob([doc], { type:'text/html;charset=utf-8' }), `Informe presidentes de estaca - ${F.k ? stakeShort(F.k) : 'Todas'} - ${todayISO()}.html`);
+      toast('HTML descargado', 'ok');
+    }catch(e){ console.error(e); toast(errMsg(e), 'error'); }
+  };
+  // Antes de descargar: con nombres (los lee de los Excel en ese momento) o solo números.
+  const elegirDescarga = tipo => {
+    const quien = F.k ? `los jóvenes de la estaca ${stakeShort(F.k)}` : 'los jóvenes de las 5 estacas';
+    sheet(`${sheetHead(tipo === 'html' ? 'Descargar en HTML' : 'Descargar en Excel', esc(F.k ? stakeShort(F.k) : 'Todas las estacas'))}
+      <p class="hint" style="margin-top:0">${tipo === 'html' ? 'Un archivo que se abre en cualquier navegador (sin la app), con la tabla y los gráficos como se ven aquí.' : 'La tabla con el formato del informe y los gráficos como imagen.'}</p>
+      <div class="section" style="margin-top:6px">
+        <button class="item" data-n="1"><span class="ico t">${ICON.users}</span><span class="ii"><b>Con nombres</b><small>${tipo === 'html' ? 'Al tocar un número o una barra se abre la lista de nombres' : 'Cada número enlaza a su lista en una hoja de nombres'}</small></span>${ICON.next}</button>
+        <button class="item" data-n="0"><span class="ico t">${ICON.grid}</span><span class="ii"><b>Solo números</b><small>Sin ningún nombre</small></span>${ICON.next}</button>
+      </div>
+      <div class="warn-box" style="margin-top:12px">El archivo <b>con nombres</b> lleva los nombres de ${quien} (solo nombres, sin edades ni fechas). Compártelo solo con el presidente de estaca o los líderes que corresponda.</div>`, {
+      onMount(el, close){
+        $$('[data-n]', el).forEach(b => b.onclick = async () => {
+          close();
+          if(b.dataset.n !== '1') return tipo === 'html' ? descargarHTML(null) : excel(null);
+          hacer({ tipo });
+        });
+      }
+    });
+  };
+  const paint = () => {
+    body.innerHTML = `<section class="card">
+        <div class="inf-top"><div><h2 style="margin:0">Informe para presidentes de estaca</h2>
+          <p class="meta" style="margin:2px 0 0">${D ? metaTxt() : 'Todavía no se ha contado. Toca <b>Actualizar</b>.'}</p></div></div>
+        <div class="inf-f pr-f">
+          <label>Estaca<select class="inp" id="prEst"><option value="">Todas</option>${PROG_STAKES.map(k => `<option value="${esc(k)}" ${F.k === k ? 'selected' : ''}>${esc(stakeShort(k))}</option>`).join('')}</select></label>
+          <div class="btn-row" style="margin:0"><button class="btn primary" id="prAct">${ICON.refresh} Actualizar</button><button class="btn" id="prArch">${ICON.upload} Elegir archivos</button>${F.k ? `<button class="btn" id="prCab">${ICON.edit} Encabezado</button>` : ''}<button class="btn" id="prXls" ${D ? '' : 'disabled'}>${ICON.download} Excel</button><button class="btn" id="prHtml" ${D ? '' : 'disabled'}>${ICON.share} HTML</button></div>
+          <input type="file" id="prFiles" accept=".xlsx" multiple hidden>
+        </div>
+        <p class="hint" style="margin:10px 0 0"><b>Actualizar</b> lee <b>Potenciales.xlsx</b> y <b>Programados.xlsx</b> de la carpeta DEL DÍA (también se actualiza solo cuando cambian). Las edades y fechas se usan solo en este navegador para contar y se descartan: en la nube quedan únicamente los totales por barrio. <b>Toca un número o una barra</b> para ver los nombres (se leen en ese momento de los Excel y no se guardan).</p>
+      </section>
+      ${D ? informeHTML() : ''}`;
     $('#prEst').onchange = e => { F.k = ST.presEst = e.target.value; paint(); };
     $('#prAct').onclick = () => actualizar(true);
     const fi = $('#prFiles'); $('#prArch').onclick = () => fi.click();
     fi.onchange = () => { const fs = [...fi.files]; fi.value = ''; if(fs.length) actualizar(true, fs); };
     const pc = $('#prCab'); if(pc) pc.onclick = () => editarCab(F.k);
-    $('#prXls').onclick = excel;
+    $('#prXls').onclick = () => elegirDescarga('excel');
+    $('#prHtml').onclick = () => elegirDescarga('html');
   };
-  // Tocar un número o una barra: los nombres se leen en ese momento de los Excel (solo en memoria).
+  // Nombres: se leen en ese momento de los Excel (solo en memoria). pedido = lo que se quería hacer
+  // cuando hubo que elegir los archivos a mano: { v } ver una lista, o { tipo } descargar con nombres.
   let pedido = null;
-  const abrirNombres = async (v, archivos) => {
-    const [col, k, w] = v.split('|').map(decodeURIComponent);
+  const asegurarNombres = async (para, archivos) => {
     try{
       let pot, prog;
       if(archivos){ pot = archivos.find(f => /potencial/i.test(f.name)); prog = archivos.find(f => /programad/i.test(f.name)); }
       else if(!PRES_DET){
         const r = await presArchivosCarpeta(true);
-        if(r.sinCarpeta || r.sinPermiso){ pedido = v; toast('Para ver los nombres elige Potenciales.xlsx y Programados.xlsx.', 'warn', { ms:6000 }); $('#prFiles').click(); return; }
+        if(r.sinCarpeta || r.sinPermiso){ pedido = para; toast('Para los nombres elige Potenciales.xlsx y Programados.xlsx.', 'warn', { ms:6000 }); $('#prFiles').click(); return null; }
         pot = r.pot; prog = r.prog;
       }
       if(!PRES_DET || archivos){
-        if(!pot || !prog){ toast(`Falta ${!pot ? 'Potenciales.xlsx' : 'Programados.xlsx'}.`, 'warn', { ms:6000 }); return; }
+        if(!pot || !prog){ toast(`Falta ${!pot ? 'Potenciales.xlsx' : 'Programados.xlsx'}.`, 'warn', { ms:6000 }); return null; }
         toast('Leyendo los nombres…');
         const r = await armarInformePresidentes(pot, prog, { guardarNombres:true });
         // Si los Excel cambiaron desde la última cuenta, primero se muestran los totales nuevos.
-        if(!D || D.pot !== r.meta.pot || D.prog !== r.meta.prog){ ST.presAbrir = v; toast('Los totales se actualizaron con los Excel más recientes.', 'ok'); renderInformePresidentes(); return; }
+        if(!D || D.pot !== r.meta.pot || D.prog !== r.meta.prog){ ST.presAbrir = para; toast('Los totales se actualizaron con los Excel más recientes.', 'ok'); renderInformePresidentes(); return null; }
       }
-      presVerNombres(PRES_DET, col, k, w);
-    }catch(e){ console.error(e); toast(errMsg(e), 'error', { ms:6000 }); }
+      return PRES_DET;
+    }catch(e){ console.error(e); toast(errMsg(e), 'error', { ms:6000 }); return null; }
   };
-  body.addEventListener('click', e => { const t = e.target.closest('[data-v]'); if(t && body.contains(t)) abrirNombres(t.dataset.v); });
+  const hacer = async (para, archivos) => {
+    const det = await asegurarNombres(para, archivos); if(!det) return;
+    if(para.v){ const [col, k, w] = para.v.split('|').map(decodeURIComponent); presVerNombres(det, col, k, w); }
+    else if(para.tipo === 'html') descargarHTML(det); else excel(det);
+  };
+  body.addEventListener('click', e => { const t = e.target.closest('[data-v]'); if(t && body.contains(t)) hacer({ v:t.dataset.v }); });
   body.addEventListener('change', e => {
     if(e.target.id !== 'prFiles' || !pedido) return;
     e.stopImmediatePropagation();
-    const fs = [...e.target.files], v = pedido; pedido = null; e.target.value = '';
-    if(fs.length) abrirNombres(v, fs);
+    const fs = [...e.target.files], p = pedido; pedido = null; e.target.value = '';
+    if(fs.length) hacer(p, fs);
   }, true);
   paint();
-  if(ST.presAbrir && PRES_DET){ const v = ST.presAbrir; ST.presAbrir = null; abrirNombres(v); }
+  if(ST.presAbrir && PRES_DET){ const p = ST.presAbrir; ST.presAbrir = null; hacer(p); }
 }
 
 /* ---------- Solicitudes de acceso ---------- */
