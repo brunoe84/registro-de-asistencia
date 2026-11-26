@@ -4153,9 +4153,8 @@ async function renderInformePresidentes(){
     const c = cabFinal(k);
     const campo = (id, label, v, ph='') => `<div class="field"><label>${label}</label><input id="${id}" value="${esc(v || '')}" placeholder="${esc(ph)}" autocomplete="off"></div>`;
     sheet(`${sheetHead('Datos del encabezado', esc(k ? stakeShort(k) : 'Todas las estacas'))}
-      ${k ? campo('pcPres', 'Presidente de estaca', c.presidente) : ''}
+      ${k ? campo('pcPres', 'Presidente de estaca', c.presidente) : campo('pcSet', 'Setenta de Área', c.setenta)}
       <h3 class="rg-h">Iguales para todas las estacas</h3>
-      ${campo('pcSet', 'Setenta de Área', c.setenta, 'Sale en el informe de «Todas»')}
       ${campo('pcNota', 'Nota', c.nota, notaDef())}
       ${campo('pcResp', 'Responsable del informe', c.responsable)}
       <div class="row2">${campo('pcTel', 'Teléfono', c.telefono)}${campo('pcMail', 'Correo', c.correo)}</div>
@@ -4163,7 +4162,8 @@ async function renderInformePresidentes(){
       onMount(el, close){
         $('#pcOk', el).onclick = async () => {
           const v = id => $('#' + id, el).value.trim();
-          const gen = { setenta:v('pcSet'), nota:v('pcNota'), responsable:v('pcResp'), telefono:v('pcTel'), correo:v('pcMail') };
+          // El Setenta solo se escribe desde «Todas»; en una estaca se conserva el que ya estaba.
+          const gen = { setenta: k ? (cabGen().setenta || '') : v('pcSet'), nota:v('pcNota'), responsable:v('pcResp'), telefono:v('pcTel'), correo:v('pcMail') };
           const cambios = [{ estaca:TODAS, cabecera:gen }];
           if(k) cambios.push({ estaca:k, cabecera:Object.assign({}, cabDe(k), { presidente:v('pcPres') }) });
           try{
