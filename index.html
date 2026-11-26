@@ -624,6 +624,13 @@ table.plan.cw td.cell,table.plan.cw .dc{width:var(--cw);min-width:var(--cw);max-
 .pr-t td.l,.pr-t th.l{text-align:left;padding-left:12px}
 .pr-t td.l{text-transform:uppercase;font-weight:700;white-space:nowrap}
 .pr-t td.u{background:#F3F7FA;font-size:17px}
+/* La columna de estacas/barrios queda fija al deslizar la tabla (útil en celular). */
+.pr-t .l{position:sticky;left:0;z-index:2;box-shadow:inset -1px 0 0 #9DB4C2,4px 0 8px -4px rgba(19,35,63,.18)}
+.pr-t th.l{background:#1B4A63;z-index:3}
+.pr-t tbody td.l{background:var(--card)}
+.pr-t tfoot td.l{background:#1B4A63}
+.pr-t tfoot tr.pct td.l{background:#EAF1F5}
+@media(max-width:700px){.pr-t td.l,.pr-t th.l{min-width:96px;max-width:130px;white-space:normal;font-size:12.5px;padding-left:10px;line-height:1.25}}
 .pr-t tfoot td{background:#1B4A63;color:#fff;font-weight:800;border-color:rgba(255,255,255,.3)}
 .pr-t tfoot tr.pct td{background:#EAF1F5;color:#1B4A63;font-weight:700;font-size:13px}
 .pr-ley{display:flex;gap:14px;font-size:12.5px;color:var(--muted);align-items:center}
@@ -3502,8 +3509,31 @@ function calcPresidentes(pot, prog, hoy){
   });
   return { porEstaca, term, det:{ est:out, nom, ins, cls } };
 }
-// Detalle con nombres de la última cuenta: solo en la memoria de esta página (se borra al salir del informe).
+// Detalle con nombres de la última cuenta, en la memoria de esta página (se borra al salir del informe).
+// En la nube (columna "nombres", solo administrador) va empacado por estaca: solo nombres, sin edades ni fechas.
 let PRES_DET = null;
+function presEmpacar(det, k){
+  const x = det.est[k]; if(!x) return {};
+  const N = [], I = [], C = [], iN = new Map(), iI = new Map(), iC = new Map();
+  const idx = (map, arr, id, lab) => { if(!map.has(id)){ map.set(id, arr.length); arr.push(lab); } return map.get(id); };
+  const pn = id => idx(iN, N, id, det.nom.get(id) || ''), pi = id => idx(iI, I, id, det.ins.get(id) || ''), pc = id => idx(iC, C, id, det.cls.get(id) || '');
+  const b = {};
+  Object.entries(x.barrios).forEach(([w, s]) => { b[w] = {}; Object.entries(s).forEach(([col, set]) => { if(set.size) b[w][col] = [...set].map(col === 'maeS' ? pi : pn); }); });
+  return { n:N, i:I, c:C, b, mp:[...x.mp].map(pn), mpCls:[...x.mpCls].map(pc), maeI:[...x.maeI].map(pi) };
+}
+function presDesempacar(rows){
+  const det = { est:{}, nom:new Map(), ins:new Map(), cls:new Map() };
+  rows.forEach(r => {
+    const z = r.nombres, k = r.estaca; if(!z || !z.n) return;
+    const P = i => { const id = k + '|p' + i; det.nom.set(id, z.n[i]); return id; };
+    const Q = i => { const id = k + '|i' + i; det.ins.set(id, z.i[i]); return id; };
+    const L = i => { const id = k + '|c' + i; det.cls.set(id, z.c[i]); return id; };
+    const barrios = {};
+    Object.entries(z.b || {}).forEach(([w, cols]) => { barrios[w] = {}; Object.entries(cols).forEach(([col, arr]) => { barrios[w][col] = new Set(arr.map(col === 'maeS' ? Q : P)); }); });
+    det.est[k] = { barrios, mp:new Set((z.mp || []).map(P)), mpCls:new Set((z.mpCls || []).map(L)), maeI:new Set((z.maeI || []).map(Q)) };
+  });
+  return det;
+}
 async function armarInformePresidentes(potFile, progFile, { guardarNombres=false }={}){
   await loadScript(SHEETJS_URL);
   const leer = async f => xlFilas(XLSX.read(await f.arrayBuffer(), { type:'array', raw:true }));
@@ -3514,8 +3544,11 @@ async function armarInformePresidentes(potFile, progFile, { guardarNombres=false
   const meta = { fecha:hoy, pot:new Date(potFile.lastModified).toISOString(), prog:new Date(progFile.lastModified).toISOString(), term:R.term };
   PRES_DET = guardarNombres ? { ...R.det, sello:meta.pot + '|' + meta.prog } : null;
   const ahora = new Date().toISOString();
-  const filas = PROG_STAKES.map(k => ({ estaca:k, datos:{ ...meta, ...(R.porEstaca[k] || { barrios:[], mpEnr:0, mpCls:0, maeI:0 }) }, actualizado_en:ahora }));
-  const { error } = await SB.client.from('informe_estacas').upsert(filas, { onConflict:'estaca' });
+  const sello = meta.pot + '|' + meta.prog;
+  const filas = PROG_STAKES.map(k => ({ estaca:k, datos:{ ...meta, ...(R.porEstaca[k] || { barrios:[], mpEnr:0, mpCls:0, maeI:0 }) }, nombres:{ ...presEmpacar(R.det, k), s:sello }, actualizado_en:ahora }));
+  let { error } = await SB.client.from('informe_estacas').upsert(filas, { onConflict:'estaca' });
+  // Sin la migración 0035 (columna "nombres") se guardan igual los totales.
+  if(error && /nombres/i.test(String(error.message))) ({ error } = await SB.client.from('informe_estacas').upsert(filas.map(({ nombres, ...f }) => f), { onConflict:'estaca' }));
   if(error) throw error;
   return { estacas:filas.length, fecha:hoy, meta };
 }
@@ -3576,7 +3609,7 @@ function presVerNombres(det, col, k, w){
     ${lista.length > 8 ? `<input class="inp pn-q" id="pnQ" type="search" placeholder="Buscar nombre…" autocomplete="off">` : ''}
     <ol class="pn-list" id="pnL">${lista.map((x, i) => { const ok = enr && enr.has(x.id); return `<li class="${ok ? 'ok' : ''}" data-ok="${ok ? 1 : 0}" data-n="${esc(norm(x.n))}"><span class="pn-av">${col === 'mpCls' ? i + 1 : esc(ini(x.n))}</span><span class="pn-n">${esc(x.n)}</span>${ok ? '<span class="pn-b">✓ Enrolado</span>' : ''}</li>`; }).join('') || '<li class="pn-vacio">Nadie en esta cifra.</li>'}</ol>
     ${enr && enr.size > nEnr ? `<p class="hint" style="margin:10px 0 0">${enr.size - nEnr === 1 ? 'Hay 1 enrolado más que no está' : `Hay ${enr.size - nEnr} enrolados más que no están`} en este potencial (tiene${enr.size - nEnr === 1 ? '' : 'n'} otra edad o no figura${enr.size - nEnr === 1 ? '' : 'n'} en Potenciales). Toca el número de enrolados para ver la lista completa.</p>` : ''}
-    <p class="hint" style="margin:10px 0 0">Nombres leídos ahora de Potenciales y Programados. No se guardan: se olvidan al salir del informe.</p>
+    <p class="hint" style="margin:10px 0 0">Nombres de la última cuenta con Potenciales y Programados. Solo los ve el administrador.</p>
     <div class="sh-foot"><button class="btn" id="pnCopy">${ICON.copy} Copiar lista</button><button class="btn primary" data-close>Cerrar</button></div>`, {
     wide:true,
     onMount(el){
@@ -3965,7 +3998,7 @@ document.addEventListener('keydown',function(ev){if(ev.key==='Escape')m.hidden=t
           <div class="btn-row" style="margin:0"><button class="btn primary" id="prAct">${ICON.refresh} Actualizar</button><button class="btn" id="prArch">${ICON.upload} Elegir archivos</button>${F.k ? `<button class="btn" id="prCab">${ICON.edit} Encabezado</button>` : ''}<button class="btn" id="prXls" ${D ? '' : 'disabled'}>${ICON.download} Excel</button><button class="btn" id="prHtml" ${D ? '' : 'disabled'}>${ICON.share} HTML</button></div>
           <input type="file" id="prFiles" accept=".xlsx" multiple hidden>
         </div>
-        <p class="hint" style="margin:10px 0 0"><b>Actualizar</b> lee <b>Potenciales.xlsx</b> y <b>Programados.xlsx</b> de la carpeta DEL DÍA (también se actualiza solo cuando cambian). Las edades y fechas se usan solo en este navegador para contar y se descartan: en la nube quedan únicamente los totales por barrio. <b>Toca un número o una barra</b> para ver los nombres (se leen en ese momento de los Excel y no se guardan).</p>
+        <p class="hint" style="margin:10px 0 0"><b>Actualizar</b> lee <b>Potenciales.xlsx</b> y <b>Programados.xlsx</b> de la carpeta DEL DÍA (también se actualiza solo cuando cambian). Las edades y fechas se usan solo en este navegador para contar y se descartan: en la nube quedan los totales por barrio y las listas de nombres de cada cifra (sin edades ni fechas; solo las ve el administrador). <b>Toca un número o una barra</b> para ver los nombres, también desde el celular.</p>
       </section>
       ${D ? informeHTML() : ''}`;
     $('#prEst').onchange = e => { F.k = ST.presEst = e.target.value; paint(); };
@@ -3982,10 +4015,17 @@ document.addEventListener('keydown',function(ev){if(ev.key==='Escape')m.hidden=t
   const asegurarNombres = async (para, archivos) => {
     try{
       let pot, prog;
+      // 1) Las listas guardadas en la nube con la última cuenta (sirve también en el celular).
+      if(!archivos && !PRES_DET && D){
+        const { data, error } = await SB.client.from('informe_estacas').select('estaca,nombres');
+        const sello = D.pot + '|' + D.prog;
+        const ok = !error && (data || []).filter(r => r.nombres && r.nombres.n && r.nombres.s === sello);
+        if(ok && ok.length) PRES_DET = { ...presDesempacar(ok), sello };
+      }
       if(archivos){ pot = archivos.find(f => /potencial/i.test(f.name)); prog = archivos.find(f => /programad/i.test(f.name)); }
       else if(!PRES_DET){
         const r = await presArchivosCarpeta(true);
-        if(r.sinCarpeta || r.sinPermiso){ pedido = para; toast('Para los nombres elige Potenciales.xlsx y Programados.xlsx.', 'warn', { ms:6000 }); $('#prFiles').click(); return null; }
+        if(r.sinCarpeta || r.sinPermiso){ pedido = para; toast('Todavía no hay nombres guardados: toca Actualizar en la PC, o elige Potenciales.xlsx y Programados.xlsx.', 'warn', { ms:7000 }); $('#prFiles').click(); return null; }
         pot = r.pot; prog = r.prog;
       }
       if(!PRES_DET || archivos){
