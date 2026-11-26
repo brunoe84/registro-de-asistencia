@@ -3901,6 +3901,14 @@ async function renderInformePresidentes(){
   };
   // El informe (tabla, gráficos y explicación): el mismo HTML en la app y en el archivo HTML que se descarga.
   const kv = (l, v, falta) => `<div><span>${l}</span><b>${v ? esc(v) : `<i class="muted">${falta}</i>`}</b></div>`;
+  let NOM_EST = 'revisando';
+  const estNombres = () => ({
+    revisando:'Nombres: revisando…',
+    ok:'Nombres: <b style="color:var(--green-2)">✓ guardados</b> (se ven también desde el celular)',
+    guardando:'Nombres: guardando en la nube…',
+    faltan:'Nombres: <b style="color:var(--red)">sin guardar</b> · toca <b>Actualizar</b> en la PC con la carpeta DEL DÍA',
+    sinColumna:'Nombres: falta la migración 0035',
+    error:'Nombres: no se pudo revisar' })[NOM_EST] || '';
   const metaTxt = () => D ? `Datos de Wise: Potenciales del ${esc(fmtDMY(D.pot.slice(0, 10)))} y Programados del ${esc(fmtDMY(D.prog.slice(0, 10)))} · contado el ${esc(fmtDMY(D.fecha))} · periodo actual en Programados: Seminario ${D.term.S}, Instituto ${D.term.I}` : '';
   const informeHTML = () => {
     const c = F.k ? cabDe(F.k) : {};
@@ -3992,7 +4000,8 @@ document.addEventListener('keydown',function(ev){if(ev.key==='Escape')m.hidden=t
   const paint = () => {
     body.innerHTML = `<section class="card">
         <div class="inf-top"><div><h2 style="margin:0">Informe para presidentes de estaca</h2>
-          <p class="meta" style="margin:2px 0 0">${D ? metaTxt() : 'Todavía no se ha contado. Toca <b>Actualizar</b>.'}</p></div></div>
+          <p class="meta" style="margin:2px 0 0">${D ? metaTxt() : 'Todavía no se ha contado. Toca <b>Actualizar</b>.'}</p>
+          ${D ? `<p class="meta" id="prNomEst" style="margin:2px 0 0">${estNombres()}</p>` : ''}</div></div>
         <div class="inf-f pr-f">
           <label>Estaca<select class="inp" id="prEst"><option value="">Todas</option>${PROG_STAKES.map(k => `<option value="${esc(k)}" ${F.k === k ? 'selected' : ''}>${esc(stakeShort(k))}</option>`).join('')}</select></label>
           <div class="btn-row" style="margin:0"><button class="btn primary" id="prAct">${ICON.refresh} Actualizar</button><button class="btn" id="prArch">${ICON.upload} Elegir archivos</button>${F.k ? `<button class="btn" id="prCab">${ICON.edit} Encabezado</button>` : ''}<button class="btn" id="prXls" ${D ? '' : 'disabled'}>${ICON.download} Excel</button><button class="btn" id="prHtml" ${D ? '' : 'disabled'}>${ICON.share} HTML</button></div>
@@ -4052,6 +4061,27 @@ document.addEventListener('keydown',function(ev){if(ev.key==='Escape')m.hidden=t
   }, true);
   paint();
   if(ST.presAbrir && PRES_DET){ const p = ST.presAbrir; ST.presAbrir = null; hacer(p); }
+  // ¿Están guardadas en la nube las listas de nombres de esta cuenta? Si faltan y esta PC ya tiene
+  // permiso para la carpeta DEL DÍA, se guardan solas en segundo plano (sin pedir nada).
+  if(D){
+    (async () => {
+      const sello = D.pot + '|' + D.prog;
+      const { data, error } = await SB.client.from('informe_estacas').select('estaca,sello:nombres->>s');
+      if(error){ NOM_EST = /nombres/i.test(String(error.message)) ? 'sinColumna' : 'error'; }
+      else NOM_EST = (data || []).some(r => r.sello === sello) ? 'ok' : 'faltan';
+      const pinta = () => { const el = $('#prNomEst'); if(el) el.innerHTML = estNombres(); };
+      pinta();
+      if(NOM_EST !== 'faltan' || !window.showDirectoryPicker) return;
+      const dir = await fsGet('rollDir').catch(() => null);
+      if(!dir || await dir.queryPermission({ mode:'read' }) !== 'granted') return;
+      NOM_EST = 'guardando'; pinta();
+      const r = await presArchivosCarpeta(false);
+      if(!r.pot || !r.prog){ NOM_EST = 'faltan'; pinta(); return; }
+      const g = await armarInformePresidentes(r.pot, r.prog, { guardarNombres:true });
+      if(D.pot !== g.meta.pot || D.prog !== g.meta.prog){ renderInformePresidentes(); return; }
+      NOM_EST = 'ok'; pinta();
+    })().catch(e => { console.warn('nombres', e); NOM_EST = 'faltan'; const el = $('#prNomEst'); if(el) el.innerHTML = estNombres(); });
+  }
 }
 
 /* ---------- Solicitudes de acceso ---------- */
